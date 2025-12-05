@@ -324,6 +324,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                         uiState.currentTheme = ChiptuneTracker::Theme::Matrix;
                         ChiptuneTracker::ApplyTheme(uiState.currentTheme);
                     }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Frutiger Aero", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::FrutigerAero)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::FrutigerAero;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    if (ImGui::MenuItem("Minimal", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::Minimal)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::Minimal;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    if (ImGui::MenuItem("Vaporwave", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::Vaporwave)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::Vaporwave;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    if (ImGui::MenuItem("Retro Terminal", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::RetroTerminal)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::RetroTerminal;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
                     ImGui::EndMenu();
                 }
                 ImGui::EndMenu();
@@ -375,6 +392,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                 break;
             case ChiptuneTracker::ViewMode::Mixer:
                 ChiptuneTracker::DrawMixer(project, uiState, sequencer);
+                break;
+            case ChiptuneTracker::ViewMode::PadController:
+                ChiptuneTracker::DrawPadController(project, uiState, sequencer);
                 break;
         }
 

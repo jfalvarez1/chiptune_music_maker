@@ -16,12 +16,14 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 ## Features
 
 ### Sound Generation
-- **Oscillators**: PolyBLEP-corrected Pulse (variable duty), Triangle, Sawtooth, Sine
+- **Oscillators**: PolyBLEP-corrected Pulse (variable duty), Triangle, Sawtooth, Sine, Supersaw
+- **Supersaw**: 7 detuned sawtooth oscillators for massive, wide sounds
 - **Noise**: 15-bit LFSR (Linear Feedback Shift Register) with short/long modes
 - **ADSR Envelopes**: Full Attack, Decay, Sustain, Release control
 - **Per-note sound types**: Each note can use a different oscillator
+- **Sound Preview**: Notes play a brief preview when placed in the piano roll
 
-### Synth Presets (10 types!)
+### Synth Presets (16 types!)
 - **Lead**: Bright cutting lead with detuned saws
 - **Pad**: Soft atmospheric pad with slow attack
 - **Bass**: Deep punchy bass (sub + harmonics)
@@ -33,6 +35,14 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **Chip**: Classic chiptune lead (NES-style 12.5% pulse)
 - **Bell**: Bell/chime sound (FM-like synthesis)
 
+### Synthwave Synths (6 types!)
+- **SW Lead**: Bright PWM lead with warmth - perfect for main melodies
+- **SW Bass**: Deep 808-style saw bass - massive low end
+- **SW Pad**: Warm lush evolving pad - atmospheric backgrounds
+- **SW Arp**: Crisp sequence/arp sound - rapid passages
+- **SW Chord**: Polyphonic stab for chords - punchy chord hits
+- **SW FM**: Classic DX7-style FM brass - metallic and bright
+
 ### Drum Kit (21 sounds!)
 - **Kicks**: Standard, 808, Hard, Soft
 - **Snares**: Standard, 808, Rimshot, Clap
@@ -41,11 +51,16 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **Cymbals**: Crash, Ride
 - **Percussion**: Cowbell, Clave, Conga, Maracas, Tambourine
 
-### Visual Themes
+### Visual Themes (8 themes!)
 - **Stock**: Clean dark theme (default)
 - **Cyberpunk**: Neon yellow, hot pink, electric blue with data streams and glitch effects
 - **Synthwave**: 80s retro with neon sunset, perspective grid, and color-cycling chasers
 - **Matrix**: Green on black with falling code animation
+- **Frutiger Aero**: Glossy Web 2.0 aesthetic with floating bubbles, clouds, and glass reflections
+- **Minimal**: Clean flat design with red accent, subtle geometric animations
+- **Vaporwave**: Pink/cyan retro-futurism with striped sunset, perspective grid, floating shapes
+- **Retro Terminal**: Authentic CRT simulation with scanlines, phosphor glow, screen curvature, and flicker
+- **High-DPI scaling**: All themes scale properly for 1440p, 4K, and ultrawide monitors
 
 ### Editing
 - **Piano Roll Editor**: Visual note editing with zoom and scroll
@@ -54,6 +69,7 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **Multi-note drag**: Select multiple notes and drag them together
 - **Dynamic timeline**: Grid automatically extends as you add notes
 - **Paste preview**: Ghost notes follow mouse for precise placement at any octave
+- **Zoom controls**: X/Y zoom sliders + Ctrl+Shift+Wheel for vertical zoom
 - **Full undo/redo**: 50 levels of history (Ctrl+Z / Ctrl+Y)
 
 ### Sound Palette
@@ -249,11 +265,15 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Copy/Paste with preview
 - [x] Box selection
 - [x] 21 drum sounds
-- [x] 10 synth presets
+- [x] 16 synth presets (10 classic + 6 synthwave)
+- [x] Supersaw oscillator (7 detuned saws)
 - [x] MP3 export (via LAME/FFmpeg)
-- [x] Visual themes (Cyberpunk, Synthwave, Matrix)
+- [x] Visual themes (8 themes: Stock, Cyberpunk, Synthwave, Matrix, Frutiger Aero, Minimal, Vaporwave, Retro Terminal)
 - [x] Multi-note selection and drag
 - [x] Expandable sound palette with duration variants
+- [x] Sound preview on note placement
+- [x] Piano roll zoom controls
+- [x] High-DPI theme scaling (1440p, 4K support)
 - [ ] FLAC export
 - [ ] VST plugin version
 - [ ] Pattern arrangement view

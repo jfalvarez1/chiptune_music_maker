@@ -659,7 +659,10 @@
             <li><a href="#drums" data-section="Drums"></a></li>
             <li><a href="#themes" data-section="Themes"></a></li>
             <li><a href="#files" data-section="Files"></a></li>
+            <li><a href="#views" data-section="Views"></a></li>
+            <li><a href="#padcontroller" data-section="Pad Controller"></a></li>
             <li><a href="#workflow" data-section="Workflow"></a></li>
+            <li><a href="#synthwave" data-section="Synthwave Guide"></a></li>
             <li><a href="#shortcuts" data-section="Shortcuts"></a></li>
             <li><a href="#advanced" data-section="Advanced"></a></li>
         </ul>
@@ -832,6 +835,45 @@
                 Each note remembers which sound it uses! You can have different sounds playing
                 simultaneously - mix pulse wave melodies with drum beats in the same pattern.
             </div>
+
+            <h3>Sound Preview</h3>
+            <p>When you place a note on the piano roll, you'll hear a brief <strong>preview</strong> of how
+            it sounds. This helps you:</p>
+            <ul>
+                <li>Verify you've selected the right instrument</li>
+                <li>Check the pitch is correct</li>
+                <li>Hear drums at the correct duration for your BPM</li>
+            </ul>
+
+            <h3>Zoom Controls</h3>
+            <p>The piano roll includes zoom controls for detailed editing:</p>
+            <table>
+                <tr>
+                    <th>Control</th>
+                    <th>What It Does</th>
+                </tr>
+                <tr>
+                    <td><strong>X Zoom Slider</strong></td>
+                    <td>Zoom horizontally (time axis) - 0.25x to 4x</td>
+                </tr>
+                <tr>
+                    <td><strong>Y Zoom Slider</strong></td>
+                    <td>Zoom vertically (pitch axis) - 0.5x to 3x</td>
+                </tr>
+                <tr>
+                    <td><strong>Reset Button</strong></td>
+                    <td>Return both zoom levels to 1x</td>
+                </tr>
+                <tr>
+                    <td><span class="keyboard-shortcut">Ctrl+Shift+Wheel</span></td>
+                    <td>Quick vertical zoom with mouse wheel</td>
+                </tr>
+            </table>
+
+            <div class="tip-box">
+                <strong>Tip:</strong> Zoom in when placing precise notes, zoom out to see the full pattern
+                structure. The zoom controls are in the piano roll toolbar next to the edit mode buttons.
+            </div>
         </section>
 
         <!-- ADSR Envelope -->
@@ -983,7 +1025,7 @@
             <h2>Oscillator Types (Sound Sources)</h2>
 
             <p>An <strong>oscillator</strong> is what generates the actual sound wave. Different wave shapes
-            produce different timbres (tone colors). ChiptuneTracker offers 6 classic oscillator types:</p>
+            produce different timbres (tone colors). ChiptuneTracker offers 7 oscillator types:</p>
 
             <div class="waveform-container">
                 <div class="waveform-box">
@@ -1015,6 +1057,12 @@
                     <h4>NOISE</h4>
                     <p>Random signal - sounds like static or "shhhh". Essential for percussion (hi-hats,
                     snares) and special effects.</p>
+                </div>
+                <div class="waveform-box">
+                    <canvas id="wave-supersaw"></canvas>
+                    <h4>SUPERSAW</h4>
+                    <p>7 detuned sawtooth oscillators for a massive, wide sound. Perfect for synthwave
+                    leads, pads, and creating huge walls of sound. The classic "trance" synth sound.</p>
                 </div>
                 <div class="waveform-box">
                     <canvas id="wave-custom"></canvas>
@@ -1064,11 +1112,13 @@
 
         <!-- Synths -->
         <section id="synths">
-            <h2>Synth Presets (10 Types!)</h2>
+            <h2>Synth Presets (16 Types!)</h2>
 
-            <p>ChiptuneTracker includes <strong>10 synthesizer presets</strong> that go beyond basic oscillators.
+            <p>ChiptuneTracker includes <strong>16 synthesizer presets</strong> that go beyond basic oscillators.
             These are pre-configured sounds with their own synthesis algorithms, perfect for creating rich,
             complex music without needing to tweak parameters.</p>
+
+            <h3>Classic Synths (10 Types)</h3>
 
             <div class="waveform-container">
                 <div class="waveform-box">
@@ -1127,6 +1177,47 @@
                 <strong>Quick Start:</strong> Click any synth in the Sound Palette to select it, then
                 click in the piano roll to place notes. Try the <strong>Lead</strong> for melodies,
                 <strong>Bass</strong> for low end, and <strong>Pad</strong> for atmospheric backgrounds!
+            </div>
+
+            <h3>Synthwave Synths (6 Types)</h3>
+            <p>Specialized presets designed for creating authentic 80s synthwave and retrowave music:</p>
+
+            <div class="waveform-container">
+                <div class="waveform-box">
+                    <h4>SW LEAD</h4>
+                    <p>Bright PWM lead with warmth. Multiple pulse waves with subtle detuning create
+                    that classic synthwave melody sound. Perfect for main themes and hooks.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>SW BASS</h4>
+                    <p>Deep 808-style saw bass. Massive low-end with sub harmonics. The foundation
+                    of any retrowave track. Use in C1-C2 range for maximum impact.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>SW PAD</h4>
+                    <p>Warm, lush evolving pad. Multiple detuned oscillators with slow attack create
+                    that dreamy, atmospheric synthwave backdrop. Hold long chords!</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>SW ARP</h4>
+                    <p>Crisp sequence/arp sound. Designed for rapid arpeggiated passages - the
+                    driving rhythmic element of synthwave. Quick attack and release.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>SW CHORD</h4>
+                    <p>Polyphonic stab for chords. Punchy attack with medium release - perfect for
+                    rhythmic chord stabs on the offbeat. The classic synth brass hit.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>SW FM</h4>
+                    <p>Classic DX7-style FM brass. Metallic, bright, and cutting. Inspired by the
+                    Yamaha DX7 that defined 80s pop. Great for leads and accent notes.</p>
+                </div>
+            </div>
+
+            <div class="info-box">
+                <strong>Synthwave Tip:</strong> Layer SW Bass with SW Pad for that full retrowave sound.
+                Add SW Arp running 16th notes for energy, and SW Lead for your main melody!
             </div>
         </section>
 
@@ -1264,9 +1355,9 @@ HiHat:   X - X - X - X -</code></pre>
         <section id="themes">
             <h2>Visual Themes</h2>
 
-            <p>ChiptuneTracker includes <strong>4 visual themes</strong> to customize your music-making
+            <p>ChiptuneTracker includes <strong>8 visual themes</strong> to customize your music-making
             experience. Each theme features animated backgrounds and unique color schemes. Select your
-            theme from the Theme dropdown in the interface.</p>
+            theme from <strong>View → Theme</strong> in the menu bar.</p>
 
             <div class="param-grid">
                 <div class="param-card">
@@ -1290,6 +1381,31 @@ HiHat:   X - X - X - X -</code></pre>
                     <h4>Matrix</h4>
                     <p>Green on black with falling code animation. Classic digital rain effect
                     inspired by the iconic movie. Minimal but atmospheric.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Frutiger Aero</h4>
+                    <p>Glossy Web 2.0 aesthetic (2004-2013 era). Features floating translucent bubbles
+                    with highlights, drifting clouds, and glass reflection effects. Sky blue gradient
+                    background with a light, airy feel.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Minimal</h4>
+                    <p>Clean, flat modern design with dark grays and a bold red accent color. Subtle
+                    grid pattern, traveling accent line, pulsing corner triangles, and floating
+                    geometric shapes. Professional and focused.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Vaporwave</h4>
+                    <p>Pink and cyan retro-futurism aesthetic. Features a striped sunset, perspective
+                    grid receding to the horizon, and floating wireframe shapes (triangles, circles,
+                    rotating squares). A E S T H E T I C vibes.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Retro Terminal</h4>
+                    <p>Authentic CRT monitor simulation with amber phosphor glow. Features prominent
+                    scanlines, screen curvature vignette, interlace flicker, RGB color fringing,
+                    occasional horizontal glitches, and a power-on roll effect. Nostalgic vintage
+                    computer feel.</p>
                 </div>
             </div>
 
@@ -1377,6 +1493,354 @@ HiHat:   X - X - X - X -</code></pre>
             </div>
         </section>
 
+        <!-- Views -->
+        <section id="views">
+            <h2>View Modes</h2>
+
+            <p>ChiptuneTracker offers multiple view modes for different aspects of music creation.
+            Switch between views using the tabs at the top of the interface.</p>
+
+            <h3>Piano Roll View</h3>
+            <p>The primary editing view where you visually place and edit notes:</p>
+            <ul>
+                <li><strong>Visual note editing:</strong> Click to place notes, drag to move</li>
+                <li><strong>Vertical axis:</strong> Pitch (higher notes at top)</li>
+                <li><strong>Horizontal axis:</strong> Time (left to right)</li>
+                <li><strong>Grid lines:</strong> Beat divisions for precise placement</li>
+                <li><strong>Playhead:</strong> Red line showing current position</li>
+            </ul>
+            <div class="tip-box">
+                The Piano Roll is best for detailed melodic work - creating melodies, adjusting
+                note lengths, and fine-tuning your composition.
+            </div>
+
+            <h3>Tracker View</h3>
+            <p>A traditional tracker-style interface inspired by classic music software like
+            FastTracker and ProTracker:</p>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Row-Based Editing</h4>
+                    <p>Notes displayed as rows in a vertical scrolling grid. Each row represents
+                    a time step (tick). Navigate with arrow keys.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Compact Notation</h4>
+                    <p>Notes shown as text: <code>C-4</code> = C in octave 4, <code>---</code> = empty,
+                    <code>===</code> = note off. Includes volume and effect columns.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Multiple Channels</h4>
+                    <p>See all channels side-by-side. Great for understanding how different
+                    parts interact rhythmically.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Pattern View</h4>
+                    <p>Each pattern is a fixed-length sequence. Chain patterns together
+                    in the Arrangement view to build full songs.</p>
+                </div>
+            </div>
+            <pre><code><span class="comment">// Example Tracker Display</span>
+Row  │ Ch.1      │ Ch.2      │ Ch.3      │ Ch.4
+─────┼───────────┼───────────┼───────────┼───────────
+ 00  │ C-4 01 -- │ --- -- -- │ E-4 02 -- │ G-4 02 --
+ 01  │ --- -- -- │ --- -- -- │ --- -- -- │ --- -- --
+ 02  │ D-4 01 -- │ --- -- -- │ F-4 02 -- │ A-4 02 --
+ 03  │ --- -- -- │ C-2 03 -- │ --- -- -- │ --- -- --
+ 04  │ E-4 01 -- │ --- -- -- │ G-4 02 -- │ B-4 02 --</code></pre>
+
+            <h3>Arrangement View</h3>
+            <p>The arrangement view lets you organize patterns into a complete song:</p>
+            <ul>
+                <li><strong>Timeline:</strong> Horizontal timeline showing song structure</li>
+                <li><strong>Pattern Clips:</strong> Drag patterns onto the timeline</li>
+                <li><strong>Multiple Tracks:</strong> Each channel has its own track lane</li>
+                <li><strong>Loop Regions:</strong> Define sections that repeat</li>
+                <li><strong>Song Length:</strong> Extend or shorten your composition</li>
+            </ul>
+            <div class="warning-box">
+                <strong>Pattern vs Arrangement:</strong> A <em>pattern</em> is a short repeating
+                sequence (like a 4-bar loop). The <em>arrangement</em> is how you chain those
+                patterns together to create a full song with intro, verse, chorus, etc.
+            </div>
+
+            <h3>Mixer View</h3>
+            <p>Control the mix of all channels and apply effects:</p>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Channel Faders</h4>
+                    <p>Adjust the volume of each channel. Vertical sliders just like a real
+                    mixing console. See peak meters for level monitoring.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Pan Controls</h4>
+                    <p>Position each channel in the stereo field. Left, right, or anywhere
+                    in between. Creates width and separation.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Mute / Solo</h4>
+                    <p><strong>Mute:</strong> Silence a channel. <strong>Solo:</strong> Hear only
+                    that channel. Essential for isolating parts while mixing.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Effects</h4>
+                    <p>Toggle per-channel effects: Bitcrusher (lo-fi crunch), Distortion (warmth),
+                    Filter (tone shaping), Delay (echo). Each has adjustable parameters.</p>
+                </div>
+            </div>
+            <table>
+                <tr>
+                    <th>Effect</th>
+                    <th>What It Does</th>
+                    <th>Best For</th>
+                </tr>
+                <tr>
+                    <td>Bitcrusher</td>
+                    <td>Reduces bit depth for that crunchy lo-fi sound</td>
+                    <td>Drums, retro vibes</td>
+                </tr>
+                <tr>
+                    <td>Distortion</td>
+                    <td>Adds harmonic saturation and warmth</td>
+                    <td>Bass, leads</td>
+                </tr>
+                <tr>
+                    <td>Filter</td>
+                    <td>Low-pass filter to cut high frequencies</td>
+                    <td>Pads, transitions</td>
+                </tr>
+                <tr>
+                    <td>Delay</td>
+                    <td>Echo/repeat effect synced to tempo</td>
+                    <td>Leads, atmosphere</td>
+                </tr>
+            </table>
+
+            <h3>Pad Controller View</h3>
+            <p>A live performance interface inspired by hardware like the AKAI MPK Mini and
+            Teenage Engineering OP-1. See the dedicated <a href="#padcontroller">Pad Controller</a>
+            section for full details!</p>
+        </section>
+
+        <!-- Pad Controller -->
+        <section id="padcontroller">
+            <h2>Live Pad Controller</h2>
+
+            <p>The <strong>Pad Controller</strong> is a live performance interface that lets you
+            create music in real-time, like having a hardware synthesizer and drum machine built
+            into ChiptuneTracker. Inspired by the <strong>AKAI MPK Mini</strong> and
+            <strong>Teenage Engineering OP-1</strong>!</p>
+
+            <div class="info-box">
+                <strong>What Can You Do?</strong>
+                <ul style="margin-top: 10px;">
+                    <li>Trigger drum sounds and synths with a 4x4 pad grid</li>
+                    <li>Play melodies on a virtual 2-octave keyboard</li>
+                    <li>Adjust sound parameters in real-time with 8 knobs</li>
+                    <li>Use the built-in arpeggiator for automatic patterns</li>
+                    <li><strong>Record your performance</strong> directly into a pattern!</li>
+                </ul>
+            </div>
+
+            <h3>Interface Layout</h3>
+            <pre><code>┌────────────────────────────────────────────────────────────────┐
+│  [●REC] [▶PLAY] [■STOP]  BPM:[120]  Metronome:[✓]  Quantize:[✓]│
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  ╔═══ PADS ═══╗   ╔═══ WAVEFORM ═══╗   ╔═══ KNOBS ════════╗  │
+│  ║[1][2][3][4]║   ║                 ║   ║ (A)ATK   (S)SUS  ║  │
+│  ║[5][6][7][8]║   ║   ~∿~∿~∿~∿~    ║   ║ (D)DEC   (R)REL  ║  │
+│  ║[9][10][11] ║   ║                 ║   ║                  ║  │
+│  ║[12][13][14]║   ║  Sound: SAW     ║   ║ (P)PWD   (T)DET  ║  │
+│  ║   [15][16] ║   ╚═════════════════╝   ║ (F)FLT   (V)VOL  ║  │
+│  ║            ║                         ╚══════════════════╝  │
+│  ║ Bank:[A][B]║                                               │
+│  ╚════════════╝                                               │
+│                                                                │
+│  ╔═══ ARPEGGIATOR ═══════════════════════════════════════════╗│
+│  ║ [ON/OFF]  Mode:[Up][Down][UpDn][Rand]  Rate:[1/8]  Oct:[1]║│
+│  ╚═══════════════════════════════════════════════════════════╝│
+│                                                                │
+│  ╔═══ KEYBOARD ══════════════════════════════════════════════╗│
+│  ║ [◄] Octave: 4 [►]                                         ║│
+│  ║ ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐        ║│
+│  ║ │C│D│E│F│G│A│B│C│D│E│F│G│A│B│C│D│E│F│G│A│B│C│D│E│        ║│
+│  ║ └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘        ║│
+│  ╚═══════════════════════════════════════════════════════════╝│
+└────────────────────────────────────────────────────────────────┘</code></pre>
+
+            <h3>The Pad Grid (4x4 = 16 Pads)</h3>
+            <p>Click pads to trigger sounds instantly. Each pad is assigned to a different sound:</p>
+            <table>
+                <tr>
+                    <th>Bank A (Drums)</th>
+                    <th>Bank B (Synths)</th>
+                </tr>
+                <tr>
+                    <td>1-4: Kick, Kick808, Snare, Snare808</td>
+                    <td>1-4: Pulse, Triangle, Sawtooth, Sine</td>
+                </tr>
+                <tr>
+                    <td>5-8: HiHat, HiHatOpen, Clap, Rim</td>
+                    <td>5-8: Supersaw, Lead, Pad, Bass</td>
+                </tr>
+                <tr>
+                    <td>9-12: Tom, TomLow, TomHigh, Crash</td>
+                    <td>9-12: Pluck, Arp, Strings, Brass</td>
+                </tr>
+                <tr>
+                    <td>13-16: Ride, Cowbell, Clave, Tambourine</td>
+                    <td>13-16: SW Lead, SW Bass, SW Pad, SW Arp</td>
+                </tr>
+            </table>
+            <div class="tip-box">
+                <strong>Color Coding:</strong> Pads light up in different colors based on sound type:
+                <ul style="margin-top: 10px;">
+                    <li><span style="color: #ff4444;">Red</span> = Kicks</li>
+                    <li><span style="color: #ff8844;">Orange</span> = Snares/Claps</li>
+                    <li><span style="color: #ffff44;">Yellow</span> = Hi-Hats/Cymbals</li>
+                    <li><span style="color: #44ff44;">Green</span> = Toms/Percussion</li>
+                    <li><span style="color: #44ffff;">Cyan</span> = Basic Oscillators</li>
+                    <li><span style="color: #ff44ff;">Magenta</span> = Synth Presets</li>
+                </ul>
+            </div>
+
+            <h3>The 8 Parameter Knobs</h3>
+            <p>Adjust sound parameters in real-time. Changes affect the next note played:</p>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4 style="color: #ff6b6b;">A - Attack</h4>
+                    <p>How quickly the sound reaches full volume. Turn up for slow swells,
+                    down for instant punch.</p>
+                </div>
+                <div class="param-card">
+                    <h4 style="color: #ffd93d;">D - Decay</h4>
+                    <p>How quickly it drops to sustain level after the initial attack.
+                    Short = plucky, Long = natural.</p>
+                </div>
+                <div class="param-card">
+                    <h4 style="color: #6bcb77;">S - Sustain</h4>
+                    <p>The volume level while holding a note. 0 = fades away,
+                    1 = stays at full volume.</p>
+                </div>
+                <div class="param-card">
+                    <h4 style="color: #4d96ff;">R - Release</h4>
+                    <p>How long the sound takes to fade after release. Short = tight,
+                    Long = ambient tail.</p>
+                </div>
+                <div class="param-card">
+                    <h4 style="color: #ff44ff;">P - Pulse Width</h4>
+                    <p>For pulse waves: changes the duty cycle. 50% = square,
+                    12.5% = thin and nasal.</p>
+                </div>
+                <div class="param-card">
+                    <h4 style="color: #44ffff;">T - Detune</h4>
+                    <p>Slightly shifts pitch for chorus/unison effects. Great for
+                    fattening up leads and pads.</p>
+                </div>
+                <div class="param-card">
+                    <h4 style="color: #ffaa44;">F - Filter</h4>
+                    <p>Low-pass filter cutoff. Turn down to darken the sound,
+                    up for full brightness.</p>
+                </div>
+                <div class="param-card">
+                    <h4 style="color: #ffffff;">V - Volume</h4>
+                    <p>Overall volume of the current sound. Use for dynamics
+                    and mixing balance.</p>
+                </div>
+            </div>
+
+            <h3>The Arpeggiator</h3>
+            <p>Automatically plays patterns of notes when you hold keys on the keyboard:</p>
+            <table>
+                <tr>
+                    <th>Mode</th>
+                    <th>Pattern</th>
+                    <th>Example (C-E-G held)</th>
+                </tr>
+                <tr>
+                    <td>Up</td>
+                    <td>Low to high, repeat</td>
+                    <td>C-E-G-C-E-G-C-E-G...</td>
+                </tr>
+                <tr>
+                    <td>Down</td>
+                    <td>High to low, repeat</td>
+                    <td>G-E-C-G-E-C-G-E-C...</td>
+                </tr>
+                <tr>
+                    <td>Up-Down</td>
+                    <td>Bounce up and down</td>
+                    <td>C-E-G-E-C-E-G-E-C...</td>
+                </tr>
+                <tr>
+                    <td>Random</td>
+                    <td>Random order</td>
+                    <td>E-C-G-G-C-E-C-G-E...</td>
+                </tr>
+            </table>
+            <p><strong>Rate:</strong> Speed of the arpeggio (1/4, 1/8, 1/16, 1/32 notes)</p>
+            <p><strong>Octave:</strong> How many octaves to span (1-3)</p>
+
+            <h3>Recording Your Performance</h3>
+            <p>The most powerful feature! Record your live playing directly into a pattern:</p>
+            <ol>
+                <li>Click the <strong style="color: #ff4444;">●REC</strong> button (turns red when active)</li>
+                <li>Click <strong>▶PLAY</strong> to start playback with recording</li>
+                <li>Play pads and keys - your hits are recorded with timing!</li>
+                <li>Click <strong>■STOP</strong> when finished</li>
+                <li>Your notes appear in the Piano Roll pattern</li>
+            </ol>
+            <div class="warning-box">
+                <strong>Quantize Option:</strong> When enabled, recorded notes snap to the nearest
+                grid line (1/16 note by default). Turn off for human feel with natural timing variations.
+            </div>
+            <div class="tip-box">
+                <strong>Pro Workflow:</strong>
+                <ol style="margin-top: 10px;">
+                    <li>Record a basic drum pattern with Bank A pads</li>
+                    <li>Switch to Bank B and record a bass line on the keyboard</li>
+                    <li>Add a melody layer with the arpeggiator</li>
+                    <li>Fine-tune in Piano Roll view</li>
+                </ol>
+            </div>
+
+            <h3>Keyboard Shortcuts for Pad Controller</h3>
+            <table>
+                <tr>
+                    <th>Key</th>
+                    <th>Action</th>
+                </tr>
+                <tr>
+                    <td><span class="keyboard-shortcut">1-9, 0, -, =</span></td>
+                    <td>Trigger pads 1-12</td>
+                </tr>
+                <tr>
+                    <td><span class="keyboard-shortcut">Q, W, E, R</span></td>
+                    <td>Trigger pads 13-16</td>
+                </tr>
+                <tr>
+                    <td><span class="keyboard-shortcut">Z-M</span> (bottom row)</td>
+                    <td>Play keyboard notes (white keys)</td>
+                </tr>
+                <tr>
+                    <td><span class="keyboard-shortcut">S, D, G, H, J</span></td>
+                    <td>Play keyboard notes (black keys)</td>
+                </tr>
+                <tr>
+                    <td><span class="keyboard-shortcut">Space</span></td>
+                    <td>Play/Pause</td>
+                </tr>
+                <tr>
+                    <td><span class="keyboard-shortcut">R</span> (hold Ctrl)</td>
+                    <td>Toggle Record</td>
+                </tr>
+                <tr>
+                    <td><span class="keyboard-shortcut">Tab</span></td>
+                    <td>Switch pad banks (A/B)</td>
+                </tr>
+            </table>
+        </section>
+
         <!-- Workflow -->
         <section id="workflow">
             <h2>Music Making Workflow</h2>
@@ -1424,6 +1888,200 @@ HiHat:   X - X - X - X -</code></pre>
                 because of what's NOT there. Don't fill every space with notes. Let each element
                 breathe and the music will have more impact.
             </div>
+        </section>
+
+        <!-- Synthwave Music Guide -->
+        <section id="synthwave">
+            <h2>How to Make Synthwave Music</h2>
+
+            <p>Synthwave (also called retrowave, outrun, or futuresynth) is a genre inspired by 1980s
+            electronic music, film soundtracks, and video games. It evokes neon-lit cityscapes, fast cars,
+            and retro-futuristic aesthetics. Here's how to create authentic synthwave in ChiptuneTracker!</p>
+
+            <h3>The Synthwave Sound</h3>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Key Characteristics</h4>
+                    <ul>
+                        <li>Tempo: 80-118 BPM (slower than you might think!)</li>
+                        <li>Heavy use of synthesizers and drum machines</li>
+                        <li>Arpeggiated sequences driving the rhythm</li>
+                        <li>Big, emotional melodies</li>
+                        <li>Deep, powerful bass lines</li>
+                        <li>Atmospheric pads for depth</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Influences to Study</h4>
+                    <ul>
+                        <li><strong>Artists:</strong> Kavinsky, Perturbator, Carpenter Brut, The Midnight</li>
+                        <li><strong>Films:</strong> Drive, Blade Runner, Tron, Terminator</li>
+                        <li><strong>Games:</strong> Far Cry 3: Blood Dragon, Hotline Miami</li>
+                        <li><strong>Era:</strong> 1980s Italo disco, early electronic pop</li>
+                    </ul>
+                </div>
+            </div>
+
+            <h3>Step-by-Step: Building a Synthwave Track</h3>
+
+            <h4>1. Set the Tempo (80-100 BPM)</h4>
+            <p>Synthwave is often slower than people expect. Try starting at <strong>96 BPM</strong> -
+            it gives that driving but not rushed feel. Enable the <strong>Synthwave theme</strong> for
+            the full visual experience!</p>
+
+            <h4>2. Create the Drum Foundation</h4>
+            <p>Synthwave uses electronic drum machine sounds. Start with this classic pattern:</p>
+            <pre><code><span class="comment">// Classic Synthwave Beat (96 BPM, 4/4)</span>
+Beat:      1   +   2   +   3   +   4   +
+Kick 808:  X   -   -   -   X   -   -   -
+Snare 808: -   -   X   -   -   -   X   -
+HiHat:     X   X   X   X   X   X   X   X
+
+<span class="comment">// Add an open hi-hat on the "and" of 2 and 4</span>
+Beat:      1   +   2   +   3   +   4   +
+HiHatOpen: -   -   -   X   -   -   -   X</code></pre>
+
+            <div class="tip-box">
+                <strong>Drum Selection:</strong> Use <strong>Kick 808</strong> and <strong>Snare 808</strong>
+                for authentic synthwave drums. The 808 sounds have longer decays that work perfectly with
+                the genre. Add <strong>Clap</strong> layered with snare for bigger hits!
+            </div>
+
+            <h4>3. Add the Bass Line</h4>
+            <p>The bass is crucial in synthwave - it needs to be deep and powerful:</p>
+            <ol>
+                <li>Select <strong>SW Bass</strong> from the Synthwave synths</li>
+                <li>Place notes in the <strong>C1-C2 octave range</strong></li>
+                <li>Follow the kick drum pattern initially</li>
+                <li>Add movement with octave jumps and passing notes</li>
+            </ol>
+            <pre><code><span class="comment">// Simple driving bass (root note = C)</span>
+Beat:  1   +   2   +   3   +   4   +
+Bass:  C1  -   C1  C2  C1  -   C1  G1
+
+<span class="comment">// More melodic bass</span>
+Beat:  1   +   2   +   3   +   4   +
+Bass:  C1  -   E1  -   G1  -   E1  C2</code></pre>
+
+            <h4>4. Create the Arpeggio</h4>
+            <p>The driving arpeggio is the heart of synthwave's energy:</p>
+            <ol>
+                <li>Select <strong>SW Arp</strong></li>
+                <li>Create a chord pattern (try C-E-G for C major)</li>
+                <li>Place notes as 16th notes (4 notes per beat)</li>
+                <li>Follow a pattern: low-mid-high-mid or similar</li>
+            </ol>
+            <pre><code><span class="comment">// Classic synthwave arp pattern (C major chord)</span>
+Beat:     1 e + a 2 e + a 3 e + a 4 e + a
+Arp:      C E G E C E G E C E G E C E G E
+Octave:   3 3 3 3 4 4 4 4 3 3 3 3 4 4 4 4</code></pre>
+
+            <div class="warning-box">
+                <strong>Don't Overdo It:</strong> The arp should drive the track, not dominate it.
+                Keep it at a moderate volume and consider dropping it out during verses or breakdowns
+                to create contrast.
+            </div>
+
+            <h4>5. Add Atmospheric Pads</h4>
+            <p>Pads create the emotional depth and space in synthwave:</p>
+            <ol>
+                <li>Select <strong>SW Pad</strong></li>
+                <li>Place long sustained chords (4-8 beats each)</li>
+                <li>Use simple chord progressions (i-VI-III-VII is classic)</li>
+                <li>Let them ring under everything else</li>
+            </ol>
+            <pre><code><span class="comment">// Emotional pad progression (Am - F - C - G)</span>
+Bars:    |   1   |   2   |   3   |   4   |
+Chords:  |  Am   |   F   |   C   |   G   |
+Notes:   | A-C-E | F-A-C | C-E-G | G-B-D |</code></pre>
+
+            <h4>6. Write the Lead Melody</h4>
+            <p>The lead carries the emotional hook - make it memorable:</p>
+            <ol>
+                <li>Select <strong>SW Lead</strong></li>
+                <li>Work in the <strong>C4-C5 octave range</strong></li>
+                <li>Use the minor scale for that nostalgic synthwave feel</li>
+                <li>Include dramatic jumps and sustained notes</li>
+                <li>Leave space - silence is powerful!</li>
+            </ol>
+
+            <div class="tip-box">
+                <strong>Melody Tips:</strong>
+                <ul style="margin-top: 10px;">
+                    <li>Start phrases on beat 1 or the "and" of beat 4</li>
+                    <li>End phrases on chord tones (root, 3rd, 5th)</li>
+                    <li>Use longer notes for emotional impact</li>
+                    <li>Repeat motifs - recognition creates satisfaction</li>
+                </ul>
+            </div>
+
+            <h3>Synthwave Song Structure</h3>
+            <table>
+                <tr>
+                    <th>Section</th>
+                    <th>Length</th>
+                    <th>Elements</th>
+                </tr>
+                <tr>
+                    <td>Intro</td>
+                    <td>8-16 bars</td>
+                    <td>Pad + light arp, build anticipation</td>
+                </tr>
+                <tr>
+                    <td>Verse/Build</td>
+                    <td>16 bars</td>
+                    <td>Add drums, bass, full arp</td>
+                </tr>
+                <tr>
+                    <td>Chorus/Drop</td>
+                    <td>16 bars</td>
+                    <td>Lead melody enters, everything playing</td>
+                </tr>
+                <tr>
+                    <td>Breakdown</td>
+                    <td>8 bars</td>
+                    <td>Strip back to pad + simple drums</td>
+                </tr>
+                <tr>
+                    <td>Final Chorus</td>
+                    <td>16 bars</td>
+                    <td>Everything back, maybe octave up the lead</td>
+                </tr>
+                <tr>
+                    <td>Outro</td>
+                    <td>8-16 bars</td>
+                    <td>Gradual removal of elements</td>
+                </tr>
+            </table>
+
+            <h3>Essential Synthwave Chord Progressions</h3>
+            <pre><code><span class="comment">// The "Outrun" progression (minor key)</span>
+i - VI - III - VII  (Am - F - C - G in A minor)
+
+<span class="comment">// The "Emotional" progression</span>
+i - iv - VI - V   (Am - Dm - F - E in A minor)
+
+<span class="comment">// The "Driving" progression</span>
+i - III - VII - IV  (Am - C - G - D in A minor)
+
+<span class="comment">// The "Epic" progression</span>
+VI - VII - i - i  (F - G - Am - Am in A minor)</code></pre>
+
+            <div class="info-box">
+                <strong>Why Minor Keys?</strong> Synthwave almost always uses minor keys because they
+                create that nostalgic, melancholic-yet-hopeful feeling that defines the genre. A minor
+                and E minor are popular choices - they sit well in the middle of the keyboard range.
+            </div>
+
+            <h3>Pro Tips for Authentic Synthwave</h3>
+            <ul>
+                <li><strong>Layer your sounds:</strong> Use Supersaw + SW Lead together for huge leads</li>
+                <li><strong>Side-chain feel:</strong> Make the bass slightly shorter to let the kick punch through</li>
+                <li><strong>Build tension:</strong> Drop elements before choruses, then bring everything back</li>
+                <li><strong>Use the Synthwave theme:</strong> The sunset and grid visuals will inspire you!</li>
+                <li><strong>Reverb simulation:</strong> Use longer release times on pads and leads</li>
+                <li><strong>Crash cymbals:</strong> Add crashes on the first beat of new sections</li>
+            </ul>
         </section>
 
         <!-- Keyboard Shortcuts -->
@@ -1589,9 +2247,9 @@ HiHat:   X - X - X - X -</code></pre>
         </section>
 
         <footer>
-            <p>CHIPTUNE TRACKER v2.2</p>
+            <p>CHIPTUNE TRACKER v2.3</p>
             <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
-            <p>10 Synths | 21 Drums (with duration variants) | 4 Themes | Multi-note Drag</p>
+            <p>7 Oscillators (incl. Supersaw) | 16 Synths | 21 Drums | 4 Themes | High-DPI Support</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>
@@ -1793,6 +2451,23 @@ HiHat:   X - X - X - X -</code></pre>
                         ctx.lineTo(x, h*0.3 + Math.random() * h*0.4);
                     }
                     ctx.stroke();
+                },
+                'wave-supersaw': (ctx, w, h) => {
+                    // Draw multiple detuned saws
+                    const offsets = [0, -0.1, 0.1, -0.05, 0.05];
+                    offsets.forEach((offset, i) => {
+                        ctx.globalAlpha = i === 0 ? 1 : 0.4;
+                        ctx.beginPath();
+                        const yOff = offset * h * 0.5;
+                        ctx.moveTo(10, h*0.7 + yOff);
+                        ctx.lineTo(w*0.3, h*0.3 + yOff);
+                        ctx.lineTo(w*0.3, h*0.7 + yOff);
+                        ctx.lineTo(w*0.6, h*0.3 + yOff);
+                        ctx.lineTo(w*0.6, h*0.7 + yOff);
+                        ctx.lineTo(w-10, h*0.3 + yOff);
+                        ctx.stroke();
+                    });
+                    ctx.globalAlpha = 1;
                 },
                 'wave-custom': (ctx, w, h) => {
                     ctx.beginPath();
