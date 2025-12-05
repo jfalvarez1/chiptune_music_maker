@@ -13,6 +13,36 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
+### What's New in v2.7.0
+
+**Window Layout & Workflow Improvements:**
+- **Proper initial window layout** - Windows now open in organized positions on first launch
+  - Top row: Transport, File, Views
+  - Left column: Sound Palette, Patterns, Pad Controller
+  - Main area: Piano Roll (center)
+  - Right column: Note Editor, Channel Editor
+  - Bottom: Mixer, Tracker, Arrangement
+
+**Groove & Feel System:**
+- **Swing control** (0-100%) - Shift off-beat notes forward for groove feel
+  - Grid options: 8th notes, 16th notes, 32nd notes
+  - Creates shuffle/swing rhythm patterns automatically
+- **Humanize** - Add random variation for natural, human-like timing
+  - Timing variation: 0-50ms
+  - Velocity variation: 0-30%
+
+**Hi-Hat Roll Generator Tool:**
+- Quickly create drum fills and rapid hi-hat patterns
+- **Density options**: 8th, 16th, 32nd, 64th notes
+- **Velocity modes**: Flat, Crescendo, Decrescendo
+- **Hi-hat types**: Closed, Open, Pedal
+
+**Sidechain Compression Effect:**
+- Classic EDM "pumping" effect - duck one channel based on another
+- Perfect for making bass duck when kick plays
+- **Presets**: Subtle (5dB), Normal (10dB), Heavy (15dB), Pumping (20dB)
+- Adjustable attack, release, ratio, and threshold
+
 ### What's New in v2.6.0
 
 **Drum Synthesis Engine Overhaul** - Complete rewrite of drum sound generation for authentic 808/909 character:
@@ -340,6 +370,7 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Hi-hat roll generator tool
 - [x] Sidechain compression (classic EDM pumping)
 - [x] Pattern arrangement view with drag & drop
+- [x] Proper initial window layout (v2.7.0)
 - [ ] FLAC export
 - [ ] VST plugin version
 - [ ] MIDI import/export
