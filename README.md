@@ -51,9 +51,16 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **Piano Roll Editor**: Visual note editing with zoom and scroll
 - **Three edit modes**: Draw, Select, Erase (hotkeys: D, S, E)
 - **Box selection**: Click and drag to select multiple notes
+- **Multi-note drag**: Select multiple notes and drag them together
 - **Dynamic timeline**: Grid automatically extends as you add notes
 - **Paste preview**: Ghost notes follow mouse for precise placement at any octave
 - **Full undo/redo**: 50 levels of history (Ctrl+Z / Ctrl+Y)
+
+### Sound Palette
+- **Expandable categories**: Collapsible sections for Oscillators, Synths, and Drums
+- **Drum categories**: Kicks, Snares, Hi-Hats, Toms, Cymbals, Percussion
+- **Duration variants**: Each drum has Short (0.5x), Normal (1x), and Long (2x) options
+- **Click to select**: Choose a sound, then click on piano roll to place
 
 ### File Operations
 - **Project save/load**: Native .ctp format preserves all notes and settings
@@ -245,6 +252,8 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] 10 synth presets
 - [x] MP3 export (via LAME/FFmpeg)
 - [x] Visual themes (Cyberpunk, Synthwave, Matrix)
+- [x] Multi-note selection and drag
+- [x] Expandable sound palette with duration variants
 - [ ] FLAC export
 - [ ] VST plugin version
 - [ ] Pattern arrangement view

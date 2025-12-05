@@ -54,6 +54,17 @@ static int g_DraggedOscillatorType = -1;
 
 // Global state for selected palette item (for click-to-place)
 static int g_SelectedPaletteItem = -1;  // -1 = none selected
+static float g_SelectedDurationMult = 1.0f;  // Duration multiplier for drums (0.5 = short, 1.0 = normal, 2.0 = long)
+
+// Palette category expansion state
+static bool g_PaletteExpanded_Oscillators = false;
+static bool g_PaletteExpanded_Synths = false;
+static bool g_PaletteExpanded_Kicks = true;
+static bool g_PaletteExpanded_Snares = true;
+static bool g_PaletteExpanded_HiHats = true;
+static bool g_PaletteExpanded_Toms = false;
+static bool g_PaletteExpanded_Cymbals = false;
+static bool g_PaletteExpanded_Percussion = false;
 
 // Global undo/redo history
 static UndoHistory g_UndoHistory;
@@ -1954,12 +1965,22 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             switch (ui.pianoRollMode) {
                 case PianoRollMode::Select:
                     if (noteUnderCursor >= 0) {
-                        ui.selectedNoteIndex = noteUnderCursor;
+                        // Check if clicked note is part of existing multi-selection
+                        bool isPartOfMultiSelection = false;
+                        for (int idx : ui.selectedNoteIndices) {
+                            if (idx == noteUnderCursor) {
+                                isPartOfMultiSelection = true;
+                                break;
+                            }
+                        }
+
                         // Check if this is a drum (drums can't be resized)
                         bool isDrumNote = isDrumType(pattern.notes[noteUnderCursor].oscillatorType);
-                        if (onResizeHandle && !isDrumNote) {
+
+                        if (onResizeHandle && !isDrumNote && !isPartOfMultiSelection) {
                             // Save state for undo before resizing (drums can't resize)
                             g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                            ui.selectedNoteIndex = noteUnderCursor;
                             // Start resizing
                             ui.isResizingNote = true;
                             ui.dragStartDuration = pattern.notes[noteUnderCursor].duration;
@@ -1967,10 +1988,29 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         } else if (!onResizeHandle) {
                             // Save state for undo before dragging
                             g_UndoHistory.saveState(pattern, ui.selectedPattern);
-                            // Start dragging
-                            ui.isDraggingNote = true;
-                            ui.dragStartBeat = pattern.notes[noteUnderCursor].startTime;
-                            ui.dragStartPitch = pattern.notes[noteUnderCursor].pitch;
+
+                            if (isPartOfMultiSelection && ui.selectedNoteIndices.size() > 1) {
+                                // Start multi-drag - keep all selected notes and drag them together
+                                ui.isDraggingMultiple = true;
+                                ui.dragAnchorBeat = hoveredBeat;
+                                ui.dragAnchorPitch = hoveredNote;
+
+                                // Store offsets for each selected note relative to anchor
+                                ui.multiDragOffsets.clear();
+                                for (int idx : ui.selectedNoteIndices) {
+                                    const Note& note = pattern.notes[idx];
+                                    float beatOffset = note.startTime - hoveredBeat;
+                                    int pitchOffset = note.pitch - hoveredNote;
+                                    ui.multiDragOffsets.push_back({beatOffset, pitchOffset});
+                                }
+                            } else {
+                                // Single note drag - clear multi-selection and drag just this note
+                                ui.selectedNoteIndex = noteUnderCursor;
+                                ui.selectedNoteIndices.clear();
+                                ui.isDraggingNote = true;
+                                ui.dragStartBeat = pattern.notes[noteUnderCursor].startTime;
+                                ui.dragStartPitch = pattern.notes[noteUnderCursor].pitch;
+                            }
                         }
                     } else {
                         // Start box selection on empty space
@@ -2001,7 +2041,8 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         // Set duration based on sound type - drums auto-adjust to BPM
                         if (isDrumType(newNote.oscillatorType)) {
                             float decayTime = getDrumDecayTime(newNote.oscillatorType);
-                            newNote.duration = decayTime * (project.bpm / 60.0f);
+                            // Apply duration multiplier from palette selection
+                            newNote.duration = decayTime * (project.bpm / 60.0f) * g_SelectedDurationMult;
                         } else {
                             newNote.duration = 0.25f;
                         }
@@ -2038,11 +2079,33 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         // Handle dragging
         if (ImGui::IsMouseDown(0)) {
             if (ui.isDraggingNote && ui.selectedNoteIndex >= 0) {
+                // Single note drag
                 Note& note = pattern.notes[ui.selectedNoteIndex];
                 float newBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
                 int newPitch = std::clamp(hoveredNote, lowestNote, highestNote - 1);
                 note.startTime = std::max(0.0f, newBeat);
                 note.pitch = newPitch;
+            }
+            if (ui.isDraggingMultiple && !ui.selectedNoteIndices.empty()) {
+                // Multi-note drag - move all selected notes together
+                float snappedBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                int currentPitch = hoveredNote;
+
+                // Apply offset to each selected note
+                for (size_t i = 0; i < ui.selectedNoteIndices.size() && i < ui.multiDragOffsets.size(); ++i) {
+                    int idx = ui.selectedNoteIndices[i];
+                    if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                        Note& note = pattern.notes[idx];
+                        float beatOffset = ui.multiDragOffsets[i].first;
+                        int pitchOffset = ui.multiDragOffsets[i].second;
+
+                        float newBeat = snappedBeat + beatOffset;
+                        int newPitch = currentPitch + pitchOffset;
+
+                        note.startTime = std::max(0.0f, std::floor(newBeat * 4.0f) / 4.0f);
+                        note.pitch = std::clamp(newPitch, lowestNote, highestNote - 1);
+                    }
+                }
             }
             if (ui.isResizingNote && ui.selectedNoteIndex >= 0) {
                 Note& note = pattern.notes[ui.selectedNoteIndex];
@@ -2063,7 +2126,9 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         // Handle mouse release
         if (ImGui::IsMouseReleased(0)) {
             ui.isDraggingNote = false;
+            ui.isDraggingMultiple = false;
             ui.isResizingNote = false;
+            ui.multiDragOffsets.clear();
 
             // Complete box selection - find all notes in the box
             if (ui.isBoxSelecting) {
@@ -2116,7 +2181,9 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         // Release drag if mouse leaves area
         if (ImGui::IsMouseReleased(0)) {
             ui.isDraggingNote = false;
+            ui.isDraggingMultiple = false;
             ui.isResizingNote = false;
+            ui.multiDragOffsets.clear();
         }
     }
 
@@ -3178,295 +3245,278 @@ inline void DrawWaveformIcon(ImDrawList* drawList, ImVec2 pos, ImVec2 size, Osci
     }
 }
 
+// Helper to draw a drum item with duration variant
+inline void DrawDrumVariant(ImDrawList* drawList, int oscIndex, const char* name, const char* desc,
+                            float durationMult, const char* durationLabel,
+                            Project& project, UIState& ui, Sequencer& seq) {
+    ImVec2 itemSize(120, 28);
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+
+    bool isPaletteSelected = (g_SelectedPaletteItem == oscIndex && std::abs(g_SelectedDurationMult - durationMult) < 0.01f);
+
+    // Colors based on selection state
+    ImU32 bgColor = isPaletteSelected ? IM_COL32(140, 80, 80, 255) : IM_COL32(50, 40, 40, 200);
+    ImU32 textColor = isPaletteSelected ? IM_COL32(255, 220, 220, 255) : IM_COL32(200, 150, 150, 255);
+    ImU32 borderColor = isPaletteSelected ? IM_COL32(255, 150, 150, 255) : IM_COL32(80, 60, 60, 255);
+
+    drawList->AddRectFilled(pos, ImVec2(pos.x + itemSize.x, pos.y + itemSize.y), bgColor, 3.0f);
+    drawList->AddRect(pos, ImVec2(pos.x + itemSize.x, pos.y + itemSize.y), borderColor, 3.0f, 0, isPaletteSelected ? 2.0f : 1.0f);
+
+    // Draw small icon
+    ImVec2 iconPos(pos.x + 4, pos.y + 4);
+    ImVec2 iconSize(20, 20);
+    DrawWaveformIcon(drawList, iconPos, iconSize, static_cast<OscillatorType>(oscIndex), textColor);
+
+    // Draw text
+    char label[64];
+    snprintf(label, sizeof(label), "%s %s", name, durationLabel);
+    drawList->AddText(ImVec2(pos.x + 28, pos.y + 6), textColor, label);
+
+    // Invisible button for interaction
+    ImGui::InvisibleButton(label, itemSize);
+
+    if (ImGui::IsItemClicked()) {
+        if (isPaletteSelected) {
+            g_SelectedPaletteItem = -1;
+            g_SelectedDurationMult = 1.0f;
+        } else {
+            g_SelectedPaletteItem = oscIndex;
+            g_SelectedDurationMult = durationMult;
+            ui.pianoRollMode = PianoRollMode::Draw;
+            project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(oscIndex);
+            seq.updateChannelConfigs();
+        }
+    }
+
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::Text("%s (%s)", name, durationLabel);
+        ImGui::TextDisabled("%s", desc);
+        ImGui::TextDisabled("Duration: %.1fx", durationMult);
+        if (isPaletteSelected) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "SELECTED");
+        }
+        ImGui::EndTooltip();
+    }
+}
+
+// Helper to draw a drum category with expandable variations
+inline void DrawDrumCategory(const char* categoryName, bool& expanded,
+                             const int* oscIndices, const char** names, const char** descs, int count,
+                             Project& project, UIState& ui, Sequencer& seq) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.2f, 0.2f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.4f, 0.25f, 0.25f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.3f, 0.3f, 1.0f));
+
+    if (ImGui::CollapsingHeader(categoryName, expanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        expanded = true;
+        ImGui::Indent(10.0f);
+
+        for (int i = 0; i < count; ++i) {
+            int oscIdx = oscIndices[i];
+            ImGui::PushID(oscIdx * 100);
+
+            // Show drum name as sub-header
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.7f, 1.0f), "%s", names[i]);
+
+            // Duration variations in a row
+            DrawDrumVariant(drawList, oscIdx, names[i], descs[i], 0.5f, "(Short)", project, ui, seq);
+            ImGui::SameLine();
+            DrawDrumVariant(drawList, oscIdx, names[i], descs[i], 1.0f, "(Normal)", project, ui, seq);
+            ImGui::SameLine();
+            DrawDrumVariant(drawList, oscIdx, names[i], descs[i], 2.0f, "(Long)", project, ui, seq);
+
+            ImGui::PopID();
+        }
+
+        ImGui::Unindent(10.0f);
+    } else {
+        expanded = false;
+    }
+
+    ImGui::PopStyleColor(3);
+}
+
 inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Begin("Sound Palette");
 
-    ImGui::Text("Click to select, then click on Piano Roll to place");
+    ImGui::Text("Click to select, then draw on Piano Roll");
     ImGui::Separator();
 
     const char* oscNames[] = {
-        // Oscillators (0-5)
         "Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Custom",
-        // Synths (6-15)
-        "Lead", "Pad", "Bass", "Pluck", "Arp",
-        "Organ", "Strings", "Brass", "Chip", "Bell",
-        // Kicks (16-19)
+        "Lead", "Pad", "Bass", "Pluck", "Arp", "Organ", "Strings", "Brass", "Chip", "Bell",
         "Kick", "Kick808", "KickHard", "KickSoft",
-        // Snares (20-23)
         "Snare", "Snare808", "SnareRim", "Clap",
-        // Hi-Hats (24-26)
         "HiHat", "HiHatOpen", "HiHatPedal",
-        // Toms (27-29)
         "Tom", "TomLow", "TomHigh",
-        // Cymbals (30-31)
         "Crash", "Ride",
-        // Percussion (32-36)
         "Cowbell", "Clave", "Conga", "Maracas", "Tambourine"
     };
     const char* oscDesc[] = {
-        // Oscillators
-        "Square wave - Classic NES sound",
-        "Triangle wave - Soft, flute-like",
-        "Sawtooth wave - Rich, buzzy",
-        "Sine wave - Pure, clean",
-        "Noise - Percussion, hi-hats",
-        "Custom - Adjustable shape",
-        // Synths
-        "Lead - Thick detuned sawtooths",
-        "Pad - Soft, atmospheric sound",
-        "Bass - Deep punchy bass",
-        "Pluck - Short, plucky sound",
-        "Arp - Crisp for arpeggios",
-        "Organ - Classic drawbar organ",
-        "Strings - Lush string ensemble",
-        "Brass - Rich, brassy stab",
-        "Chip - Classic 12.5% chiptune",
-        "Bell - FM-like bell/chime",
-        // Kicks
-        "Standard kick with pitch sweep",
-        "Deep 808 kick, more sub-bass",
-        "Punchy tight kick, fast attack",
-        "Soft warm kick, rounded",
-        // Snares
-        "Standard snare with noise",
-        "Classic 808 snare, more tonal",
-        "Rimshot, clicky",
-        "Hand clap, multiple bursts",
-        // Hi-Hats
-        "Closed hi-hat",
-        "Open hi-hat, longer decay",
-        "Pedal hi-hat, very short",
-        // Toms
-        "Mid tom",
-        "Floor tom, low pitch",
-        "High tom",
-        // Cymbals
-        "Crash cymbal, long decay",
-        "Ride cymbal, sustained ping",
-        // Percussion
-        "808 cowbell",
-        "Wood block click",
-        "Conga drum",
-        "Shaker",
-        "Jingly metallic"
+        "Square wave - Classic NES", "Triangle - Soft, flute-like", "Sawtooth - Rich, buzzy",
+        "Sine - Pure, clean", "Noise - Percussion", "Custom - Adjustable",
+        "Thick detuned saws", "Soft, atmospheric", "Deep punchy bass", "Short, plucky",
+        "Crisp arpeggios", "Classic drawbar", "Lush ensemble", "Rich, brassy", "12.5% chiptune", "FM bell/chime",
+        "Standard pitch sweep", "Deep 808 sub-bass", "Punchy tight", "Soft warm",
+        "Standard with noise", "808 more tonal", "Rimshot clicky", "Hand clap bursts",
+        "Closed", "Open longer", "Pedal very short",
+        "Mid tom", "Floor tom", "High tom",
+        "Crash long", "Ride sustained",
+        "808 cowbell", "Wood block", "Conga", "Shaker", "Jingly"
     };
+
     constexpr int NUM_OSCILLATORS = 6;
     constexpr int NUM_SYNTHS = 10;
-    constexpr int NUM_DRUMS = 21;
-
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImVec2 iconSize(60, 40);
 
-    // Oscillators section
-    ImGui::Text("Oscillators:");
-    for (int i = 0; i < 6; ++i) {
-        ImGui::PushID(i);
+    // ========== OSCILLATORS (Collapsible) ==========
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.3f, 0.2f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.4f, 0.25f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.3f, 0.5f, 0.3f, 1.0f));
 
-        ImVec2 pos = ImGui::GetCursorScreenPos();
-        bool isChannelOsc = (static_cast<int>(project.channels[ui.selectedChannel].oscillator.type) == i);
-        bool isPaletteSelected = (g_SelectedPaletteItem == i);
+    if (ImGui::CollapsingHeader("Oscillators", g_PaletteExpanded_Oscillators ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        g_PaletteExpanded_Oscillators = true;
+        ImVec2 iconSize(55, 35);
+        for (int i = 0; i < NUM_OSCILLATORS; ++i) {
+            ImGui::PushID(i);
+            ImVec2 pos = ImGui::GetCursorScreenPos();
+            bool isPaletteSelected = (g_SelectedPaletteItem == i);
 
-        // Background - highlight if selected for placement
-        ImU32 bgColor = isPaletteSelected ? IM_COL32(80, 120, 80, 255) :
-                        isChannelOsc ? IM_COL32(60, 100, 60, 255) : IM_COL32(40, 40, 50, 255);
-        ImU32 waveColor = isPaletteSelected ? IM_COL32(200, 255, 200, 255) :
-                          isChannelOsc ? IM_COL32(150, 255, 150, 255) : IM_COL32(100, 180, 100, 255);
-        ImU32 borderColor = isPaletteSelected ? IM_COL32(150, 255, 150, 255) :
-                            isChannelOsc ? IM_COL32(100, 200, 100, 255) : IM_COL32(80, 80, 90, 255);
+            ImU32 bgColor = isPaletteSelected ? IM_COL32(80, 120, 80, 255) : IM_COL32(40, 50, 40, 255);
+            ImU32 waveColor = isPaletteSelected ? IM_COL32(200, 255, 200, 255) : IM_COL32(100, 180, 100, 255);
+            ImU32 borderColor = isPaletteSelected ? IM_COL32(150, 255, 150, 255) : IM_COL32(70, 90, 70, 255);
 
-        drawList->AddRectFilled(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), bgColor, 4.0f);
-        drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 3.0f : 1.0f);
+            drawList->AddRectFilled(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), bgColor, 4.0f);
+            drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 2.0f : 1.0f);
+            DrawWaveformIcon(drawList, pos, iconSize, static_cast<OscillatorType>(i), waveColor);
 
-        // Draw waveform icon
-        DrawWaveformIcon(drawList, pos, iconSize, static_cast<OscillatorType>(i), waveColor);
-
-        // Button for click and drag
-        ImGui::InvisibleButton("##osc", iconSize);
-
-        // Click to select for placement (toggle)
-        if (ImGui::IsItemClicked()) {
-            if (g_SelectedPaletteItem == i) {
-                g_SelectedPaletteItem = -1;  // Deselect
-            } else {
-                g_SelectedPaletteItem = i;  // Select
-                ui.pianoRollMode = PianoRollMode::Draw;  // Auto-switch to Draw mode
-                project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
-                seq.updateChannelConfigs();
+            ImGui::InvisibleButton("##osc", iconSize);
+            if (ImGui::IsItemClicked()) {
+                if (g_SelectedPaletteItem == i) {
+                    g_SelectedPaletteItem = -1;
+                } else {
+                    g_SelectedPaletteItem = i;
+                    g_SelectedDurationMult = 1.0f;
+                    ui.pianoRollMode = PianoRollMode::Draw;
+                    project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
+                    seq.updateChannelConfigs();
+                }
             }
-        }
-
-        // Drag source (keep existing drag functionality)
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-            g_DraggedOscillatorType = i;
-            ImGui::SetDragDropPayload("OSC_TYPE", &i, sizeof(int));
-            ImGui::Text("Drag: %s", oscNames[i]);
-            DrawWaveformIcon(ImGui::GetWindowDrawList(),
-                ImGui::GetCursorScreenPos(), ImVec2(40, 25),
-                static_cast<OscillatorType>(i), IM_COL32(200, 255, 200, 255));
-            ImGui::EndDragDropSource();
-        }
-
-        // Tooltip
-        if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) {
-            ImGui::BeginTooltip();
-            ImGui::Text("%s", oscNames[i]);
-            ImGui::TextDisabled("%s", oscDesc[i]);
-            if (isPaletteSelected) {
-                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "SELECTED - Click on Piano Roll to place");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", oscNames[i]);
+                ImGui::TextDisabled("%s", oscDesc[i]);
+                ImGui::EndTooltip();
             }
-            ImGui::EndTooltip();
+            if (i < NUM_OSCILLATORS - 1) ImGui::SameLine();
+            ImGui::PopID();
         }
+    } else {
+        g_PaletteExpanded_Oscillators = false;
+    }
+    ImGui::PopStyleColor(3);
 
-        if (i < 5) ImGui::SameLine();
-        ImGui::PopID();
+    // ========== SYNTHS (Collapsible) ==========
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.2f, 0.35f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.35f, 0.25f, 0.45f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.3f, 0.55f, 1.0f));
+
+    if (ImGui::CollapsingHeader("Synths", g_PaletteExpanded_Synths ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        g_PaletteExpanded_Synths = true;
+        ImVec2 iconSize(50, 32);
+        for (int i = NUM_OSCILLATORS; i < NUM_OSCILLATORS + NUM_SYNTHS; ++i) {
+            ImGui::PushID(i);
+            ImVec2 pos = ImGui::GetCursorScreenPos();
+            bool isPaletteSelected = (g_SelectedPaletteItem == i);
+
+            ImU32 bgColor = isPaletteSelected ? IM_COL32(100, 80, 140, 255) : IM_COL32(45, 40, 55, 255);
+            ImU32 waveColor = isPaletteSelected ? IM_COL32(220, 180, 255, 255) : IM_COL32(150, 120, 180, 255);
+            ImU32 borderColor = isPaletteSelected ? IM_COL32(200, 150, 255, 255) : IM_COL32(80, 70, 100, 255);
+
+            drawList->AddRectFilled(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), bgColor, 4.0f);
+            drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 2.0f : 1.0f);
+            DrawWaveformIcon(drawList, pos, iconSize, static_cast<OscillatorType>(i), waveColor);
+
+            ImGui::InvisibleButton("##synth", iconSize);
+            if (ImGui::IsItemClicked()) {
+                if (g_SelectedPaletteItem == i) {
+                    g_SelectedPaletteItem = -1;
+                } else {
+                    g_SelectedPaletteItem = i;
+                    g_SelectedDurationMult = 1.0f;
+                    ui.pianoRollMode = PianoRollMode::Draw;
+                    project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
+                    seq.updateChannelConfigs();
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", oscNames[i]);
+                ImGui::TextDisabled("%s", oscDesc[i]);
+                ImGui::EndTooltip();
+            }
+            int idx = i - NUM_OSCILLATORS;
+            if ((idx + 1) % 5 != 0 && i < NUM_OSCILLATORS + NUM_SYNTHS - 1) ImGui::SameLine();
+            ImGui::PopID();
+        }
+    } else {
+        g_PaletteExpanded_Synths = false;
+    }
+    ImGui::PopStyleColor(3);
+
+    // ========== DRUMS (Expandable Categories) ==========
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f), "DRUMS (click category to expand)");
+
+    // Kicks
+    {
+        const int indices[] = { 16, 17, 18, 19 };
+        const char* names[] = { "Kick", "Kick808", "KickHard", "KickSoft" };
+        const char* descs[] = { "Standard pitch sweep", "Deep 808 sub-bass", "Punchy tight", "Soft warm" };
+        DrawDrumCategory("Kicks", g_PaletteExpanded_Kicks, indices, names, descs, 4, project, ui, seq);
     }
 
-    // Synths section
-    ImGui::Separator();
-    ImGui::Text("Synths:");
-
-    ImVec2 synthIconSize(55, 35);
-    int synthsPerRow = 5;
-
-    for (int i = NUM_OSCILLATORS; i < NUM_OSCILLATORS + NUM_SYNTHS; ++i) {
-        ImGui::PushID(i);
-
-        ImVec2 pos = ImGui::GetCursorScreenPos();
-        bool isChannelOsc = (static_cast<int>(project.channels[ui.selectedChannel].oscillator.type) == i);
-        bool isPaletteSelected = (g_SelectedPaletteItem == i);
-
-        // Synth colors - purple/blue theme
-        ImU32 bgColor = isPaletteSelected ? IM_COL32(100, 80, 140, 255) :
-                        isChannelOsc ? IM_COL32(80, 60, 120, 255) : IM_COL32(45, 40, 55, 255);
-        ImU32 waveColor = isPaletteSelected ? IM_COL32(220, 180, 255, 255) :
-                          isChannelOsc ? IM_COL32(180, 150, 220, 255) : IM_COL32(150, 120, 180, 255);
-        ImU32 borderColor = isPaletteSelected ? IM_COL32(200, 150, 255, 255) :
-                            isChannelOsc ? IM_COL32(150, 100, 200, 255) : IM_COL32(80, 70, 100, 255);
-
-        drawList->AddRectFilled(pos, ImVec2(pos.x + synthIconSize.x, pos.y + synthIconSize.y), bgColor, 4.0f);
-        drawList->AddRect(pos, ImVec2(pos.x + synthIconSize.x, pos.y + synthIconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 3.0f : 1.0f);
-
-        // Draw synth icon
-        DrawWaveformIcon(drawList, pos, synthIconSize, static_cast<OscillatorType>(i), waveColor);
-
-        // Button for click and drag
-        ImGui::InvisibleButton("##synth", synthIconSize);
-
-        // Click to select for placement (toggle)
-        if (ImGui::IsItemClicked()) {
-            if (g_SelectedPaletteItem == i) {
-                g_SelectedPaletteItem = -1;  // Deselect
-            } else {
-                g_SelectedPaletteItem = i;  // Select
-                ui.pianoRollMode = PianoRollMode::Draw;  // Auto-switch to Draw mode
-                project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
-                seq.updateChannelConfigs();
-            }
-        }
-
-        // Drag source
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-            g_DraggedOscillatorType = i;
-            ImGui::SetDragDropPayload("OSC_TYPE", &i, sizeof(int));
-            ImGui::Text("Drag: %s", oscNames[i]);
-            DrawWaveformIcon(ImGui::GetWindowDrawList(),
-                ImGui::GetCursorScreenPos(), ImVec2(40, 25),
-                static_cast<OscillatorType>(i), IM_COL32(220, 180, 255, 255));
-            ImGui::EndDragDropSource();
-        }
-
-        // Tooltip
-        if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) {
-            ImGui::BeginTooltip();
-            ImGui::Text("%s", oscNames[i]);
-            ImGui::TextDisabled("%s", oscDesc[i]);
-            if (isPaletteSelected) {
-                ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1.0f), "SELECTED - Click on Piano Roll to place");
-            }
-            ImGui::EndTooltip();
-        }
-
-        // Wrap after every synthsPerRow items
-        int synthIndex = i - NUM_OSCILLATORS;
-        if ((synthIndex + 1) % synthsPerRow != 0 && i < NUM_OSCILLATORS + NUM_SYNTHS - 1) {
-            ImGui::SameLine();
-        }
-        ImGui::PopID();
+    // Snares
+    {
+        const int indices[] = { 20, 21, 22, 23 };
+        const char* names[] = { "Snare", "Snare808", "SnareRim", "Clap" };
+        const char* descs[] = { "Standard with noise", "808 more tonal", "Rimshot clicky", "Hand clap bursts" };
+        DrawDrumCategory("Snares & Claps", g_PaletteExpanded_Snares, indices, names, descs, 4, project, ui, seq);
     }
 
-    // Drums section
-    ImGui::Separator();
-    ImGui::Text("Drums:");
+    // Hi-Hats
+    {
+        const int indices[] = { 24, 25, 26 };
+        const char* names[] = { "HiHat", "HiHatOpen", "HiHatPedal" };
+        const char* descs[] = { "Closed hi-hat", "Open longer decay", "Pedal very short" };
+        DrawDrumCategory("Hi-Hats", g_PaletteExpanded_HiHats, indices, names, descs, 3, project, ui, seq);
+    }
 
-    // Smaller icon size for drums to fit more
-    ImVec2 drumIconSize(50, 32);
-    int drumsPerRow = 5;
-    int drumStartIndex = NUM_OSCILLATORS + NUM_SYNTHS;
+    // Toms
+    {
+        const int indices[] = { 27, 28, 29 };
+        const char* names[] = { "Tom", "TomLow", "TomHigh" };
+        const char* descs[] = { "Mid tom", "Floor tom low pitch", "High tom" };
+        DrawDrumCategory("Toms", g_PaletteExpanded_Toms, indices, names, descs, 3, project, ui, seq);
+    }
 
-    for (int i = drumStartIndex; i < drumStartIndex + NUM_DRUMS; ++i) {
-        ImGui::PushID(i);
+    // Cymbals
+    {
+        const int indices[] = { 30, 31 };
+        const char* names[] = { "Crash", "Ride" };
+        const char* descs[] = { "Crash cymbal long decay", "Ride cymbal sustained" };
+        DrawDrumCategory("Cymbals", g_PaletteExpanded_Cymbals, indices, names, descs, 2, project, ui, seq);
+    }
 
-        ImVec2 pos = ImGui::GetCursorScreenPos();
-        bool isChannelOsc = (static_cast<int>(project.channels[ui.selectedChannel].oscillator.type) == i);
-        bool isPaletteSelected = (g_SelectedPaletteItem == i);
-
-        // Drum colors - more vibrant
-        ImU32 bgColor = isPaletteSelected ? IM_COL32(120, 80, 80, 255) :
-                        isChannelOsc ? IM_COL32(100, 60, 60, 255) : IM_COL32(50, 40, 40, 255);
-        ImU32 waveColor = isPaletteSelected ? IM_COL32(255, 200, 200, 255) :
-                          isChannelOsc ? IM_COL32(255, 150, 150, 255) : IM_COL32(200, 120, 120, 255);
-        ImU32 borderColor = isPaletteSelected ? IM_COL32(255, 150, 150, 255) :
-                            isChannelOsc ? IM_COL32(200, 100, 100, 255) : IM_COL32(90, 80, 80, 255);
-
-        drawList->AddRectFilled(pos, ImVec2(pos.x + drumIconSize.x, pos.y + drumIconSize.y), bgColor, 4.0f);
-        drawList->AddRect(pos, ImVec2(pos.x + drumIconSize.x, pos.y + drumIconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 3.0f : 1.0f);
-
-        // Draw drum icon
-        DrawWaveformIcon(drawList, pos, drumIconSize, static_cast<OscillatorType>(i), waveColor);
-
-        // Button for click and drag
-        ImGui::InvisibleButton("##drum", drumIconSize);
-
-        // Click to select for placement (toggle)
-        if (ImGui::IsItemClicked()) {
-            if (g_SelectedPaletteItem == i) {
-                g_SelectedPaletteItem = -1;  // Deselect
-            } else {
-                g_SelectedPaletteItem = i;  // Select
-                ui.pianoRollMode = PianoRollMode::Draw;  // Auto-switch to Draw mode
-                project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
-                seq.updateChannelConfigs();
-            }
-        }
-
-        // Drag source
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-            g_DraggedOscillatorType = i;
-            ImGui::SetDragDropPayload("OSC_TYPE", &i, sizeof(int));
-            ImGui::Text("Drag: %s", oscNames[i]);
-            DrawWaveformIcon(ImGui::GetWindowDrawList(),
-                ImGui::GetCursorScreenPos(), ImVec2(40, 25),
-                static_cast<OscillatorType>(i), IM_COL32(255, 200, 200, 255));
-            ImGui::EndDragDropSource();
-        }
-
-        // Tooltip
-        if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) {
-            ImGui::BeginTooltip();
-            ImGui::Text("%s", oscNames[i]);
-            ImGui::TextDisabled("%s", oscDesc[i]);
-            if (isPaletteSelected) {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "SELECTED - Click on Piano Roll to place");
-            }
-            ImGui::EndTooltip();
-        }
-
-        // Wrap after every drumsPerRow items
-        int drumIndex = i - drumStartIndex;
-        if ((drumIndex + 1) % drumsPerRow != 0 && i < drumStartIndex + NUM_DRUMS - 1) {
-            ImGui::SameLine();
-        }
-        ImGui::PopID();
+    // Percussion
+    {
+        const int indices[] = { 32, 33, 34, 35, 36 };
+        const char* names[] = { "Cowbell", "Clave", "Conga", "Maracas", "Tambourine" };
+        const char* descs[] = { "808 cowbell", "Wood block click", "Conga drum", "Shaker", "Jingly metallic" };
+        DrawDrumCategory("Percussion", g_PaletteExpanded_Percussion, indices, names, descs, 5, project, ui, seq);
     }
 
     ImGui::Separator();
@@ -3474,23 +3524,33 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     // Show selected item
     if (g_SelectedPaletteItem >= 0) {
         ImVec4 color;
+        const char* typeStr;
         if (g_SelectedPaletteItem < NUM_OSCILLATORS) {
-            color = ImVec4(0.5f, 1.0f, 0.5f, 1.0f);  // Green for oscillators
+            color = ImVec4(0.5f, 1.0f, 0.5f, 1.0f);
+            typeStr = "Oscillator";
         } else if (g_SelectedPaletteItem < NUM_OSCILLATORS + NUM_SYNTHS) {
-            color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);  // Purple for synths
+            color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
+            typeStr = "Synth";
         } else {
-            color = ImVec4(1.0f, 0.6f, 0.6f, 1.0f);  // Red for drums
+            color = ImVec4(1.0f, 0.6f, 0.6f, 1.0f);
+            typeStr = "Drum";
         }
         ImGui::TextColored(color, "Selected: %s", oscNames[g_SelectedPaletteItem]);
+        if (g_SelectedPaletteItem >= NUM_OSCILLATORS + NUM_SYNTHS) {
+            // Show duration for drums
+            const char* durStr = (g_SelectedDurationMult < 0.75f) ? "Short" :
+                                 (g_SelectedDurationMult > 1.5f) ? "Long" : "Normal";
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%s)", durStr);
+        }
         ImGui::SameLine();
-        if (ImGui::SmallButton("Deselect")) {
+        if (ImGui::SmallButton("Clear")) {
             g_SelectedPaletteItem = -1;
+            g_SelectedDurationMult = 1.0f;
         }
     } else {
         ImGui::TextDisabled("No sound selected");
     }
-
-    ImGui::Text("Channel: %s", project.channels[ui.selectedChannel].name.c_str());
 
     ImGui::End();
 }

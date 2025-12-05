@@ -1139,6 +1139,16 @@
             the ADSR envelope - they have their own specialized envelopes built in. Drums also automatically
             adjust their duration based on BPM!</p>
 
+            <div class="tip-box">
+                <strong>Expandable Palette:</strong> Drums are organized in collapsible categories (Kicks, Snares, Hi-Hats, etc.).
+                Click a category header to expand/collapse it. Each drum offers <strong>3 duration variants</strong>:
+                <ul style="margin-top: 10px;">
+                    <li><strong>Short (0.5x)</strong> - Tight, snappy hits</li>
+                    <li><strong>Normal (1x)</strong> - Standard duration</li>
+                    <li><strong>Long (2x)</strong> - Extended decay/sustain</li>
+                </ul>
+            </div>
+
             <h3>Kick Drums</h3>
             <div class="param-grid">
                 <div class="param-card">
@@ -1477,6 +1487,10 @@ HiHat:   X - X - X - X -</code></pre>
                     <td>Delete selected note(s)</td>
                 </tr>
                 <tr>
+                    <td><span class="keyboard-shortcut">Click + Drag</span> (multi-select)</td>
+                    <td>Drag all selected notes together - preserves relative positions!</td>
+                </tr>
+                <tr>
                     <td><span class="keyboard-shortcut">Escape</span></td>
                     <td>Deselect all notes / Cancel paste preview</td>
                 </tr>
@@ -1575,9 +1589,9 @@ HiHat:   X - X - X - X -</code></pre>
         </section>
 
         <footer>
-            <p>CHIPTUNE TRACKER v2.1</p>
+            <p>CHIPTUNE TRACKER v2.2</p>
             <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
-            <p>10 Synths | 21 Drums | 4 Themes | WAV/MP3 Export | Project Save/Load</p>
+            <p>10 Synths | 21 Drums (with duration variants) | 4 Themes | Multi-note Drag</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>

@@ -280,10 +280,14 @@ struct UIState {
     int selectedNoteIndex = -1;     // Currently selected note (-1 = none)
     std::vector<int> selectedNoteIndices;  // Multiple selected notes
     bool isDraggingNote = false;    // Dragging a note to move it
+    bool isDraggingMultiple = false; // Dragging multiple selected notes
     bool isResizingNote = false;    // Resizing note duration
     float dragStartBeat = 0.0f;     // Where drag started
     int dragStartPitch = 0;         // Original pitch when drag started
     float dragStartDuration = 0.0f; // Original duration when resize started
+    float dragAnchorBeat = 0.0f;    // Anchor point for multi-drag (mouse position at start)
+    int dragAnchorPitch = 0;        // Anchor pitch for multi-drag
+    std::vector<std::pair<float, int>> multiDragOffsets; // Beat and pitch offsets from anchor for each selected note
 
     // Box selection
     bool isBoxSelecting = false;    // Currently drawing selection box
