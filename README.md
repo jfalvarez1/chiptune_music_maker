@@ -13,6 +13,17 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
+### What's New in v2.8.1
+
+**Piano Roll Beat Grid Enhancement:**
+- **Hierarchical beat grid lines** - Visual rhythm hierarchy for easy note placement
+  - Measure lines (beat 0, 4, 8...): Brightest, 2px thick
+  - Quarter notes (whole beats): Bright, 1.5px thick
+  - 8th notes (half beats): Medium brightness, 1px
+  - 16th notes (quarter beats): Dimmest, 1px
+  - Pattern end marker: Red line, 3px thick
+- Makes it easy to identify half notes, quarter notes, and subdivisions at a glance
+
 ### What's New in v2.8.0
 
 **New NES-Authentic Chiptune Effects:**

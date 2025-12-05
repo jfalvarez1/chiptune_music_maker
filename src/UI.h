@@ -3727,25 +3727,49 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             IM_COL32(50, 50, 55, 255));
     }
 
-    // Beat grid lines (use dynamic length for extended grid)
+    // Beat grid lines with subdivisions (use dynamic length for extended grid)
+    // Draw subdivisions: 16th notes (0.25), 8th notes (0.5), quarter notes (1.0), measures
     int gridBeats = static_cast<int>(dynamicLength);
-    for (int beat = 0; beat <= gridBeats; ++beat) {
-        float x = canvasPos.x + keyWidth + beat * beatWidth - ui.scrollX;
+    float subdivision = 0.25f;  // 16th note subdivisions
+    int totalSubdivisions = static_cast<int>(dynamicLength / subdivision) + 1;
+
+    for (int sub = 0; sub <= totalSubdivisions; ++sub) {
+        float beatPos = sub * subdivision;
+        float x = canvasPos.x + keyWidth + beatPos * beatWidth - ui.scrollX;
         if (x < canvasPos.x + keyWidth || x > canvasPos.x + canvasSize.x) continue;
 
-        // Darker line at pattern boundary, bright at measures
+        // Determine line style based on beat position
         ImU32 lineColor;
-        if (beat == pattern.length) {
-            lineColor = IM_COL32(150, 80, 80, 255);  // Red-ish for pattern end
-        } else if (beat % project.beatsPerMeasure == 0) {
-            lineColor = IM_COL32(100, 100, 110, 255);
+        float lineThickness = 1.0f;
+        int beatInt = static_cast<int>(beatPos);
+        float beatFrac = beatPos - beatInt;
+
+        if (beatInt == pattern.length && beatFrac < 0.01f) {
+            // Pattern end - bright red, thick
+            lineColor = IM_COL32(200, 60, 60, 255);
+            lineThickness = 3.0f;
+        } else if (beatFrac < 0.01f && beatInt % project.beatsPerMeasure == 0) {
+            // Measure line (beat 0, 4, 8, etc.) - brightest, thickest
+            lineColor = IM_COL32(140, 140, 160, 255);
+            lineThickness = 2.0f;
+        } else if (beatFrac < 0.01f) {
+            // Whole beat (quarter note) - bright, medium thickness
+            lineColor = IM_COL32(90, 90, 100, 255);
+            lineThickness = 1.5f;
+        } else if (std::abs(beatFrac - 0.5f) < 0.01f) {
+            // Half beat (8th note) - medium brightness
+            lineColor = IM_COL32(60, 60, 70, 255);
+            lineThickness = 1.0f;
         } else {
-            lineColor = IM_COL32(50, 50, 55, 255);
+            // Quarter beat subdivision (16th note) - dimmest, thinnest
+            lineColor = IM_COL32(40, 40, 45, 255);
+            lineThickness = 1.0f;
         }
+
         drawList->AddLine(
             ImVec2(x, canvasPos.y),
             ImVec2(x, canvasPos.y + gridHeight),
-            lineColor);
+            lineColor, lineThickness);
     }
 
     // ========================================================================
