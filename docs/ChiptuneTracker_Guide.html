@@ -1223,12 +1223,18 @@
 
         <!-- Drums -->
         <section id="drums">
-            <h2>Drum Sounds (25 Types!)</h2>
+            <h2>Drum Sounds (26 Types!)</h2>
 
-            <p>ChiptuneTracker includes a comprehensive drum kit with <strong>25 synthesized sounds</strong>
+            <p>ChiptuneTracker includes a comprehensive drum kit with <strong>26 synthesized sounds</strong>
             that emulate classic 8-bit and electronic percussion, including authentic <strong>Reggaeton</strong>
             instruments. Unlike melodic sounds, drums don't follow the ADSR envelope - they have their own
             specialized envelopes built in. Drums also automatically adjust their duration based on BPM!</p>
+
+            <div class="tip-box" style="background: linear-gradient(135deg, rgba(0,100,0,0.3), rgba(0,50,0,0.2)); border-color: #00aa00;">
+                <strong>v2.6.0 Audio Engine Upgrade:</strong> All drum sounds now use properly synthesized
+                pitch envelopes for authentic 808/909 character. Kicks have smooth frequency sweeps (150Hz→50Hz),
+                snares have punchy 200Hz body with noise, and toms feature pitch drops for that classic "bom" sound.
+            </div>
 
             <div class="tip-box">
                 <strong>Expandable Palette:</strong> Drums are organized in collapsible categories (Kicks, Snares, Hi-Hats, etc.).
@@ -2264,6 +2270,58 @@ VI - VII - i - i  (F - G - Am - Am in A minor)</code></pre>
                 </tr>
             </table>
 
+            <h3>How Drum Synthesis Works (v2.6.0)</h3>
+            <p>Understanding the drum engine helps you get the most authentic sounds. Here's what makes each drum type special:</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Kick Drums - Pitch Sweep</h4>
+                    <p>Real kicks have a characteristic "thump" from rapid pitch drop. ChiptuneTracker simulates this with:</p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>Start frequency:</strong> 150Hz (the "attack")</li>
+                        <li><strong>End frequency:</strong> 45-50Hz (the "body")</li>
+                        <li><strong>Sweep speed:</strong> Exponential decay (~40ms)</li>
+                        <li><strong>Saturation:</strong> tanh() for analog warmth</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Snares - Noise + Tone</h4>
+                    <p>Snares combine tonal "body" with noise "crack":</p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>Body:</strong> 200Hz sine wave (quick decay)</li>
+                        <li><strong>Crack:</strong> LFSR noise (short mode = brighter)</li>
+                        <li><strong>Click:</strong> 2ms transient at start</li>
+                        <li><strong>Mix:</strong> ~60% noise, ~25% tone, ~15% click</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Hi-Hats - Metallic Ring</h4>
+                    <p>Hi-hats use inharmonic frequencies for metallic character:</p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>Base:</strong> 1200Hz metallic ring</li>
+                        <li><strong>Ratios:</strong> 1.0, 1.47, 1.83, 2.67 (non-integer = metallic)</li>
+                        <li><strong>Noise:</strong> Short-mode LFSR for sizzle</li>
+                        <li><strong>Decay:</strong> 40ms (closed) to 500ms (open)</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Toms - Pitched Membrane</h4>
+                    <p>Toms simulate drum membrane resonance:</p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>Pitch sweep:</strong> 180Hz → 100Hz (creates "bom")</li>
+                        <li><strong>Harmonics:</strong> 2nd harmonic at 30% for body</li>
+                        <li><strong>Click:</strong> Soft 4ms attack transient</li>
+                        <li><strong>Saturation:</strong> Light warmth (1.2x drive)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="tip-box">
+                <strong>Technical Note:</strong> Drums bypass the standard ADSR envelope and use their own
+                internal timing (envTime). This ensures consistent sound regardless of envelope settings.
+                Each drum manages its own phaseIncrement for pitch control, enabling authentic pitch sweeps.
+            </div>
+
             <h3>Modifying Drum Sounds</h3>
             <p>To customize drums, edit the generate functions in <code>Synthesizer.h</code>:</p>
             <pre><code><span class="comment">// Key parameters to tweak:</span>
@@ -2288,9 +2346,9 @@ VI - VII - i - i  (F - G - Am - Am in A minor)</code></pre>
         </section>
 
         <footer>
-            <p>CHIPTUNE TRACKER v2.3</p>
+            <p>CHIPTUNE TRACKER v2.6</p>
             <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
-            <p>7 Oscillators (incl. Supersaw) | 18 Synths | 25 Drums (incl. Reggaeton) | 8 Themes | 7 Sample Track Genres | High-DPI Support</p>
+            <p>7 Oscillators (incl. Supersaw) | 18 Synths | 26 Drums (incl. Reggaeton) | 8 Themes | 7 Sample Track Genres | High-DPI Support</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>

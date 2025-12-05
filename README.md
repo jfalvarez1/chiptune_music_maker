@@ -13,6 +13,15 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
+### What's New in v2.6.0
+
+**Drum Synthesis Engine Overhaul** - Complete rewrite of drum sound generation for authentic 808/909 character:
+- **Kicks**: Proper pitch sweeps (150Hz → 45Hz) with exponential decay for that classic "thump"
+- **Snares**: Sharp "tsk" attack with 200Hz tonal body + LFSR noise burst
+- **Hi-Hats**: Metallic ring using inharmonic frequency ratios (1.0, 1.47, 1.83, 2.67)
+- **Toms**: Pitch envelope (180Hz → 100Hz) for authentic "bom" sound
+- **Technical**: Drums now manage their own phase increment for pitch control, bypassing ADSR
+
 ## Features
 
 ### Sound Generation
@@ -104,11 +113,41 @@ Pre-made track templates to get you started:
 - **MP3 export**: Render to MP3 (requires LAME or FFmpeg in PATH)
 - **Windows file dialogs**: Native save/open dialogs
 
+### Per-Note Effects (Tracker-style!)
+- **Vibrato**: Pitch wobble with adjustable depth and speed
+- **Arpeggio**: Classic tracker 0xy effect - cycles through base note + semitone offsets
+  - Presets: Major (4,7), Minor (3,7), Octave (12,0)
+- **Portamento/Slide**: Smooth pitch transitions between notes
+
+### Groove & Feel
+- **Swing**: Shift off-beat notes for groove (0-100%, 8th/16th/32nd grid)
+- **Humanize**: Random timing and velocity variation for natural feel
+
+### Tools
+- **Hi-Hat Roll Generator**: Quick fills and rolls with:
+  - Density options: 8th, 16th, 32nd, 64th notes
+  - Velocity modes: Flat, Crescendo, Decrescendo
+  - Hi-hat types: Closed, Open, Pedal
+
+### Pattern Arrangement
+- **Timeline view**: Arrange multiple patterns into a full song
+- **Drag & drop**: Move clips between channels and positions
+- **Visual editing**: Double-click to add, right-click to delete
+- **Context menu**: Right-click empty space to add any pattern
+- **Song length control**: Set total song duration
+
 ### Effects (per channel)
 - Bitcrusher
 - Distortion
 - Filter
 - Delay
+- Chorus
+- Phaser
+- Tremolo
+- Ring Modulator
+- **Sidechain Compression**: Classic EDM pumping effect
+  - Duck any channel based on another (e.g., duck bass when kick plays)
+  - Presets: Subtle, Normal, Heavy, Pumping
 
 ## Project Structure
 
@@ -296,9 +335,13 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] High-DPI theme scaling (1440p, 4K support)
 - [x] Sample tracks (7 genres: Synthwave, Techno, Chiptune, Hip Hop, Trap, House, Reggaeton)
 - [x] Reggaeton instruments (bass, brass, drums)
+- [x] Per-note effects (Vibrato, Arpeggio, Portamento/Slide)
+- [x] Swing and humanize for groove feel
+- [x] Hi-hat roll generator tool
+- [x] Sidechain compression (classic EDM pumping)
+- [x] Pattern arrangement view with drag & drop
 - [ ] FLAC export
 - [ ] VST plugin version
-- [ ] Pattern arrangement view
 - [ ] MIDI import/export
 
 ## Contributing

@@ -22,6 +22,7 @@ struct Voice {
     int note = 60;
     float velocity = 1.0f;
     float frequency = 440.0f;
+    float baseFrequency = 440.0f;  // Original frequency (before effects)
 
     // Oscillator state
     float phase = 0.0f;
@@ -49,6 +50,17 @@ struct Voice {
     // Per-voice oscillator type (allows different sounds per note)
     OscillatorType oscillatorType = OscillatorType::Pulse;
 
+    // Per-note effects
+    float vibratoDepth = 0.0f;      // 0.0 to 1.0 (semitones of pitch wobble)
+    float vibratoSpeed = 5.0f;      // Hz (default 5 Hz vibrato rate)
+    float vibratoPhase = 0.0f;      // Current vibrato LFO phase
+    int arpeggioX = 0;              // First semitone offset (0-15)
+    int arpeggioY = 0;              // Second semitone offset (0-15)
+    int arpeggioStep = 0;           // Current arpeggio step (0, 1, or 2)
+    float arpeggioTimer = 0.0f;     // Timer for arpeggio stepping
+    float slideTarget = 0.0f;       // Target frequency for portamento (0 = no slide)
+    float slideSpeed = 0.0f;        // Slide speed (semitones per second)
+
     void reset() {
         active = false;
         phase = 0.0f;
@@ -61,6 +73,16 @@ struct Voice {
         fadeOutDuration = 0.0f;
         noteDuration = 0.0f;
         oscillatorType = OscillatorType::Pulse;
+        vibratoDepth = 0.0f;
+        vibratoSpeed = 5.0f;
+        vibratoPhase = 0.0f;
+        arpeggioX = 0;
+        arpeggioY = 0;
+        arpeggioStep = 0;
+        arpeggioTimer = 0.0f;
+        slideTarget = 0.0f;
+        slideSpeed = 0.0f;
+        baseFrequency = 440.0f;
     }
 };
 
@@ -207,7 +229,8 @@ public:
     // Trigger a note (with optional fade parameters and oscillator type)
     void noteOn(int note, float velocity, float time,
                 float fadeInSec = 0.0f, float fadeOutSec = 0.0f, float durationSec = 0.0f,
-                OscillatorType oscType = OscillatorType::Pulse) {
+                OscillatorType oscType = OscillatorType::Pulse,
+                float vibrato = 0.0f, int arpeggio = 0, float slide = 0.0f) {
         // Find free voice or steal oldest
         int voiceIndex = -1;
         float oldestTime = time;
@@ -229,12 +252,18 @@ public:
             v.note = note;
             v.velocity = velocity;
             v.frequency = noteToFrequency(note);
+            v.baseFrequency = v.frequency;  // Store original frequency
 
-            // Apply detune
-            float detuneMult = std::pow(2.0f, m_oscConfig.detune / 1200.0f);
-            v.frequency *= detuneMult;
-
-            v.phaseIncrement = v.frequency / m_sampleRate;
+            // Apply detune (only for non-drums)
+            if (!isDrumType(oscType)) {
+                float detuneMult = std::pow(2.0f, m_oscConfig.detune / 1200.0f);
+                v.frequency *= detuneMult;
+                v.baseFrequency *= detuneMult;
+                v.phaseIncrement = v.frequency / m_sampleRate;
+            } else {
+                // Drums: initialize phaseIncrement to a sensible default (will be overridden by drum generators)
+                v.phaseIncrement = 150.0f / m_sampleRate;  // Typical kick start frequency
+            }
             v.phase = m_oscConfig.phase;
             v.startTime = time;
             v.envStage = Voice::EnvStage::Attack;
@@ -250,6 +279,29 @@ public:
 
             // Per-note oscillator type
             v.oscillatorType = oscType;
+
+            // Per-note effects
+            v.vibratoDepth = vibrato;       // 0.0 to 1.0 (1.0 = 1 semitone wobble)
+            v.vibratoSpeed = 5.0f;          // 5 Hz default
+            v.vibratoPhase = 0.0f;
+
+            // Arpeggio: packed as 0xXY (X = first offset, Y = second offset)
+            v.arpeggioX = (arpeggio >> 4) & 0x0F;  // Upper nibble
+            v.arpeggioY = arpeggio & 0x0F;          // Lower nibble
+            v.arpeggioStep = 0;
+            v.arpeggioTimer = 0.0f;
+
+            // Slide/portamento (semitones to slide from start)
+            if (slide != 0.0f) {
+                // slide is semitones offset - calculate target
+                v.slideTarget = v.baseFrequency;
+                // Start at offset frequency, slide to base
+                v.frequency = v.baseFrequency * std::pow(2.0f, slide / 12.0f);
+                v.slideSpeed = std::abs(slide) * 4.0f;  // Speed proportional to distance
+            } else {
+                v.slideTarget = 0.0f;
+                v.slideSpeed = 0.0f;
+            }
         }
     }
 
@@ -287,12 +339,69 @@ public:
     // Generate one sample (called from audio thread)
     float process(float time) {
         float output = 0.0f;
+        float dt = 1.0f / m_sampleRate;
 
         for (auto& voice : m_voices) {
             if (!voice.active) continue;
 
             // Check if this is a drum sound (drums have their own internal envelope)
             bool isDrum = isDrumType(voice.oscillatorType);
+
+            // Apply per-note effects to frequency (before oscillator generation)
+            float effectFreq = voice.baseFrequency;
+
+            // 1. Apply portamento/slide effect
+            if (voice.slideTarget > 0.0f && voice.slideSpeed > 0.0f) {
+                float diff = voice.slideTarget - voice.frequency;
+                if (std::abs(diff) > 0.1f) {
+                    // Slide towards target
+                    float slideAmount = voice.slideSpeed * dt * voice.baseFrequency * 0.1f;
+                    if (diff > 0) {
+                        voice.frequency = std::min(voice.frequency + slideAmount, voice.slideTarget);
+                    } else {
+                        voice.frequency = std::max(voice.frequency - slideAmount, voice.slideTarget);
+                    }
+                } else {
+                    voice.frequency = voice.slideTarget;
+                    voice.slideTarget = 0.0f;  // Slide complete
+                }
+                effectFreq = voice.frequency;
+            }
+
+            // 2. Apply arpeggio effect (classic tracker-style 0xy command)
+            if (voice.arpeggioX > 0 || voice.arpeggioY > 0) {
+                // Step through: base note -> +X semitones -> +Y semitones
+                float arpFreq = voice.baseFrequency;
+                switch (voice.arpeggioStep) {
+                    case 0: arpFreq = voice.baseFrequency; break;
+                    case 1: arpFreq = voice.baseFrequency * std::pow(2.0f, voice.arpeggioX / 12.0f); break;
+                    case 2: arpFreq = voice.baseFrequency * std::pow(2.0f, voice.arpeggioY / 12.0f); break;
+                }
+                effectFreq = arpFreq;
+
+                // Advance arpeggio timer (step at ~15 Hz for classic tracker feel)
+                voice.arpeggioTimer += dt;
+                if (voice.arpeggioTimer >= 0.067f) {  // ~15 steps per second
+                    voice.arpeggioTimer = 0.0f;
+                    voice.arpeggioStep = (voice.arpeggioStep + 1) % 3;
+                }
+            }
+
+            // 3. Apply vibrato effect (pitch wobble)
+            if (voice.vibratoDepth > 0.0f) {
+                // Update vibrato LFO phase
+                voice.vibratoPhase += voice.vibratoSpeed * dt;
+                if (voice.vibratoPhase >= 1.0f) voice.vibratoPhase -= 1.0f;
+
+                // Calculate vibrato modulation (sine wave, +/- semitones)
+                float vibratoMod = std::sin(voice.vibratoPhase * 2.0f * PI) * voice.vibratoDepth;
+                effectFreq *= std::pow(2.0f, vibratoMod / 12.0f);
+            }
+
+            // Update phase increment with modified frequency (skip for drums - they manage their own)
+            if (!isDrum) {
+                voice.phaseIncrement = effectFreq / m_sampleRate;
+            }
 
             // Generate oscillator sample
             float sample = generateOscillator(voice);
@@ -302,7 +411,7 @@ public:
             if (isDrum) {
                 // Drums manage their own envelope internally
                 // Just update envTime for the drum generators
-                voice.envTime += 1.0f / m_sampleRate;
+                voice.envTime += dt;
                 // Deactivate drum voice after it's finished (based on decay time)
                 float maxDrumTime = getDrumDecayTime(voice.oscillatorType) * 3.0f;  // 3x decay time
                 if (voice.envTime > maxDrumTime) {
@@ -310,7 +419,7 @@ public:
                 }
             } else {
                 // Track real time elapsed (independent of playback state and envelope stages)
-                voice.realTimeElapsed += 1.0f / m_sampleRate;
+                voice.realTimeElapsed += dt;
 
                 // Auto-release synth notes when their duration is reached (for preview)
                 if (voice.noteDuration > 0.0f) {
@@ -333,11 +442,6 @@ public:
             sample *= envGain * voice.velocity * fadeGain;
 
             output += sample;
-        }
-
-        // Apply vibrato (global for this synth)
-        if (m_vibratoEnabled) {
-            // Vibrato modulates all voices' pitch - handled in frequency calc
         }
 
         // Apply effects chain
@@ -616,8 +720,8 @@ private:
                 break;
         }
 
-        // Advance phase
-        voice.phase += dt;
+        // Advance phase (use voice.phaseIncrement, not captured dt, so drums' late-set values work)
+        voice.phase += voice.phaseIncrement;
         if (voice.phase >= 1.0f) {
             voice.phase -= 1.0f;
         }
@@ -751,6 +855,9 @@ private:
     float generateSnare(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Set phaseIncrement for tonal component (~200Hz body)
+        voice.phaseIncrement = 200.0f / m_sampleRate;
+
         // Very fast decay for sharp "tsk" sound
         float envelope = std::exp(-noteTime * 35.0f);
 
@@ -768,9 +875,9 @@ private:
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
 
-        // Small tonal "pop" for the body
+        // Small tonal "pop" for the body (~200Hz)
         float toneEnv = std::exp(-noteTime * 50.0f);
-        float tone = std::sin(voice.phase * TWO_PI * 3.0f) * toneEnv * 0.2f;
+        float tone = std::sin(voice.phase * TWO_PI) * toneEnv * 0.25f;
 
         return (click + noise * 0.6f + tone) * envelope;
     }
@@ -817,18 +924,19 @@ private:
     float generateTom(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Pitch sweep: starts at ~180Hz, drops to ~100Hz
+        float pitchEnv = std::exp(-noteTime * 20.0f);
+        float freq = 100.0f + 80.0f * pitchEnv;  // 180Hz -> 100Hz
+        voice.phaseIncrement = freq / m_sampleRate;
+
         // Medium decay with slight sustain
         float envelope = std::exp(-noteTime * 8.0f);
 
-        // Pitch drops for that classic tom sound
-        float pitchEnv = std::exp(-noteTime * 20.0f);
-        float pitchMult = 1.0f + 1.2f * pitchEnv;  // More dramatic pitch drop
-
         // Main tone
-        float sample = std::sin(voice.phase * pitchMult * TWO_PI);
+        float sample = std::sin(voice.phase * TWO_PI);
 
         // Add second harmonic for body
-        float harmonic = std::sin(voice.phase * pitchMult * TWO_PI * 2.0f) * 0.3f;
+        float harmonic = std::sin(voice.phase * TWO_PI * 2.0f) * 0.3f;
 
         // Soft attack click
         float click = 0.0f;
@@ -922,11 +1030,14 @@ private:
     float generateSnare808(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Set phaseIncrement for 808 snare (~180Hz body)
+        voice.phaseIncrement = 180.0f / m_sampleRate;
+
         float envelope = std::exp(-noteTime * 20.0f);
 
-        // Tonal body - two detuned oscillators
-        float tone1 = std::sin(voice.phase * TWO_PI * 180.0f / voice.frequency);
-        float tone2 = std::sin(voice.phase * TWO_PI * 330.0f / voice.frequency);
+        // Tonal body - two detuned oscillators using envTime for frequency
+        float tone1 = std::sin(noteTime * 180.0f * TWO_PI);
+        float tone2 = std::sin(noteTime * 330.0f * TWO_PI);
         float tonal = (tone1 + tone2 * 0.7f) * std::exp(-noteTime * 25.0f);
 
         // Noise component
@@ -944,6 +1055,9 @@ private:
     float generateSnareRim(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Set phaseIncrement for rimshot ping (~1000Hz)
+        voice.phaseIncrement = 1000.0f / m_sampleRate;
+
         // Very fast decay
         float envelope = std::exp(-noteTime * 60.0f);
 
@@ -953,8 +1067,8 @@ private:
             click = (1.0f - noteTime / 0.001f);
         }
 
-        // High frequency ping
-        float ping = std::sin(voice.phase * TWO_PI * 4.0f) * std::exp(-noteTime * 80.0f);
+        // High frequency ping using envTime for consistent pitch
+        float ping = std::sin(noteTime * 1000.0f * TWO_PI) * std::exp(-noteTime * 80.0f);
 
         return (click * 0.7f + ping * 0.3f) * envelope;
     }
@@ -1182,12 +1296,14 @@ private:
     float generateClave(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Set phaseIncrement for clave (~2500Hz)
+        voice.phaseIncrement = 2500.0f / m_sampleRate;
+
         // Very short
         float envelope = std::exp(-noteTime * 100.0f);
 
-        // High frequency sine burst
-        float freq = 2500.0f;
-        float sample = std::sin(voice.phase * TWO_PI * freq / voice.frequency);
+        // High frequency sine burst using envTime
+        float sample = std::sin(noteTime * 2500.0f * TWO_PI);
 
         // Sharp attack
         float attack = (noteTime < 0.001f) ? 1.0f : std::exp(-(noteTime - 0.001f) * 200.0f);
