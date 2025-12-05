@@ -62,11 +62,19 @@ target_include_directories(imgui PUBLIC
 target_link_libraries(imgui PUBLIC OpenGL::GL)
 
 # ============================================================================
-# Main Executable
+# Main Executable (WIN32 = use WinMain entry point)
 # ============================================================================
-add_executable(${PROJECT_NAME}
+add_executable(${PROJECT_NAME} WIN32
     src/main.cpp
-    src/AudioEngine.cpp
+)
+
+# Header files (for IDE visibility)
+target_sources(${PROJECT_NAME} PRIVATE
+    src/Types.h
+    src/Effects.h
+    src/Synthesizer.h
+    src/Sequencer.h
+    src/UI.h
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

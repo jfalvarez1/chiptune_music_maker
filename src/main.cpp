@@ -1,16 +1,19 @@
 /*
  * ChiptuneTracker - Main Entry Point
  *
- * Creates a native Win32 window with:
- *   - Dear ImGui for immediate-mode UI
- *   - OpenGL 3.3 rendering backend
- *   - miniaudio-powered audio engine
- *
- * This is a minimal "Hello World" that proves the stack works.
+ * Full DAW application with:
+ *   - Piano Roll Editor
+ *   - Tracker View
+ *   - Arrangement Timeline
+ *   - 8-Channel Mixer
+ *   - Comprehensive Effects Suite
  */
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
 #endif
 
 #include <windows.h>
@@ -20,11 +23,17 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_opengl3.h"
 
-#include "AudioEngine.h"
+#define MINIAUDIO_IMPLEMENTATION
+#include "miniaudio.h"
+
+#include "Types.h"
+#include "Sequencer.h"
+#include "UI.h"
 
 #include <cstdio>
+#include <memory>
 
-// OpenGL function loading (minimal for OpenGL 3.3)
+// OpenGL function loading
 typedef HGLRC (WINAPI* PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC, HGLRC, const int*);
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = nullptr;
 
@@ -32,13 +41,41 @@ PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = nullptr;
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// Global state (for simplicity in this demo)
+// Global state
 static bool g_Running = true;
+static ChiptuneTracker::Sequencer* g_Sequencer = nullptr;
+
+// ============================================================================
+// Miniaudio Callback
+// ============================================================================
+void audioCallback(ma_device* pDevice, void* pOutput, const void* /*pInput*/, ma_uint32 frameCount) {
+    float* output = static_cast<float*>(pOutput);
+
+    if (g_Sequencer) {
+        // Deinterleave for our sequencer
+        std::vector<float> left(frameCount), right(frameCount);
+        g_Sequencer->process(left.data(), right.data(), frameCount);
+
+        // Interleave for miniaudio
+        for (ma_uint32 i = 0; i < frameCount; ++i) {
+            output[i * 2 + 0] = left[i];
+            output[i * 2 + 1] = right[i];
+        }
+    } else {
+        std::fill_n(output, frameCount * 2, 0.0f);
+    }
+}
 
 // ============================================================================
 // WinMain Entry Point
 // ============================================================================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*/, int nCmdShow) {
+
+    // Allocate console for debugging
+    AllocConsole();
+    freopen("CONOUT$", "w", stdout);
+    freopen("CONOUT$", "w", stderr);
+    printf("ChiptuneTracker starting...\n");
 
     // ========================================================================
     // Create Window Class
@@ -56,6 +93,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         MessageBoxA(nullptr, "Failed to register window class", "Error", MB_OK | MB_ICONERROR);
         return 1;
     }
+    printf("Window class registered\n");
 
     // ========================================================================
     // Create Window
@@ -63,10 +101,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     HWND hwnd = CreateWindowExA(
         0,
         CLASS_NAME,
-        "Chiptune Tracker v0.1",
+        "Chiptune Tracker DAW v0.2",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
-        1280, 720,
+        1600, 900,
         nullptr,
         nullptr,
         hInstance,
@@ -77,6 +115,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         MessageBoxA(nullptr, "Failed to create window", "Error", MB_OK | MB_ICONERROR);
         return 1;
     }
+    printf("Window created\n");
 
     // ========================================================================
     // Initialize OpenGL Context
@@ -99,7 +138,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     }
     SetPixelFormat(hdc, pixelFormat, &pfd);
 
-    // Create temporary context to load WGL extensions
     HGLRC tempContext = wglCreateContext(hdc);
     wglMakeCurrent(hdc, tempContext);
 
@@ -108,61 +146,114 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
 
     HGLRC glContext = nullptr;
     if (wglCreateContextAttribsARB) {
-        // Create OpenGL 3.3 Core context
         int attribs[] = {
-            0x2091, 3, // WGL_CONTEXT_MAJOR_VERSION_ARB
-            0x2092, 3, // WGL_CONTEXT_MINOR_VERSION_ARB
-            0x9126, 0x00000001, // WGL_CONTEXT_PROFILE_MASK_ARB, CORE
+            0x2091, 3,  // WGL_CONTEXT_MAJOR_VERSION_ARB
+            0x2092, 3,  // WGL_CONTEXT_MINOR_VERSION_ARB
+            0x9126, 0x00000001,  // WGL_CONTEXT_PROFILE_MASK_ARB, CORE
             0
         };
         glContext = wglCreateContextAttribsARB(hdc, nullptr, attribs);
     }
 
     if (!glContext) {
-        // Fallback to legacy context
         glContext = tempContext;
     } else {
         wglMakeCurrent(nullptr, nullptr);
         wglDeleteContext(tempContext);
         wglMakeCurrent(hdc, glContext);
     }
+    printf("OpenGL context created\n");
 
     // ========================================================================
     // Initialize Dear ImGui
     // ========================================================================
+    printf("Creating ImGui context...\n");
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    printf("ImGui context created\n");
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // Dark theme
+    // Dark tracker-style theme
     ImGui::StyleColorsDark();
-
-    // Custom tracker-style colors
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 2.0f;
+    style.WindowRounding = 4.0f;
     style.FrameRounding = 2.0f;
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.05f, 0.08f, 1.0f);
-    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.10f, 0.15f, 1.0f);
-    style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.40f, 0.80f, 0.40f, 1.0f);
-    style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.50f, 1.00f, 0.50f, 1.0f);
+    style.GrabRounding = 2.0f;
+    style.ScrollbarRounding = 2.0f;
+    style.WindowPadding = ImVec2(8, 8);
+    style.FramePadding = ImVec2(4, 3);
+    style.ItemSpacing = ImVec2(8, 4);
 
-    // Initialize ImGui backends
+    // Custom colors
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.08f, 1.0f);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.05f, 0.05f, 0.07f, 1.0f);
+    colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.08f, 0.10f, 0.95f);
+    colors[ImGuiCol_Border] = ImVec4(0.20f, 0.20f, 0.25f, 1.0f);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.12f, 0.15f, 1.0f);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.18f, 0.22f, 1.0f);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.22f, 0.22f, 0.28f, 1.0f);
+    colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.0f);
+    colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.12f, 0.15f, 1.0f);
+    colors[ImGuiCol_Header] = ImVec4(0.20f, 0.35f, 0.20f, 1.0f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.25f, 0.45f, 0.25f, 1.0f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.30f, 0.55f, 0.30f, 1.0f);
+    colors[ImGuiCol_Button] = ImVec4(0.20f, 0.35f, 0.20f, 1.0f);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.45f, 0.25f, 1.0f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.30f, 0.55f, 0.30f, 1.0f);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.40f, 0.70f, 0.40f, 1.0f);
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.50f, 0.85f, 0.50f, 1.0f);
+    colors[ImGuiCol_CheckMark] = ImVec4(0.50f, 0.90f, 0.50f, 1.0f);
+
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplOpenGL3_Init("#version 130");
+    printf("ImGui backends initialized\n");
 
     // ========================================================================
-    // Initialize Audio Engine
+    // Initialize Audio
     // ========================================================================
-    ChiptuneTracker::AudioEngine audioEngine;
+    printf("Initializing audio...\n");
+    ma_device_config config = ma_device_config_init(ma_device_type_playback);
+    config.playback.format   = ma_format_f32;
+    config.playback.channels = 2;
+    config.sampleRate        = 44100;
+    config.dataCallback      = audioCallback;
+    config.periodSizeInFrames = 512;
 
-    if (!audioEngine.initialize()) {
-        MessageBoxA(nullptr, "Failed to initialize audio engine", "Error", MB_OK | MB_ICONERROR);
+    ma_device device;
+    if (ma_device_init(nullptr, &config, &device) != MA_SUCCESS) {
+        MessageBoxA(nullptr, "Failed to initialize audio device", "Error", MB_OK | MB_ICONERROR);
         return 1;
     }
+    printf("Audio device initialized\n");
 
-    if (!audioEngine.start()) {
-        MessageBoxA(nullptr, "Failed to start audio engine", "Error", MB_OK | MB_ICONERROR);
+    // ========================================================================
+    // Initialize Tracker
+    // ========================================================================
+    printf("Creating project...\n");
+    ChiptuneTracker::Project project;
+    printf("Project created\n");
+    printf("Creating sequencer...\n");
+    ChiptuneTracker::Sequencer sequencer;
+    printf("Sequencer created\n");
+    ChiptuneTracker::UIState uiState;
+    ChiptuneTracker::PlaybackState playbackState;
+
+    sequencer.setSampleRate(44100.0f);
+    sequencer.setProject(&project);
+    sequencer.setLoop(true, 0.0f, 16.0f);
+
+    g_Sequencer = &sequencer;
+
+    // Start with empty pattern (no demo noise)
+    uiState.selectedPattern = 0;
+    uiState.selectedChannel = 0;
+
+    // Start audio
+    if (ma_device_start(&device) != MA_SUCCESS) {
+        MessageBoxA(nullptr, "Failed to start audio device", "Error", MB_OK | MB_ICONERROR);
+        ma_device_uninit(&device);
         return 1;
     }
 
@@ -175,13 +266,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     // ========================================================================
     // Main Loop
     // ========================================================================
-    float frequency = 440.0f;
-    float volume = 0.5f;
-    int waveformIndex = 0;
-    const char* waveformNames[] = { "Sine", "Square", "Sawtooth", "Triangle", "Noise" };
-
     while (g_Running) {
-        // Process Windows messages
         MSG msg;
         while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
@@ -198,51 +283,140 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
+        // Get playback state
+        playbackState = sequencer.getState();
+
         // ====================================================================
-        // Audio Control Panel
+        // Main Menu Bar
         // ====================================================================
-        ImGui::Begin("Chiptune Tracker - Audio Test", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-
-        ImGui::Text("Audio Engine Status: %s",
-            audioEngine.isRunning() ? "Running" : "Stopped");
-
-        ImGui::Separator();
-        ImGui::Text("Oscillator Controls");
-
-        // Frequency slider (logarithmic for musical control)
-        if (ImGui::SliderFloat("Frequency", &frequency, 20.0f, 2000.0f, "%.1f Hz", ImGuiSliderFlags_Logarithmic)) {
-            audioEngine.setFrequency(frequency);
+        if (ImGui::BeginMainMenuBar()) {
+            if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("New Project")) {
+                    project = ChiptuneTracker::Project();
+                    sequencer.setProject(&project);
+                }
+                if (ImGui::MenuItem("Save Project")) {
+                    // TODO: Implement save
+                }
+                if (ImGui::MenuItem("Load Project")) {
+                    // TODO: Implement load
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Export WAV")) {
+                    // TODO: Implement export
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Exit")) {
+                    g_Running = false;
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z")) {}
+                if (ImGui::MenuItem("Redo", "Ctrl+Y")) {}
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("View")) {
+                if (ImGui::MenuItem("Piano Roll", nullptr, uiState.currentView == ChiptuneTracker::ViewMode::PianoRoll)) {
+                    uiState.currentView = ChiptuneTracker::ViewMode::PianoRoll;
+                }
+                if (ImGui::MenuItem("Tracker", nullptr, uiState.currentView == ChiptuneTracker::ViewMode::Tracker)) {
+                    uiState.currentView = ChiptuneTracker::ViewMode::Tracker;
+                }
+                if (ImGui::MenuItem("Arrangement", nullptr, uiState.currentView == ChiptuneTracker::ViewMode::Arrangement)) {
+                    uiState.currentView = ChiptuneTracker::ViewMode::Arrangement;
+                }
+                if (ImGui::MenuItem("Mixer", nullptr, uiState.currentView == ChiptuneTracker::ViewMode::Mixer)) {
+                    uiState.currentView = ChiptuneTracker::ViewMode::Mixer;
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Help")) {
+                if (ImGui::MenuItem("About")) {
+                    // TODO: Show about dialog
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMainMenuBar();
         }
 
-        // Volume slider
-        if (ImGui::SliderFloat("Volume", &volume, 0.0f, 1.0f, "%.2f")) {
-            audioEngine.setVolume(volume);
+        // ====================================================================
+        // UI Windows
+        // ====================================================================
+
+        // Transport bar (always visible)
+        ChiptuneTracker::DrawTransportBar(sequencer, project, playbackState, uiState);
+
+        // View tabs
+        ChiptuneTracker::DrawViewTabs(uiState);
+
+        // Pattern list (always visible)
+        ChiptuneTracker::DrawPatternList(project, uiState);
+
+        // Channel editor (always visible)
+        ChiptuneTracker::DrawChannelEditor(project, uiState, sequencer);
+
+        // Sound palette (always visible)
+        ChiptuneTracker::DrawSoundPalette(project, uiState, sequencer);
+
+        // Note editor (always visible when in piano roll mode)
+        ChiptuneTracker::DrawNoteEditor(project, uiState);
+
+        // Main editor view (based on current mode)
+        switch (uiState.currentView) {
+            case ChiptuneTracker::ViewMode::PianoRoll:
+                ChiptuneTracker::DrawPianoRoll(project, uiState, sequencer);
+                break;
+            case ChiptuneTracker::ViewMode::Tracker:
+                ChiptuneTracker::DrawTrackerView(project, uiState, sequencer);
+                break;
+            case ChiptuneTracker::ViewMode::Arrangement:
+                ChiptuneTracker::DrawArrangement(project, uiState, sequencer);
+                break;
+            case ChiptuneTracker::ViewMode::Mixer:
+                ChiptuneTracker::DrawMixer(project, uiState, sequencer);
+                break;
         }
 
-        // Waveform selector
-        if (ImGui::Combo("Waveform", &waveformIndex, waveformNames, IM_ARRAYSIZE(waveformNames))) {
-            audioEngine.setWaveform(static_cast<ChiptuneTracker::WaveformType>(waveformIndex));
+        // Keyboard shortcuts
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Space)) {
+            if (playbackState.isPlaying) sequencer.pause();
+            else sequencer.play();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Space) && !io.KeyCtrl && !ImGui::GetIO().WantTextInput) {
+            if (playbackState.isPlaying) sequencer.pause();
+            else sequencer.play();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
+            sequencer.stop();
         }
 
-        ImGui::Separator();
+        // Virtual keyboard (play notes with computer keyboard)
+        if (!ImGui::GetIO().WantTextInput) {
+            const int keyMap[] = {
+                ImGuiKey_Z, ImGuiKey_S, ImGuiKey_X, ImGuiKey_D, ImGuiKey_C,
+                ImGuiKey_V, ImGuiKey_G, ImGuiKey_B, ImGuiKey_H, ImGuiKey_N,
+                ImGuiKey_J, ImGuiKey_M
+            };
+            int baseNote = 48 + uiState.pianoRollOctaveOffset * 12;  // C3
 
-        // Quick note buttons (C4 to B4)
-        ImGui::Text("Quick Notes:");
-        const float notes[] = { 261.63f, 293.66f, 329.63f, 349.23f, 392.00f, 440.00f, 493.88f, 523.25f };
-        const char* noteNames[] = { "C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5" };
+            for (int i = 0; i < 12; ++i) {
+                if (ImGui::IsKeyPressed(static_cast<ImGuiKey>(keyMap[i]))) {
+                    sequencer.triggerNote(uiState.selectedChannel, baseNote + i, 0.8f);
+                }
+                if (ImGui::IsKeyReleased(static_cast<ImGuiKey>(keyMap[i]))) {
+                    sequencer.releaseNote(uiState.selectedChannel, baseNote + i);
+                }
+            }
 
-        for (int i = 0; i < 8; ++i) {
-            if (i > 0) ImGui::SameLine();
-            if (ImGui::Button(noteNames[i], ImVec2(40, 30))) {
-                frequency = notes[i];
-                audioEngine.setFrequency(frequency);
+            // Octave up/down
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) {
+                uiState.pianoRollOctaveOffset = std::max(0, uiState.pianoRollOctaveOffset - 1);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) {
+                uiState.pianoRollOctaveOffset = std::min(6, uiState.pianoRollOctaveOffset + 1);
             }
         }
-
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Chiptune Tracker v0.1 - Audio Stack Working!");
-
-        ImGui::End();
 
         // ====================================================================
         // Render
@@ -252,7 +426,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         RECT rect;
         GetClientRect(hwnd, &rect);
         glViewport(0, 0, rect.right - rect.left, rect.bottom - rect.top);
-        glClearColor(0.02f, 0.02f, 0.04f, 1.0f);
+        glClearColor(0.04f, 0.04f, 0.06f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -263,7 +437,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     // ========================================================================
     // Cleanup
     // ========================================================================
-    audioEngine.shutdown();
+    g_Sequencer = nullptr;
+    ma_device_uninit(&device);
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -281,7 +456,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
 // Window Procedure
 // ============================================================================
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    // Let ImGui process input first
     if (ImGui_ImplWin32_WndProcHandler(hwnd, uMsg, wParam, lParam)) {
         return true;
     }
@@ -296,7 +470,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             return 0;
 
         case WM_SIZE:
-            // Handle resize if needed
             return 0;
     }
 

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd complete project skeleton for chiptune tracker DAW\n\n- CMakeLists.txt: Modern CMake 3.20 build with miniaudio + ImGui\n- AudioEngine: Lock-free real-time audio with PolyBLEP oscillators\n  - Zero allocations in audio callback\n  - LFSR noise generation (NES-style)\n  - Waveforms: Sine, Square, Sawtooth, Triangle, Noise\n- main.cpp: Win32 + OpenGL + ImGui window with audio controls\n- .gitignore: Comprehensive C++/CMake/IDE exclusions\n- README.md: Full documentation with build instructions\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git push:*)",
+      "Bash(curl:*)",
+      "Bash(cmake:*)",
+      "Bash(cmake --build:*)",
+      "Bash(start \"\" \"C:\\Users\\zerav\\Documents\\python scripts\\chiptune_music_maker\\build\\bin\\Release\\ChiptuneTracker.exe\")",
+      "Bash(dir \"C:\\Users\\zerav\\Documents\\python scripts\\chiptune_music_maker\\build\\bin\\Release\")",
+      "Bash(\"C:\\Users\\zerav\\Documents\\python scripts\\chiptune_music_maker\\build\\bin\\Release\\ChiptuneTracker.exe\")",
+      "Bash(cmd /c start \"\" \"C:\\Users\\zerav\\Documents\\python scripts\\chiptune_music_maker\\build\\bin\\Release\\ChiptuneTracker.exe\")",
+      "Bash(powershell -Command \"Start-Process ''C:\\Users\\zerav\\Documents\\python scripts\\chiptune_music_maker\\build\\bin\\Release\\ChiptuneTracker.exe''\")",
+      "Bash(powershell -Command \"explorer ''C:\\Users\\zerav\\Documents\\python scripts\\chiptune_music_maker\\build\\bin\\Release''\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
