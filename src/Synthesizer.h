@@ -161,11 +161,28 @@ public:
         for (auto& voice : m_voices) {
             if (!voice.active) continue;
 
+            // Check if this is a drum sound (drums have their own internal envelope)
+            bool isDrum = (voice.oscillatorType == OscillatorType::Kick ||
+                          voice.oscillatorType == OscillatorType::Snare ||
+                          voice.oscillatorType == OscillatorType::HiHat ||
+                          voice.oscillatorType == OscillatorType::Tom);
+
             // Generate oscillator sample
             float sample = generateOscillator(voice);
 
-            // Apply envelope
-            float envGain = processEnvelope(voice);
+            // Apply envelope (skip ADSR for drums - they have internal envelopes)
+            float envGain = 1.0f;
+            if (isDrum) {
+                // Drums manage their own envelope internally
+                // Just update envTime for the drum generators
+                voice.envTime += 1.0f / m_sampleRate;
+                // Deactivate drum voice after it's finished (based on decay time)
+                if (voice.envTime > 1.0f) {  // 1 second max for any drum
+                    voice.active = false;
+                }
+            } else {
+                envGain = processEnvelope(voice);
+            }
 
             // Apply fade in/out
             float fadeGain = calculateFadeGain(voice, time);

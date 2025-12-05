@@ -1708,6 +1708,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
                 g_SelectedPaletteItem = -1;  // Deselect
             } else {
                 g_SelectedPaletteItem = i;  // Select
+                ui.pianoRollMode = PianoRollMode::Draw;  // Auto-switch to Draw mode
                 project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
                 seq.updateChannelConfigs();
             }
@@ -1772,6 +1773,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
                 g_SelectedPaletteItem = -1;  // Deselect
             } else {
                 g_SelectedPaletteItem = i;  // Select
+                ui.pianoRollMode = PianoRollMode::Draw;  // Auto-switch to Draw mode
                 project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
                 seq.updateChannelConfigs();
             }
