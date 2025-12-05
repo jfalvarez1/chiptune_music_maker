@@ -140,6 +140,7 @@ inline bool isDrumType(OscillatorType type) {
         case OscillatorType::Bongo:
         case OscillatorType::Timbale:
         case OscillatorType::Dembow808:
+        case OscillatorType::DembowSnare:
             return true;
         default:
             return false;
@@ -171,11 +172,12 @@ inline float getDrumDecayTime(OscillatorType type) {
         case OscillatorType::Maracas:    return 0.1f;
         case OscillatorType::Tambourine: return 0.2f;
         // Reggaeton drums
-        case OscillatorType::Guira:      return 0.15f;
-        case OscillatorType::Bongo:      return 0.3f;
-        case OscillatorType::Timbale:    return 0.25f;
-        case OscillatorType::Dembow808:  return 0.6f;
-        default:                         return 0.5f;
+        case OscillatorType::Guira:       return 0.15f;
+        case OscillatorType::Bongo:       return 0.3f;
+        case OscillatorType::Timbale:     return 0.12f;  // Shorter, cutting
+        case OscillatorType::Dembow808:   return 0.4f;   // Tighter
+        case OscillatorType::DembowSnare: return 0.12f;  // Tight, clap-like
+        default:                          return 0.5f;
     }
 }
 
@@ -608,6 +610,9 @@ private:
                 break;
             case OscillatorType::Dembow808:
                 sample = generateDembow808(voice);
+                break;
+            case OscillatorType::DembowSnare:
+                sample = generateDembowSnare(voice);
                 break;
         }
 
@@ -1873,183 +1878,298 @@ private:
     }
 
     // ========================================================================
-    // Reggaeton Instrument Generators
+    // Reggaeton Instrument Generators (Research-based authentic sounds)
     // ========================================================================
 
-    // ReggaetonBass - Deep punchy bass with 808-style pitch sweep and characteristic "perreo" sound
+    // ReggaetonBass - Deep 808-style bass with lo-fi character and pitch sweep
+    // Research: "808 bass", "lo-fi quality 12-bit", "very low pitched"
     float generateReggaetonBass(Voice& voice) {
         float t = voice.phase;
         float dt = voice.phaseIncrement;
+        float noteTime = voice.envTime;
 
-        // Strong sub sine (foundation)
-        float sub = std::sin(t * TWO_PI) * 0.8f;
+        // Dramatic pitch drop (808-style) - more pronounced for reggaeton
+        float pitchEnv = std::exp(-noteTime * 18.0f);
+        float pitchMult = 1.0f + pitchEnv * 0.6f;  // Starts higher, drops fast
 
-        // Pitch drop at start (808-style attack)
-        float pitchEnv = 1.0f + std::exp(-voice.envTime * 12.0f) * 0.4f;
-        float dropped = std::sin(t * TWO_PI * pitchEnv);
+        // Strong sub sine (foundation) - lower octave
+        float sub = std::sin(t * TWO_PI * 0.5f) * 0.6f;
 
-        // Add sawtooth harmonics for presence
+        // Main tone with pitch sweep
+        float main = std::sin(t * TWO_PI * pitchMult);
+
+        // Add subtle saw for presence (lo-fi filtered)
         float saw = 2.0f * t - 1.0f;
         saw -= polyBlep(t, dt);
+        // Low-pass simulation: reduce high harmonics
+        saw *= 0.3f;
 
-        // Square wave for punch
-        float sq = (t < 0.5f) ? 1.0f : -1.0f;
-        sq += polyBlep(t, dt);
-        sq -= polyBlep(std::fmod(t + 0.5f, 1.0f), dt);
+        // Lo-fi bit crushing simulation (quantize to fewer levels)
+        float mix = main * 0.5f + sub * 0.35f + saw * 0.1f;
+        // Simulate 12-bit by quantizing
+        float bitDepth = 256.0f;  // 8-bit equivalent for crunch
+        mix = std::floor(mix * bitDepth) / bitDepth;
 
-        // Mix with heavy saturation for that reggaeton punch
-        float mix = dropped * 0.5f + sub * 0.3f + saw * 0.15f + sq * 0.1f;
-        return std::tanh(mix * 2.0f) * 0.85f;
+        // Heavy saturation for that thick reggaeton punch
+        return std::tanh(mix * 2.5f) * 0.9f;
     }
 
     // LatinBrass - Punchy brass stab for reggaeton hooks and perreo breaks
+    // Research: Needs fast attack, bright opening that closes
     float generateLatinBrass(Voice& voice) {
         float t = voice.phase;
         float dt = voice.phaseIncrement;
+        float noteTime = voice.envTime;
+
+        // Fast attack, quick decay for stab feel
+        float stabEnv = std::exp(-noteTime * 8.0f);
 
         // Main sawtooth for brass character
         float saw = 2.0f * t - 1.0f;
         saw -= polyBlep(t, dt);
 
-        // Square for body
+        // Square for body and punch
         float sq = (t < 0.5f) ? 1.0f : -1.0f;
         sq += polyBlep(t, dt);
         sq -= polyBlep(std::fmod(t + 0.5f, 1.0f), dt);
 
-        // Add harmonics for brass character
-        float harm2 = std::sin(t * TWO_PI * 2.0f) * 0.4f;
-        float harm3 = std::sin(t * TWO_PI * 3.0f) * 0.2f;
-        float harm4 = std::sin(t * TWO_PI * 4.0f) * 0.1f;
+        // Brass harmonics (odd harmonics for brass character)
+        float harm3 = std::sin(t * TWO_PI * 3.0f) * 0.35f;
+        float harm5 = std::sin(t * TWO_PI * 5.0f) * 0.2f;
+        float harm7 = std::sin(t * TWO_PI * 7.0f) * 0.1f;
 
-        // Brightness envelope (opens up then closes for stab feel)
-        float brightness = 0.4f + 0.6f * std::exp(-voice.envTime * 3.0f);
+        // Brightness envelope - opens up quickly then closes for stab
+        float brightness = 0.3f + 0.7f * std::exp(-noteTime * 6.0f);
 
-        // Slight detuned layer for thickness
-        float phase2 = std::fmod(t + 0.003f, 1.0f);
+        // Detuned layer for thickness (typical of latin brass sections)
+        float phase2 = std::fmod(t + 0.007f, 1.0f);
         float saw2 = 2.0f * phase2 - 1.0f;
+        float phase3 = std::fmod(t - 0.005f, 1.0f);
+        float saw3 = 2.0f * phase3 - 1.0f;
 
-        float mix = (saw * 0.4f + sq * 0.2f + saw2 * 0.15f + harm2 + harm3 + harm4) * brightness;
-        return std::tanh(mix * 1.3f) * 0.8f;
+        float mix = (saw * 0.35f + sq * 0.15f + saw2 * 0.12f + saw3 * 0.1f +
+                    harm3 + harm5 + harm7) * brightness;
+
+        // Punchy saturation
+        return std::tanh(mix * 1.8f) * stabEnv * 0.85f;
     }
 
-    // Guira - Scraped metal percussion essential for dembow rhythm
+    // Guira - Scraped metal percussion (essential dembow "tsss-tsss")
+    // Research: High-frequency metallic scrape, rhythmic quality
     float generateGuira(Voice& voice) {
         float noteTime = voice.envTime;
 
-        // Set fixed phase increment
-        voice.phaseIncrement = 1500.0f / m_sampleRate;
+        // Set fixed phase increment for metallic character
+        voice.phaseIncrement = 2500.0f / m_sampleRate;
 
-        // Fast decay for the scrape
-        float envelope = std::exp(-noteTime * 30.0f);
+        // Two-stage envelope: initial attack + scraping tail
+        float attackEnv = std::exp(-noteTime * 60.0f);  // Sharp initial hit
+        float scrapeEnv = std::exp(-noteTime * 25.0f);  // Longer scrape
+        float envelope = attackEnv * 0.4f + scrapeEnv * 0.6f;
 
-        // Use envTime-based phase for metallic scrape
-        float scrapePhase = noteTime * 1500.0f;
+        // High-frequency metallic components (guira has bright, cutting sound)
+        float scrapePhase = noteTime * 3500.0f;  // Faster = brighter
 
-        // Multiple metallic frequencies for scraping texture
+        // Multiple inharmonic frequencies for authentic metallic scrape
         float metallic = 0.0f;
-        metallic += (std::fmod(scrapePhase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
-        metallic += (std::fmod(scrapePhase * 1.33f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
-        metallic += (std::fmod(scrapePhase * 2.11f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
-        metallic += (std::fmod(scrapePhase * 2.89f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;
+        metallic += (std::fmod(scrapePhase * 1.0f, 1.0f) < 0.3f ? 1.0f : -1.0f) * 0.18f;
+        metallic += (std::fmod(scrapePhase * 1.41f, 1.0f) < 0.4f ? 1.0f : -1.0f) * 0.15f;
+        metallic += (std::fmod(scrapePhase * 2.23f, 1.0f) < 0.35f ? 1.0f : -1.0f) * 0.12f;
+        metallic += (std::fmod(scrapePhase * 3.17f, 1.0f) < 0.45f ? 1.0f : -1.0f) * 0.1f;
+        metallic += (std::fmod(scrapePhase * 4.73f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.08f;
 
-        // Noisy texture for scraping sound
+        // High-frequency noise for scraping texture
         float noise = 0.0f;
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < 8; ++i) {
             uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
             voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
 
-        return (metallic * 0.5f + noise * 0.5f) * envelope;
+        // Emphasize high frequencies by mixing more metallic than noise
+        float sample = metallic * 0.55f + noise * 0.45f;
+
+        // Add slight resonance/ring
+        float ring = std::sin(noteTime * TWO_PI * 4500.0f) * 0.15f * scrapeEnv;
+
+        return (sample + ring) * envelope * 0.75f;
     }
 
-    // Bongo - Latin bongo drums with characteristic pitch and tone
+    // Bongo - Latin bongo with authentic membrane resonance
+    // Research: "Characteristic tone", two-drum (macho/hembra) quality
     float generateBongo(Voice& voice) {
         float noteTime = voice.envTime;
 
-        // Medium-fast decay
-        float envelope = std::exp(-noteTime * 15.0f);
+        // Two-stage envelope for realistic membrane
+        float attackEnv = std::exp(-noteTime * 35.0f);  // Sharp attack
+        float bodyEnv = std::exp(-noteTime * 12.0f);    // Body resonance
+        float envelope = attackEnv * 0.3f + bodyEnv * 0.7f;
 
-        // Pitch envelope for that characteristic bongo "bom"
-        float pitchEnv = std::exp(-noteTime * 25.0f);
-        float basePitch = 400.0f;  // Higher than conga
-        float freq = basePitch * (1.0f + 0.4f * pitchEnv);
+        // Pitch envelope for that characteristic bongo "pon/tok"
+        float pitchEnv = std::exp(-noteTime * 40.0f);
+        float basePitch = 380.0f;  // Macho (higher) bongo pitch
+        float freq = basePitch * (1.0f + 0.5f * pitchEnv);
 
-        // Main tone
-        float sample = std::sin(voice.phase * TWO_PI);
+        // Main membrane tone
         voice.phaseIncrement = freq / m_sampleRate;
+        float tone = std::sin(voice.phase * TWO_PI);
 
-        // Add harmonics for body
-        float harm2 = std::sin(voice.phase * TWO_PI * 2.0f) * 0.35f;
-        float harm3 = std::sin(voice.phase * TWO_PI * 3.0f) * 0.2f;
+        // Membrane harmonics (slightly inharmonic like real drum heads)
+        float harm2 = std::sin(voice.phase * TWO_PI * 1.59f) * 0.4f;  // Inharmonic
+        float harm3 = std::sin(voice.phase * TWO_PI * 2.14f) * 0.25f; // Inharmonic
+        float harm4 = std::sin(voice.phase * TWO_PI * 2.65f) * 0.15f; // Inharmonic
 
-        // Slap attack transient
+        // Sharp slap transient (hand strike)
         float slap = 0.0f;
-        if (noteTime < 0.003f) {
-            slap = (1.0f - noteTime / 0.003f) * 0.5f;
+        if (noteTime < 0.004f) {
+            // Noise burst for slap
+            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
+            voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+            slap = ((voice.lfsr & 1) ? 1.0f : -1.0f) * (1.0f - noteTime / 0.004f) * 0.5f;
         }
 
-        sample = std::tanh((sample + harm2 + harm3) * 1.3f);
+        // Body resonance (shell)
+        float body = std::sin(voice.phase * TWO_PI * 0.5f) * 0.2f;
 
-        return (sample + slap) * envelope;
+        float sample = tone + harm2 + harm3 + harm4 + body;
+        sample = std::tanh(sample * 1.2f);
+
+        return (sample + slap) * envelope * 0.8f;
     }
 
-    // Timbale - High-pitched Latin percussion with metallic ring
+    // Timbale - Short cutting square-wave based percussion
+    // Research: "Basic square-wave with tiny decay", "short, cutting percussive sound"
     float generateTimbale(Voice& voice) {
         float noteTime = voice.envTime;
 
-        // Fast initial decay with some sustain
-        float envelope = std::exp(-noteTime * 20.0f);
+        // Very fast decay - tight and cutting
+        float envelope = std::exp(-noteTime * 45.0f);
 
-        // Use envTime-based phase for consistent pitch
-        float basePitch = 600.0f;  // High pitched
-        float pitchEnv = std::exp(-noteTime * 30.0f);
-        float freq = basePitch * (1.0f + 0.3f * pitchEnv);
+        // High pitch with slight drop
+        float basePitch = 800.0f;  // Bright, cutting
+        float pitchEnv = std::exp(-noteTime * 50.0f);
+        float freq = basePitch * (1.0f + 0.25f * pitchEnv);
 
-        // Main tone with metallic character
-        float tone = std::sin(voice.phase * TWO_PI);
         voice.phaseIncrement = freq / m_sampleRate;
 
-        // Metallic harmonics
-        float ring1 = std::sin(voice.phase * TWO_PI * 2.23f) * 0.3f;  // Inharmonic
-        float ring2 = std::sin(voice.phase * TWO_PI * 3.47f) * 0.2f;  // Inharmonic
+        // Main square wave (as per research)
+        float sq = (voice.phase < 0.5f) ? 1.0f : -1.0f;
 
-        // Sharp attack click
+        // Metallic ring components (timbales have distinct ring)
+        float ring1 = std::sin(voice.phase * TWO_PI * 2.71f) * 0.25f;  // Inharmonic
+        float ring2 = std::sin(voice.phase * TWO_PI * 4.13f) * 0.15f;  // Inharmonic
+        float ring3 = std::sin(voice.phase * TWO_PI * 5.89f) * 0.1f;   // High shimmer
+
+        // Very sharp attack click (stick hit)
         float click = 0.0f;
-        if (noteTime < 0.002f) {
-            click = (1.0f - noteTime / 0.002f) * 0.6f;
+        if (noteTime < 0.0015f) {
+            click = (1.0f - noteTime / 0.0015f) * 0.7f;
         }
 
-        return (tone + ring1 + ring2 + click) * envelope * 0.7f;
+        float sample = sq * 0.4f + ring1 + ring2 + ring3;
+
+        return (sample + click) * envelope * 0.7f;
     }
 
-    // Dembow808 - 808-style kick tuned for dembow rhythm (lower, punchy)
+    // Dembow808 - Lo-fi kick for dembow rhythm
+    // Research: "unpitched", "deep, dull, round", "lo-fi 12-bit", "cuts off before bass"
     float generateDembow808(Voice& voice) {
         float noteTime = voice.envTime;
 
-        // Longer decay for that dembow bounce
-        float envelope = std::exp(-noteTime * 6.0f);
+        // Tighter envelope - cuts off before tonal bass emerges
+        float envelope = std::exp(-noteTime * 10.0f);
+        // Gate it shorter
+        if (noteTime > 0.15f) envelope *= std::exp(-(noteTime - 0.15f) * 20.0f);
 
-        // Deep pitch sweep characteristic of reggaeton
-        float startFreq = 130.0f;
-        float endFreq = 38.0f;
-        float pitchEnv = std::exp(-noteTime * 30.0f);
+        // Quick pitch sweep - becomes unpitched quickly
+        float startFreq = 90.0f;   // Lower start (less pitched)
+        float endFreq = 35.0f;     // Deep sub
+        float pitchEnv = std::exp(-noteTime * 50.0f);  // Faster sweep
         float freq = endFreq + (startFreq - endFreq) * pitchEnv;
 
         // Generate sine wave with pitch sweep
-        float sample = std::sin(voice.phase * TWO_PI);
         voice.phaseIncrement = freq / m_sampleRate;
+        float sample = std::sin(voice.phase * TWO_PI);
 
-        // Add subtle click for attack
-        float click = 0.0f;
-        if (noteTime < 0.005f) {
-            click = (1.0f - noteTime / 0.005f) * 0.2f;
+        // Add second harmonic for body (not brightness)
+        float harm2 = std::sin(voice.phase * TWO_PI * 2.0f) * 0.15f;
+
+        // Lo-fi processing (12-bit style quantization)
+        float mix = sample + harm2;
+        float bitDepth = 128.0f;  // Coarser quantization for lo-fi
+        mix = std::floor(mix * bitDepth) / bitDepth;
+
+        // Subtle "thump" attack (not clicky - dull and round)
+        float thump = 0.0f;
+        if (noteTime < 0.008f) {
+            thump = std::sin(noteTime * 800.0f) * (1.0f - noteTime / 0.008f) * 0.25f;
         }
 
-        // Warm saturation
-        sample = std::tanh(sample * 1.5f);
+        // Warm, dull saturation (not harsh)
+        mix = std::tanh(mix * 1.3f);
 
-        return (sample + click) * envelope;
+        return (mix + thump) * envelope * 0.9f;
+    }
+
+    // DembowSnare - Tight clap-like snare for dembow rhythm
+    // Research: "short and tight - no tail", "closer to a clap", "1kHz-3kHz emphasis"
+    float generateDembowSnare(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Very tight envelope - no tail
+        float envelope = std::exp(-noteTime * 35.0f);
+        // Hard gate after short time
+        if (noteTime > 0.08f) envelope *= std::exp(-(noteTime - 0.08f) * 50.0f);
+
+        // Multiple noise bursts (clap-like - multiple hands hitting)
+        float clap = 0.0f;
+
+        // First burst
+        if (noteTime < 0.015f) {
+            for (int i = 0; i < 6; ++i) {
+                uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
+                voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+            }
+            clap += ((voice.lfsr & 1) ? 1.0f : -1.0f) * 0.5f;
+        }
+        // Second burst (slightly delayed for clap character)
+        if (noteTime > 0.008f && noteTime < 0.025f) {
+            for (int i = 0; i < 4; ++i) {
+                uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
+                voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+            }
+            clap += ((voice.lfsr & 1) ? 1.0f : -1.0f) * 0.4f;
+        }
+        // Third burst
+        if (noteTime > 0.015f && noteTime < 0.035f) {
+            for (int i = 0; i < 3; ++i) {
+                uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
+                voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+            }
+            clap += ((voice.lfsr & 1) ? 1.0f : -1.0f) * 0.3f;
+        }
+
+        // Tonal body in the 1-3kHz range
+        float bodyFreq = 1800.0f;  // Center of 1-3kHz
+        voice.phaseIncrement = bodyFreq / m_sampleRate;
+        float body = std::sin(voice.phase * TWO_PI) * 0.3f;
+        // Add slightly off harmonics for snare character
+        float body2 = std::sin(voice.phase * TWO_PI * 1.4f) * 0.15f;
+        float body3 = std::sin(voice.phase * TWO_PI * 2.3f) * 0.1f;
+
+        // Continuous filtered noise layer
+        for (int i = 0; i < 5; ++i) {
+            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
+            voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+        }
+        float noise = ((voice.lfsr & 1) ? 1.0f : -1.0f) * 0.35f;
+
+        float sample = clap + body + body2 + body3 + noise;
+
+        // Compression simulation (make it punchy)
+        sample = std::tanh(sample * 2.0f);
+
+        return sample * envelope * 0.75f;
     }
 
     // ========================================================================

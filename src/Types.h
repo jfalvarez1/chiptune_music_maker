@@ -105,7 +105,8 @@ enum class OscillatorType : uint8_t {
     Guira,          // Scraped metal percussion (dembow essential)
     Bongo,          // Bongo drums
     Timbale,        // Timbale hit
-    Dembow808       // 808-style kick tuned for dembow rhythm
+    Dembow808,      // 808-style kick tuned for dembow rhythm
+    DembowSnare     // Tight clap-like snare for dembow (1-3kHz emphasis)
 };
 
 // ============================================================================

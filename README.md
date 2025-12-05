@@ -43,28 +43,29 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **SW Chord**: Polyphonic stab for chords - punchy chord hits
 - **SW FM**: Classic DX7-style FM brass - metallic and bright
 
-### Drum Kit (25 sounds!)
+### Drum Kit (26 sounds!)
 - **Kicks**: Standard, 808, Hard, Soft
 - **Snares**: Standard, 808, Rimshot, Clap
 - **Hi-Hats**: Closed, Open, Pedal
 - **Toms**: High, Mid, Low
 - **Cymbals**: Crash, Ride
 - **Percussion**: Cowbell, Clave, Conga, Maracas, Tambourine
-- **Reggaeton**: Guira, Bongo, Timbale, Dembow 808
+- **Reggaeton**: Guira, Bongo, Timbale, Dembow 808, Dembow Snare
 
-### Reggaeton Instruments (6 sounds!)
-- **Reggaeton Bass**: Deep punchy bass with 808-style pitch sweep
-- **Latin Brass**: Punchy brass stab for hooks and breaks
-- **Guira**: Scraped metal percussion (dembow essential)
-- **Bongo**: Latin bongo drums with characteristic tone
-- **Timbale**: High-pitched metallic percussion
-- **Dembow 808**: 808-style kick tuned for dembow rhythm
+### Reggaeton Instruments (7 sounds!) - Research-based authentic synthesis
+- **Reggaeton Bass**: Deep 808-style bass with lo-fi character and pitch sweep
+- **Latin Brass**: Punchy brass stab with odd harmonics for authentic section feel
+- **Guira**: High-frequency metallic scrape (essential dembow "tsss-tsss")
+- **Bongo**: Membrane resonance with inharmonic overtones and hand slap
+- **Timbale**: Square-wave based with fast decay and metallic ring
+- **Dembow 808**: Lo-fi unpitched kick with fast pitch sweep (12-bit style)
+- **Dembow Snare**: Tight clap-like snare with 1-3kHz emphasis (no tail)
 
 ### Visual Themes (8 themes!)
 - **Stock**: Clean dark theme (default)
 - **Cyberpunk**: Neon yellow, hot pink, electric blue with data streams and glitch effects
 - **Synthwave**: 80s retro with neon sunset, perspective grid, and color-cycling chasers
-- **Matrix**: Green on black with falling code animation
+- **Matrix**: Green on black with falling code animation and morphing characters (like the movie!)
 - **Frutiger Aero**: Glossy Web 2.0 aesthetic with floating bubbles, clouds, and glass reflections
 - **Minimal**: Clean flat design with red accent, subtle geometric animations
 - **Vaporwave**: Pink/cyan retro-futurism with striped sunset, perspective grid, floating shapes
@@ -283,7 +284,7 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Undo/Redo (50 levels)
 - [x] Copy/Paste with preview
 - [x] Box selection
-- [x] 25 drum sounds (including Reggaeton: Guira, Bongo, Timbale, Dembow 808)
+- [x] 26 drum sounds (including Reggaeton: Guira, Bongo, Timbale, Dembow 808, Dembow Snare)
 - [x] 18 synth presets (10 classic + 6 synthwave + 2 reggaeton)
 - [x] Supersaw oscillator (7 detuned saws)
 - [x] MP3 export (via LAME/FFmpeg)

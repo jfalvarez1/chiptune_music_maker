@@ -1288,15 +1288,18 @@ static UndoHistory g_UndoHistory;
 // Theme System
 // ============================================================================
 
-// Matrix rain effect state
+// Matrix rain effect state (with morphing characters like the movie)
 struct MatrixColumn {
     float y = 0.0f;
     float speed = 0.0f;
     int length = 0;
     std::string chars;
+    float morphTimer = 0.0f;        // Timer for character morphing
+    float morphInterval = 0.02f;    // How often to morph (faster = more dynamic)
 };
 static std::vector<MatrixColumn> g_MatrixColumns;
 static bool g_MatrixInitialized = false;
+static const char* g_MatrixChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()+-=[]{}|;':\",./<>?~`";
 
 // Synthwave chaser state
 static float g_ChaserOffset = 0.0f;
@@ -1650,8 +1653,7 @@ inline void ApplyTheme(Theme theme) {
 inline void InitMatrixRain(int screenWidth) {
     if (g_MatrixInitialized) return;
 
-    const char* matrixChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()";
-    int numChars = static_cast<int>(strlen(matrixChars));
+    int numChars = static_cast<int>(strlen(g_MatrixChars));
     int columnWidth = 14;
     int numColumns = screenWidth / columnWidth + 1;
 
@@ -1660,15 +1662,17 @@ inline void InitMatrixRain(int screenWidth) {
         g_MatrixColumns[i].y = static_cast<float>(rand() % 800);
         g_MatrixColumns[i].speed = 50.0f + static_cast<float>(rand() % 150);
         g_MatrixColumns[i].length = 5 + rand() % 20;
+        g_MatrixColumns[i].morphTimer = 0.0f;
+        g_MatrixColumns[i].morphInterval = 0.015f + static_cast<float>(rand() % 25) / 1000.0f; // 15-40ms (faster!)
         g_MatrixColumns[i].chars.clear();
         for (int j = 0; j < g_MatrixColumns[i].length; ++j) {
-            g_MatrixColumns[i].chars += matrixChars[rand() % numChars];
+            g_MatrixColumns[i].chars += g_MatrixChars[rand() % numChars];
         }
     }
     g_MatrixInitialized = true;
 }
 
-// Draw Matrix rain background effect
+// Draw Matrix rain background effect (with morphing characters like the movie!)
 inline void DrawMatrixRain(ImDrawList* drawList, ImVec2 screenSize, float deltaTime) {
     InitMatrixRain(static_cast<int>(screenSize.x));
 
@@ -1676,6 +1680,7 @@ inline void DrawMatrixRain(ImDrawList* drawList, ImVec2 screenSize, float deltaT
     float scaleFactor = std::max(screenSize.x / 1920.0f, screenSize.y / 1080.0f);
     int columnWidth = static_cast<int>(14 * scaleFactor);
     int charHeight = static_cast<int>(16 * scaleFactor);
+    int numChars = static_cast<int>(strlen(g_MatrixChars));
 
     for (size_t i = 0; i < g_MatrixColumns.size(); ++i) {
         MatrixColumn& col = g_MatrixColumns[i];
@@ -1685,12 +1690,27 @@ inline void DrawMatrixRain(ImDrawList* drawList, ImVec2 screenSize, float deltaT
         if (col.y > screenSize.y + col.length * charHeight) {
             col.y = -static_cast<float>(col.length * charHeight);
             col.speed = 50.0f + static_cast<float>(rand() % 150);
+            col.morphInterval = 0.015f + static_cast<float>(rand() % 25) / 1000.0f; // 15-40ms
 
-            // Randomize characters
-            const char* matrixChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()";
-            int numChars = static_cast<int>(strlen(matrixChars));
+            // Randomize all characters on reset
             for (int j = 0; j < col.length; ++j) {
-                col.chars[j] = matrixChars[rand() % numChars];
+                col.chars[j] = g_MatrixChars[rand() % numChars];
+            }
+        }
+
+        // === MATRIX CHARACTER MORPHING (like the movie!) ===
+        // Characters randomly change as they fall, creating the "live data" effect
+        col.morphTimer += deltaTime;
+        if (col.morphTimer >= col.morphInterval) {
+            col.morphTimer = 0.0f;
+            // Randomly morph 2-5 characters in the trail for faster, more dynamic effect
+            int numToMorph = 2 + rand() % 4;
+            for (int m = 0; m < numToMorph; ++m) {
+                int morphIdx = rand() % col.length;
+                // Characters closer to tail morph more often (more unstable)
+                if (morphIdx > 0 || rand() % 3 == 0) {  // Head morphs occasionally too
+                    col.chars[morphIdx] = g_MatrixChars[rand() % numChars];
+                }
             }
         }
 
@@ -1705,10 +1725,12 @@ inline void DrawMatrixRain(ImDrawList* drawList, ImVec2 screenSize, float deltaT
             int green = static_cast<int>(255 * brightness);
             int alpha = static_cast<int>(200 * brightness);
 
-            // Head of trail is brightest (white-ish)
+            // Head of trail is brightest (white-ish green glow)
             ImU32 color;
             if (j == 0) {
-                color = IM_COL32(200, 255, 200, 255);
+                color = IM_COL32(200, 255, 200, 255);  // Bright white-green
+            } else if (j == 1) {
+                color = IM_COL32(100, 255, 150, 240);  // Slightly dimmer
             } else {
                 color = IM_COL32(0, green, green / 4, alpha);
             }
@@ -5894,8 +5916,8 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         "Tom", "TomLow", "TomHigh",
         "Crash", "Ride",
         "Cowbell", "Clave", "Conga", "Maracas", "Tambourine",
-        // Reggaeton Instruments (6) - indices 56-61
-        "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow808"
+        // Reggaeton Instruments (7) - indices 56-62
+        "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow808", "DembowSnare"
     };
     const char* oscDesc[] = {
         // Oscillators (7) - indices 0-6
@@ -5920,8 +5942,8 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         "Mid tom", "Floor tom", "High tom",
         "Crash long", "Ride sustained",
         "808 cowbell", "Wood block", "Conga", "Shaker", "Jingly",
-        // Reggaeton Instruments (6) - indices 56-61
-        "Punchy reggaeton bass", "Latin brass stab", "Scraped dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick"
+        // Reggaeton Instruments (7) - indices 56-62
+        "Punchy reggaeton bass", "Latin brass stab", "Scraped dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick", "Tight clap snare"
     };
 
     constexpr int NUM_OSCILLATORS = 7;  // Pulse, Triangle, Sawtooth, Sine, Noise, Supersaw, Custom
@@ -6077,10 +6099,10 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // Reggaeton (synths + drums)
     {
-        const int indices[] = { 56, 57, 58, 59, 60, 61 };
-        const char* names[] = { "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow 808" };
-        const char* descs[] = { "Punchy reggaeton bass", "Latin brass stab", "Scraped metal dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick" };
-        DrawDrumCategory("Reggaeton", g_PaletteExpanded_Reggaeton, indices, names, descs, 6, project, ui, seq);
+        const int indices[] = { 56, 57, 58, 59, 60, 61, 62 };
+        const char* names[] = { "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow 808", "Dembow Snare" };
+        const char* descs[] = { "Punchy reggaeton bass", "Latin brass stab", "Scraped metal dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick", "Tight clap snare" };
+        DrawDrumCategory("Reggaeton", g_PaletteExpanded_Reggaeton, indices, names, descs, 7, project, ui, seq);
     }
 
     // ========== PATTERN TEMPLATES ==========
