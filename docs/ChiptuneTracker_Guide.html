@@ -1223,12 +1223,12 @@
 
         <!-- Drums -->
         <section id="drums">
-            <h2>Drum Sounds (21 Types!)</h2>
+            <h2>Drum Sounds (25 Types!)</h2>
 
-            <p>ChiptuneTracker includes a comprehensive drum kit with <strong>21 synthesized sounds</strong>
-            that emulate classic 8-bit and electronic percussion. Unlike melodic sounds, drums don't follow
-            the ADSR envelope - they have their own specialized envelopes built in. Drums also automatically
-            adjust their duration based on BPM!</p>
+            <p>ChiptuneTracker includes a comprehensive drum kit with <strong>25 synthesized sounds</strong>
+            that emulate classic 8-bit and electronic percussion, including authentic <strong>Reggaeton</strong>
+            instruments. Unlike melodic sounds, drums don't follow the ADSR envelope - they have their own
+            specialized envelopes built in. Drums also automatically adjust their duration based on BPM!</p>
 
             <div class="tip-box">
                 <strong>Expandable Palette:</strong> Drums are organized in collapsible categories (Kicks, Snares, Hi-Hats, etc.).
@@ -1324,6 +1324,35 @@
                 </div>
             </div>
 
+            <h3>Reggaeton Instruments</h3>
+            <p>Authentic Latin percussion and synths for creating <strong>dembow</strong> beats and reggaeton music!</p>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>REGGAETON BASS</h4>
+                    <p>Deep punchy bass with 808-style pitch sweep. The foundation of reggaeton's low end.</p>
+                </div>
+                <div class="param-card">
+                    <h4>LATIN BRASS</h4>
+                    <p>Punchy brass stab for hooks and "perreo" breaks. Adds that classic reggaeton punch.</p>
+                </div>
+                <div class="param-card">
+                    <h4>GUIRA</h4>
+                    <p>Scraped metal percussion - essential for authentic dembow rhythm. That distinctive "ch-ch" sound.</p>
+                </div>
+                <div class="param-card">
+                    <h4>BONGO</h4>
+                    <p>Latin bongo drums with characteristic pitch and warm tone. Great for fills.</p>
+                </div>
+                <div class="param-card">
+                    <h4>TIMBALE</h4>
+                    <p>High-pitched metallic percussion with inharmonic ring. Adds sparkle to patterns.</p>
+                </div>
+                <div class="param-card">
+                    <h4>DEMBOW 808</h4>
+                    <p>808-style kick tuned specifically for dembow rhythm. Deeper and punchier than standard 808.</p>
+                </div>
+            </div>
+
             <h3>Basic Beat Patterns</h3>
             <p>Here are some classic patterns to get you started (X = hit, - = rest):</p>
             <pre><code><span class="comment">// Basic Rock Beat (4/4 time)</span>
@@ -1342,7 +1371,14 @@ HiHat:   X X X X X X X X
 Beat:    1 + 2 + 3 + 4 +
 Kick:    X - - X - - X -
 Snare:   - - X - - X - X
-HiHat:   X - X - X - X -</code></pre>
+HiHat:   X - X - X - X -
+
+<span class="comment">// Reggaeton Dembow (90-100 BPM)</span>
+Beat:    1   +   2   +   3   +   4   +
+Dembow:  X   -   -   X   X   -   -   X
+Snare:   -   -   X   -   -   -   X   -
+Guira:   X   X   X   X   X   X   X   X
+HiHat:   -   X   -   X   -   X   -   X</code></pre>
 
             <div class="tip-box">
                 <strong>Tip:</strong> The grid in the piano roll is divided into beats. Place kicks and
@@ -2249,7 +2285,7 @@ VI - VII - i - i  (F - G - Am - Am in A minor)</code></pre>
         <footer>
             <p>CHIPTUNE TRACKER v2.3</p>
             <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
-            <p>7 Oscillators (incl. Supersaw) | 16 Synths | 21 Drums | 4 Themes | High-DPI Support</p>
+            <p>7 Oscillators (incl. Supersaw) | 18 Synths | 25 Drums (incl. Reggaeton) | 8 Themes | 7 Sample Track Genres | High-DPI Support</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>

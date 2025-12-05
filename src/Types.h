@@ -98,7 +98,14 @@ enum class OscillatorType : uint8_t {
     Clave,      // Wood block click
     Conga,      // Conga drum
     Maracas,    // Shaker
-    Tambourine  // Jingly metallic
+    Tambourine, // Jingly metallic
+    // Reggaeton Instruments
+    ReggaetonBass,  // Deep punchy reggaeton bass (808-style with pitch sweep)
+    LatinBrass,     // Brass stab for reggaeton hooks
+    Guira,          // Scraped metal percussion (dembow essential)
+    Bongo,          // Bongo drums
+    Timbale,        // Timbale hit
+    Dembow808       // 808-style kick tuned for dembow rhythm
 };
 
 // ============================================================================

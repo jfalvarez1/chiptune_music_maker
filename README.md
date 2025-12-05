@@ -43,13 +43,22 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **SW Chord**: Polyphonic stab for chords - punchy chord hits
 - **SW FM**: Classic DX7-style FM brass - metallic and bright
 
-### Drum Kit (21 sounds!)
+### Drum Kit (25 sounds!)
 - **Kicks**: Standard, 808, Hard, Soft
 - **Snares**: Standard, 808, Rimshot, Clap
 - **Hi-Hats**: Closed, Open, Pedal
 - **Toms**: High, Mid, Low
 - **Cymbals**: Crash, Ride
 - **Percussion**: Cowbell, Clave, Conga, Maracas, Tambourine
+- **Reggaeton**: Guira, Bongo, Timbale, Dembow 808
+
+### Reggaeton Instruments (6 sounds!)
+- **Reggaeton Bass**: Deep punchy bass with 808-style pitch sweep
+- **Latin Brass**: Punchy brass stab for hooks and breaks
+- **Guira**: Scraped metal percussion (dembow essential)
+- **Bongo**: Latin bongo drums with characteristic tone
+- **Timbale**: High-pitched metallic percussion
+- **Dembow 808**: 808-style kick tuned for dembow rhythm
 
 ### Visual Themes (8 themes!)
 - **Stock**: Clean dark theme (default)
@@ -62,6 +71,16 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **Retro Terminal**: Authentic CRT simulation with scanlines, phosphor glow, screen curvature, and flicker
 - **High-DPI scaling**: All themes scale properly for 1440p, 4K, and ultrawide monitors
 
+### Sample Tracks (7 genres!)
+Pre-made track templates to get you started:
+- **Synthwave**: Driving 80s beat at 118 BPM
+- **Techno**: Minimal techno groove at 130 BPM
+- **Chiptune**: NES-style 8-bit at 140 BPM
+- **Hip Hop**: Classic boom bap at 90 BPM
+- **Trap**: Dark trap beat at 140 BPM
+- **House**: Four-on-the-floor at 125 BPM
+- **Reggaeton**: Dembow beats (Perreo 95 BPM, Gasolina 100 BPM, Noche 90 BPM)
+
 ### Editing
 - **Piano Roll Editor**: Visual note editing with zoom and scroll
 - **Three edit modes**: Draw, Select, Erase (hotkeys: D, S, E)
@@ -73,8 +92,8 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **Full undo/redo**: 50 levels of history (Ctrl+Z / Ctrl+Y)
 
 ### Sound Palette
-- **Expandable categories**: Collapsible sections for Oscillators, Synths, and Drums
-- **Drum categories**: Kicks, Snares, Hi-Hats, Toms, Cymbals, Percussion
+- **Expandable categories**: Collapsible sections for Oscillators, Synths, Drums, and Reggaeton
+- **Drum categories**: Kicks, Snares, Hi-Hats, Toms, Cymbals, Percussion, Reggaeton
 - **Duration variants**: Each drum has Short (0.5x), Normal (1x), and Long (2x) options
 - **Click to select**: Choose a sound, then click on piano roll to place
 
@@ -264,8 +283,8 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Undo/Redo (50 levels)
 - [x] Copy/Paste with preview
 - [x] Box selection
-- [x] 21 drum sounds
-- [x] 16 synth presets (10 classic + 6 synthwave)
+- [x] 25 drum sounds (including Reggaeton: Guira, Bongo, Timbale, Dembow 808)
+- [x] 18 synth presets (10 classic + 6 synthwave + 2 reggaeton)
 - [x] Supersaw oscillator (7 detuned saws)
 - [x] MP3 export (via LAME/FFmpeg)
 - [x] Visual themes (8 themes: Stock, Cyberpunk, Synthwave, Matrix, Frutiger Aero, Minimal, Vaporwave, Retro Terminal)
@@ -274,6 +293,8 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Sound preview on note placement
 - [x] Piano roll zoom controls
 - [x] High-DPI theme scaling (1440p, 4K support)
+- [x] Sample tracks (7 genres: Synthwave, Techno, Chiptune, Hip Hop, Trap, House, Reggaeton)
+- [x] Reggaeton instruments (bass, brass, drums)
 - [ ] FLAC export
 - [ ] VST plugin version
 - [ ] Pattern arrangement view

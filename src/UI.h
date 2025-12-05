@@ -65,6 +65,1221 @@ static bool g_PaletteExpanded_HiHats = true;
 static bool g_PaletteExpanded_Toms = false;
 static bool g_PaletteExpanded_Cymbals = false;
 static bool g_PaletteExpanded_Percussion = false;
+static bool g_PaletteExpanded_Reggaeton = false;
+static bool g_PaletteExpanded_Patterns = true;
+
+// ============================================================================
+// Pattern Templates - Pre-made drum patterns for different genres
+// ============================================================================
+struct PatternNote {
+    float beat;         // Start beat (0-based)
+    int pitch;          // MIDI note (for positioning in piano roll)
+    OscillatorType osc; // Drum/sound type
+    float duration;     // Note duration in beats
+};
+
+struct DrumPattern {
+    const char* name;
+    const char* description;
+    const PatternNote* notes;
+    int noteCount;
+    int lengthBeats;    // Total pattern length
+};
+
+// Synthwave 4/4 beat - driving kick with open hats
+static const PatternNote g_SynthwavePattern[] = {
+    {0.0f, 36, OscillatorType::Kick808, 0.25f},
+    {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 38, OscillatorType::Snare808, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 36, OscillatorType::Kick808, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.0f, 38, OscillatorType::Snare808, 0.25f},
+    {3.5f, 46, OscillatorType::HiHatOpen, 0.25f},
+};
+
+// Techno 4/4 - four on the floor with offbeat hats
+static const PatternNote g_TechnoPattern[] = {
+    {0.0f, 36, OscillatorType::Kick, 0.25f},
+    {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 36, OscillatorType::Kick, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.0f, 36, OscillatorType::Kick, 0.25f},
+    {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 39, OscillatorType::Clap, 0.25f},
+    {3.0f, 39, OscillatorType::Clap, 0.25f},
+};
+
+// Hip Hop - boom bap style
+static const PatternNote g_HipHopPattern[] = {
+    {0.0f, 36, OscillatorType::Kick808, 0.5f},
+    {0.75f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 38, OscillatorType::Snare808, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.25f, 36, OscillatorType::Kick808, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.0f, 38, OscillatorType::Snare808, 0.25f},
+    {3.5f, 42, OscillatorType::HiHat, 0.125f},
+};
+
+// House - classic house beat
+static const PatternNote g_HousePattern[] = {
+    {0.0f, 36, OscillatorType::Kick, 0.25f},
+    {0.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {1.0f, 36, OscillatorType::Kick, 0.25f},
+    {1.0f, 38, OscillatorType::Clap, 0.25f},
+    {1.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f},
+    {2.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {3.0f, 36, OscillatorType::Kick, 0.25f},
+    {3.0f, 38, OscillatorType::Clap, 0.25f},
+    {3.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+};
+
+// Drum & Bass - breakbeat style
+static const PatternNote g_DnBPattern[] = {
+    {0.0f, 36, OscillatorType::KickHard, 0.25f},
+    {0.25f, 42, OscillatorType::HiHat, 0.125f},
+    {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {0.75f, 38, OscillatorType::SnareRim, 0.125f},
+    {1.0f, 42, OscillatorType::HiHat, 0.125f},
+    {1.25f, 36, OscillatorType::KickHard, 0.25f},
+    {1.5f, 38, OscillatorType::Snare, 0.25f},
+    {1.75f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 36, OscillatorType::KickHard, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.75f, 38, OscillatorType::SnareRim, 0.125f},
+    {3.0f, 42, OscillatorType::HiHat, 0.125f},
+    {3.25f, 36, OscillatorType::KickHard, 0.125f},
+    {3.5f, 38, OscillatorType::Snare, 0.25f},
+    {3.75f, 42, OscillatorType::HiHat, 0.125f},
+};
+
+// 8-bit / Chiptune style
+static const PatternNote g_ChiptunePattern[] = {
+    {0.0f, 36, OscillatorType::Kick, 0.25f},
+    {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 38, OscillatorType::Snare, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f},
+    {2.25f, 36, OscillatorType::Kick, 0.125f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.0f, 38, OscillatorType::Snare, 0.25f},
+    {3.5f, 42, OscillatorType::HiHat, 0.125f},
+};
+
+// Trap - 808 heavy with hi-hat rolls
+static const PatternNote g_TrapPattern[] = {
+    {0.0f, 36, OscillatorType::Kick808, 0.5f},
+    {0.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.375f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.625f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.875f, 42, OscillatorType::HiHat, 0.0625f},
+    {1.0f, 38, OscillatorType::Snare808, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 36, OscillatorType::Kick808, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.625f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.875f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.0f, 38, OscillatorType::Snare808, 0.25f},
+    {3.25f, 36, OscillatorType::Kick808, 0.25f},
+    {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.75f, 42, OscillatorType::HiHat, 0.125f},
+};
+
+// Simple Rock beat
+static const PatternNote g_RockPattern[] = {
+    {0.0f, 36, OscillatorType::Kick, 0.25f},
+    {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 38, OscillatorType::Snare, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.0f, 38, OscillatorType::Snare, 0.25f},
+    {3.5f, 42, OscillatorType::HiHat, 0.125f},
+};
+
+static const DrumPattern g_DrumPatterns[] = {
+    {"Synthwave", "Driving 80s beat with 808 kick", g_SynthwavePattern, 8, 4},
+    {"Techno", "Four on the floor with claps", g_TechnoPattern, 10, 4},
+    {"Hip Hop", "Boom bap groove", g_HipHopPattern, 8, 4},
+    {"House", "Classic house with open hats", g_HousePattern, 10, 4},
+    {"Drum & Bass", "Fast breakbeat style", g_DnBPattern, 15, 4},
+    {"Chiptune", "8-bit game style", g_ChiptunePattern, 9, 4},
+    {"Trap", "808 heavy with hi-hat rolls", g_TrapPattern, 18, 4},
+    {"Rock", "Simple rock beat", g_RockPattern, 8, 4},
+};
+static constexpr int g_NumDrumPatterns = sizeof(g_DrumPatterns) / sizeof(g_DrumPatterns[0]);
+
+// Pattern preview state (ghost notes before placement)
+static bool g_IsPatternPreviewing = false;
+static int g_PreviewPatternIndex = -1;  // Which pattern is being previewed
+static int g_PatternPreviewBasePitch = 36;  // Base pitch for the pattern (kick note)
+
+// ============================================================================
+// Sample Tracks - Complete songs with melody, bass, and drums
+// ============================================================================
+struct TrackNote {
+    float beat;         // Start beat (0-based)
+    int pitch;          // MIDI note
+    OscillatorType osc; // Instrument type
+    float duration;     // Note duration in beats
+};
+
+struct SampleTrack {
+    const char* name;
+    const char* genre;
+    const char* description;
+    const TrackNote* notes;
+    int noteCount;
+    int lengthBeats;    // Total track length
+    int bpm;            // Suggested BPM
+};
+
+// ===========================================
+// SYNTHWAVE TRACKS
+// ===========================================
+
+// Synthwave Track 1: "Midnight Drive" - Am-F-C-G progression (16 bars)
+static const TrackNote g_SynthwaveMidnightDrive[] = {
+    // === DRUMS (kick on 1,3 - snare on 2,4 - hihats 8ths) ===
+    // Bar 1-4
+    {0.0f, 36, OscillatorType::Kick808, 0.25f}, {1.0f, 38, OscillatorType::Snare808, 0.25f},
+    {2.0f, 36, OscillatorType::Kick808, 0.25f}, {3.0f, 38, OscillatorType::Snare808, 0.25f},
+    {4.0f, 36, OscillatorType::Kick808, 0.25f}, {5.0f, 38, OscillatorType::Snare808, 0.25f},
+    {6.0f, 36, OscillatorType::Kick808, 0.25f}, {7.0f, 38, OscillatorType::Snare808, 0.25f},
+    {8.0f, 36, OscillatorType::Kick808, 0.25f}, {9.0f, 38, OscillatorType::Snare808, 0.25f},
+    {10.0f, 36, OscillatorType::Kick808, 0.25f}, {11.0f, 38, OscillatorType::Snare808, 0.25f},
+    {12.0f, 36, OscillatorType::Kick808, 0.25f}, {13.0f, 38, OscillatorType::Snare808, 0.25f},
+    {14.0f, 36, OscillatorType::Kick808, 0.25f}, {15.0f, 38, OscillatorType::Snare808, 0.25f},
+    // Hihats (8ths for 16 bars)
+    {0.5f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f}, {3.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {4.5f, 42, OscillatorType::HiHat, 0.125f}, {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.5f, 42, OscillatorType::HiHat, 0.125f}, {7.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {8.5f, 42, OscillatorType::HiHat, 0.125f}, {9.5f, 42, OscillatorType::HiHat, 0.125f},
+    {10.5f, 42, OscillatorType::HiHat, 0.125f}, {11.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {12.5f, 42, OscillatorType::HiHat, 0.125f}, {13.5f, 42, OscillatorType::HiHat, 0.125f},
+    {14.5f, 42, OscillatorType::HiHat, 0.125f}, {15.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    // === BASS (Am-F-C-G root notes, 4 bars each) ===
+    {0.0f, 33, OscillatorType::SynthwaveBass, 3.5f},   // A1
+    {4.0f, 29, OscillatorType::SynthwaveBass, 3.5f},   // F1
+    {8.0f, 36, OscillatorType::SynthwaveBass, 3.5f},   // C2
+    {12.0f, 31, OscillatorType::SynthwaveBass, 3.5f},  // G1
+    // === MELODY (SW Lead - emotional synthwave melody) ===
+    // Bar 1-4 (Am)
+    {0.0f, 69, OscillatorType::SynthwaveLead, 1.0f},   // A4
+    {1.0f, 72, OscillatorType::SynthwaveLead, 0.5f},   // C5
+    {1.5f, 74, OscillatorType::SynthwaveLead, 0.5f},   // D5
+    {2.0f, 76, OscillatorType::SynthwaveLead, 2.0f},   // E5
+    // Bar 5-8 (F)
+    {4.0f, 77, OscillatorType::SynthwaveLead, 1.0f},   // F5
+    {5.0f, 76, OscillatorType::SynthwaveLead, 0.5f},   // E5
+    {5.5f, 74, OscillatorType::SynthwaveLead, 0.5f},   // D5
+    {6.0f, 72, OscillatorType::SynthwaveLead, 2.0f},   // C5
+    // Bar 9-12 (C)
+    {8.0f, 72, OscillatorType::SynthwaveLead, 1.0f},   // C5
+    {9.0f, 74, OscillatorType::SynthwaveLead, 0.5f},   // D5
+    {9.5f, 76, OscillatorType::SynthwaveLead, 0.5f},   // E5
+    {10.0f, 79, OscillatorType::SynthwaveLead, 2.0f},  // G5
+    // Bar 13-16 (G)
+    {12.0f, 79, OscillatorType::SynthwaveLead, 1.0f},  // G5
+    {13.0f, 77, OscillatorType::SynthwaveLead, 0.5f},  // F5
+    {13.5f, 76, OscillatorType::SynthwaveLead, 0.5f},  // E5
+    {14.0f, 69, OscillatorType::SynthwaveLead, 2.0f},  // A4
+    // === PADS (chords) ===
+    {0.0f, 57, OscillatorType::SynthwavePad, 4.0f},    // A3 (Am chord root)
+    {0.0f, 60, OscillatorType::SynthwavePad, 4.0f},    // C4
+    {0.0f, 64, OscillatorType::SynthwavePad, 4.0f},    // E4
+    {4.0f, 53, OscillatorType::SynthwavePad, 4.0f},    // F3
+    {4.0f, 57, OscillatorType::SynthwavePad, 4.0f},    // A3
+    {4.0f, 60, OscillatorType::SynthwavePad, 4.0f},    // C4
+    {8.0f, 48, OscillatorType::SynthwavePad, 4.0f},    // C3
+    {8.0f, 52, OscillatorType::SynthwavePad, 4.0f},    // E3
+    {8.0f, 55, OscillatorType::SynthwavePad, 4.0f},    // G3
+    {12.0f, 55, OscillatorType::SynthwavePad, 4.0f},   // G3
+    {12.0f, 59, OscillatorType::SynthwavePad, 4.0f},   // B3
+    {12.0f, 62, OscillatorType::SynthwavePad, 4.0f},   // D4
+};
+
+// Synthwave Track 2: "Neon Dreams" - Fm-Db-Ab-Eb (slower, dreamy)
+static const TrackNote g_SynthwaveNeonDreams[] = {
+    // === DRUMS (slower, more sparse) ===
+    {0.0f, 36, OscillatorType::Kick808, 0.5f}, {2.0f, 38, OscillatorType::Snare808, 0.25f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f}, {6.0f, 38, OscillatorType::Snare808, 0.25f},
+    {8.0f, 36, OscillatorType::Kick808, 0.5f}, {10.0f, 38, OscillatorType::Snare808, 0.25f},
+    {12.0f, 36, OscillatorType::Kick808, 0.5f}, {14.0f, 38, OscillatorType::Snare808, 0.25f},
+    // Hihats (quarter notes)
+    {1.0f, 42, OscillatorType::HiHat, 0.125f}, {3.0f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {5.0f, 42, OscillatorType::HiHat, 0.125f}, {7.0f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {9.0f, 42, OscillatorType::HiHat, 0.125f}, {11.0f, 42, OscillatorType::HiHatOpen, 0.25f},
+    {13.0f, 42, OscillatorType::HiHat, 0.125f}, {15.0f, 42, OscillatorType::HiHatOpen, 0.25f},
+    // === BASS ===
+    {0.0f, 29, OscillatorType::SynthwaveBass, 3.5f},   // F1
+    {4.0f, 25, OscillatorType::SynthwaveBass, 3.5f},   // Db1
+    {8.0f, 32, OscillatorType::SynthwaveBass, 3.5f},   // Ab1
+    {12.0f, 27, OscillatorType::SynthwaveBass, 3.5f},  // Eb1
+    // === ARPEGGIO (dreamy sequence) ===
+    {0.0f, 65, OscillatorType::SynthwaveArp, 0.25f},   // F4
+    {0.5f, 68, OscillatorType::SynthwaveArp, 0.25f},   // Ab4
+    {1.0f, 72, OscillatorType::SynthwaveArp, 0.25f},   // C5
+    {1.5f, 68, OscillatorType::SynthwaveArp, 0.25f},   // Ab4
+    {2.0f, 65, OscillatorType::SynthwaveArp, 0.25f},   // F4
+    {2.5f, 68, OscillatorType::SynthwaveArp, 0.25f},   // Ab4
+    {3.0f, 72, OscillatorType::SynthwaveArp, 0.25f},   // C5
+    {3.5f, 77, OscillatorType::SynthwaveArp, 0.25f},   // F5
+    {4.0f, 61, OscillatorType::SynthwaveArp, 0.25f},   // Db4
+    {4.5f, 65, OscillatorType::SynthwaveArp, 0.25f},   // F4
+    {5.0f, 68, OscillatorType::SynthwaveArp, 0.25f},   // Ab4
+    {5.5f, 65, OscillatorType::SynthwaveArp, 0.25f},   // F4
+    {6.0f, 61, OscillatorType::SynthwaveArp, 0.25f},   // Db4
+    {6.5f, 65, OscillatorType::SynthwaveArp, 0.25f},   // F4
+    {7.0f, 68, OscillatorType::SynthwaveArp, 0.25f},   // Ab4
+    {7.5f, 73, OscillatorType::SynthwaveArp, 0.25f},   // Db5
+    {8.0f, 68, OscillatorType::SynthwaveArp, 0.25f},   // Ab4
+    {8.5f, 72, OscillatorType::SynthwaveArp, 0.25f},   // C5
+    {9.0f, 75, OscillatorType::SynthwaveArp, 0.25f},   // Eb5
+    {9.5f, 72, OscillatorType::SynthwaveArp, 0.25f},   // C5
+    {10.0f, 68, OscillatorType::SynthwaveArp, 0.25f},  // Ab4
+    {10.5f, 72, OscillatorType::SynthwaveArp, 0.25f},  // C5
+    {11.0f, 75, OscillatorType::SynthwaveArp, 0.25f},  // Eb5
+    {11.5f, 80, OscillatorType::SynthwaveArp, 0.25f},  // Ab5
+    {12.0f, 63, OscillatorType::SynthwaveArp, 0.25f},  // Eb4
+    {12.5f, 67, OscillatorType::SynthwaveArp, 0.25f},  // G4
+    {13.0f, 70, OscillatorType::SynthwaveArp, 0.25f},  // Bb4
+    {13.5f, 67, OscillatorType::SynthwaveArp, 0.25f},  // G4
+    {14.0f, 63, OscillatorType::SynthwaveArp, 0.25f},  // Eb4
+    {14.5f, 67, OscillatorType::SynthwaveArp, 0.25f},  // G4
+    {15.0f, 70, OscillatorType::SynthwaveArp, 0.25f},  // Bb4
+    {15.5f, 75, OscillatorType::SynthwaveArp, 0.25f},  // Eb5
+    // === PADS ===
+    {0.0f, 53, OscillatorType::SynthwavePad, 4.0f},    // Fm
+    {0.0f, 56, OscillatorType::SynthwavePad, 4.0f},
+    {0.0f, 60, OscillatorType::SynthwavePad, 4.0f},
+    {4.0f, 49, OscillatorType::SynthwavePad, 4.0f},    // Db
+    {4.0f, 53, OscillatorType::SynthwavePad, 4.0f},
+    {4.0f, 56, OscillatorType::SynthwavePad, 4.0f},
+    {8.0f, 56, OscillatorType::SynthwavePad, 4.0f},    // Ab
+    {8.0f, 60, OscillatorType::SynthwavePad, 4.0f},
+    {8.0f, 63, OscillatorType::SynthwavePad, 4.0f},
+    {12.0f, 51, OscillatorType::SynthwavePad, 4.0f},   // Eb
+    {12.0f, 55, OscillatorType::SynthwavePad, 4.0f},
+    {12.0f, 58, OscillatorType::SynthwavePad, 4.0f},
+};
+
+// Synthwave Track 3: "Retro Racer" - Em-C-G-D (energetic)
+static const TrackNote g_SynthwaveRetroRacer[] = {
+    // === DRUMS (driving beat) ===
+    {0.0f, 36, OscillatorType::Kick808, 0.25f}, {1.0f, 38, OscillatorType::Snare808, 0.25f},
+    {2.0f, 36, OscillatorType::Kick808, 0.25f}, {2.5f, 36, OscillatorType::Kick808, 0.125f},
+    {3.0f, 38, OscillatorType::Snare808, 0.25f},
+    {4.0f, 36, OscillatorType::Kick808, 0.25f}, {5.0f, 38, OscillatorType::Snare808, 0.25f},
+    {6.0f, 36, OscillatorType::Kick808, 0.25f}, {6.5f, 36, OscillatorType::Kick808, 0.125f},
+    {7.0f, 38, OscillatorType::Snare808, 0.25f},
+    {8.0f, 36, OscillatorType::Kick808, 0.25f}, {9.0f, 38, OscillatorType::Snare808, 0.25f},
+    {10.0f, 36, OscillatorType::Kick808, 0.25f}, {10.5f, 36, OscillatorType::Kick808, 0.125f},
+    {11.0f, 38, OscillatorType::Snare808, 0.25f},
+    {12.0f, 36, OscillatorType::Kick808, 0.25f}, {13.0f, 38, OscillatorType::Snare808, 0.25f},
+    {14.0f, 36, OscillatorType::Kick808, 0.25f}, {14.5f, 36, OscillatorType::Kick808, 0.125f},
+    {15.0f, 38, OscillatorType::Snare808, 0.25f},
+    // Hihats (16ths on last beat of each bar for energy)
+    {0.5f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f}, {3.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.5f, 42, OscillatorType::HiHat, 0.0625f}, {3.75f, 42, OscillatorType::HiHatOpen, 0.125f},
+    {4.5f, 42, OscillatorType::HiHat, 0.125f}, {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.5f, 42, OscillatorType::HiHat, 0.125f}, {7.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {7.5f, 42, OscillatorType::HiHat, 0.0625f}, {7.75f, 42, OscillatorType::HiHatOpen, 0.125f},
+    {8.5f, 42, OscillatorType::HiHat, 0.125f}, {9.5f, 42, OscillatorType::HiHat, 0.125f},
+    {10.5f, 42, OscillatorType::HiHat, 0.125f}, {11.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {11.5f, 42, OscillatorType::HiHat, 0.0625f}, {11.75f, 42, OscillatorType::HiHatOpen, 0.125f},
+    {12.5f, 42, OscillatorType::HiHat, 0.125f}, {13.5f, 42, OscillatorType::HiHat, 0.125f},
+    {14.5f, 42, OscillatorType::HiHat, 0.125f}, {15.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {15.5f, 42, OscillatorType::HiHat, 0.0625f}, {15.75f, 42, OscillatorType::HiHatOpen, 0.125f},
+    // === BASS (driving 8th note pattern) ===
+    {0.0f, 40, OscillatorType::SynthwaveBass, 0.5f}, {0.5f, 40, OscillatorType::SynthwaveBass, 0.5f},
+    {1.0f, 40, OscillatorType::SynthwaveBass, 0.5f}, {1.5f, 40, OscillatorType::SynthwaveBass, 0.5f},
+    {2.0f, 40, OscillatorType::SynthwaveBass, 0.5f}, {2.5f, 40, OscillatorType::SynthwaveBass, 0.5f},
+    {3.0f, 40, OscillatorType::SynthwaveBass, 0.5f}, {3.5f, 40, OscillatorType::SynthwaveBass, 0.5f},
+    {4.0f, 36, OscillatorType::SynthwaveBass, 0.5f}, {4.5f, 36, OscillatorType::SynthwaveBass, 0.5f},
+    {5.0f, 36, OscillatorType::SynthwaveBass, 0.5f}, {5.5f, 36, OscillatorType::SynthwaveBass, 0.5f},
+    {6.0f, 36, OscillatorType::SynthwaveBass, 0.5f}, {6.5f, 36, OscillatorType::SynthwaveBass, 0.5f},
+    {7.0f, 36, OscillatorType::SynthwaveBass, 0.5f}, {7.5f, 36, OscillatorType::SynthwaveBass, 0.5f},
+    {8.0f, 43, OscillatorType::SynthwaveBass, 0.5f}, {8.5f, 43, OscillatorType::SynthwaveBass, 0.5f},
+    {9.0f, 43, OscillatorType::SynthwaveBass, 0.5f}, {9.5f, 43, OscillatorType::SynthwaveBass, 0.5f},
+    {10.0f, 43, OscillatorType::SynthwaveBass, 0.5f}, {10.5f, 43, OscillatorType::SynthwaveBass, 0.5f},
+    {11.0f, 43, OscillatorType::SynthwaveBass, 0.5f}, {11.5f, 43, OscillatorType::SynthwaveBass, 0.5f},
+    {12.0f, 38, OscillatorType::SynthwaveBass, 0.5f}, {12.5f, 38, OscillatorType::SynthwaveBass, 0.5f},
+    {13.0f, 38, OscillatorType::SynthwaveBass, 0.5f}, {13.5f, 38, OscillatorType::SynthwaveBass, 0.5f},
+    {14.0f, 38, OscillatorType::SynthwaveBass, 0.5f}, {14.5f, 38, OscillatorType::SynthwaveBass, 0.5f},
+    {15.0f, 38, OscillatorType::SynthwaveBass, 0.5f}, {15.5f, 38, OscillatorType::SynthwaveBass, 0.5f},
+    // === LEAD MELODY ===
+    {0.0f, 76, OscillatorType::SynthwaveLead, 0.5f},  // E5
+    {0.5f, 79, OscillatorType::SynthwaveLead, 0.5f},  // G5
+    {1.0f, 83, OscillatorType::SynthwaveLead, 1.0f},  // B5
+    {2.0f, 79, OscillatorType::SynthwaveLead, 0.5f},  // G5
+    {2.5f, 76, OscillatorType::SynthwaveLead, 0.5f},  // E5
+    {3.0f, 74, OscillatorType::SynthwaveLead, 1.0f},  // D5
+    {4.0f, 72, OscillatorType::SynthwaveLead, 0.5f},  // C5
+    {4.5f, 76, OscillatorType::SynthwaveLead, 0.5f},  // E5
+    {5.0f, 79, OscillatorType::SynthwaveLead, 1.0f},  // G5
+    {6.0f, 76, OscillatorType::SynthwaveLead, 0.5f},  // E5
+    {6.5f, 72, OscillatorType::SynthwaveLead, 0.5f},  // C5
+    {7.0f, 71, OscillatorType::SynthwaveLead, 1.0f},  // B4
+    {8.0f, 79, OscillatorType::SynthwaveLead, 0.5f},  // G5
+    {8.5f, 83, OscillatorType::SynthwaveLead, 0.5f},  // B5
+    {9.0f, 86, OscillatorType::SynthwaveLead, 1.0f},  // D6
+    {10.0f, 83, OscillatorType::SynthwaveLead, 0.5f}, // B5
+    {10.5f, 79, OscillatorType::SynthwaveLead, 0.5f}, // G5
+    {11.0f, 76, OscillatorType::SynthwaveLead, 1.0f}, // E5
+    {12.0f, 74, OscillatorType::SynthwaveLead, 0.5f}, // D5
+    {12.5f, 78, OscillatorType::SynthwaveLead, 0.5f}, // F#5
+    {13.0f, 81, OscillatorType::SynthwaveLead, 1.0f}, // A5
+    {14.0f, 78, OscillatorType::SynthwaveLead, 0.5f}, // F#5
+    {14.5f, 74, OscillatorType::SynthwaveLead, 0.5f}, // D5
+    {15.0f, 76, OscillatorType::SynthwaveLead, 1.0f}, // E5
+};
+
+// ===========================================
+// TECHNO TRACKS
+// ===========================================
+
+// Techno Track 1: "Machine" - Minimal driving techno
+static const TrackNote g_TechnoMachine[] = {
+    // === DRUMS (4 on the floor) ===
+    {0.0f, 36, OscillatorType::Kick, 0.25f}, {1.0f, 36, OscillatorType::Kick, 0.25f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f}, {3.0f, 36, OscillatorType::Kick, 0.25f},
+    {4.0f, 36, OscillatorType::Kick, 0.25f}, {5.0f, 36, OscillatorType::Kick, 0.25f},
+    {6.0f, 36, OscillatorType::Kick, 0.25f}, {7.0f, 36, OscillatorType::Kick, 0.25f},
+    {8.0f, 36, OscillatorType::Kick, 0.25f}, {9.0f, 36, OscillatorType::Kick, 0.25f},
+    {10.0f, 36, OscillatorType::Kick, 0.25f}, {11.0f, 36, OscillatorType::Kick, 0.25f},
+    {12.0f, 36, OscillatorType::Kick, 0.25f}, {13.0f, 36, OscillatorType::Kick, 0.25f},
+    {14.0f, 36, OscillatorType::Kick, 0.25f}, {15.0f, 36, OscillatorType::Kick, 0.25f},
+    // Claps on 2 and 4
+    {1.0f, 39, OscillatorType::Clap, 0.25f}, {3.0f, 39, OscillatorType::Clap, 0.25f},
+    {5.0f, 39, OscillatorType::Clap, 0.25f}, {7.0f, 39, OscillatorType::Clap, 0.25f},
+    {9.0f, 39, OscillatorType::Clap, 0.25f}, {11.0f, 39, OscillatorType::Clap, 0.25f},
+    {13.0f, 39, OscillatorType::Clap, 0.25f}, {15.0f, 39, OscillatorType::Clap, 0.25f},
+    // Offbeat hihats
+    {0.5f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f}, {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    {4.5f, 42, OscillatorType::HiHat, 0.125f}, {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.5f, 42, OscillatorType::HiHat, 0.125f}, {7.5f, 42, OscillatorType::HiHat, 0.125f},
+    {8.5f, 42, OscillatorType::HiHat, 0.125f}, {9.5f, 42, OscillatorType::HiHat, 0.125f},
+    {10.5f, 42, OscillatorType::HiHat, 0.125f}, {11.5f, 42, OscillatorType::HiHat, 0.125f},
+    {12.5f, 42, OscillatorType::HiHat, 0.125f}, {13.5f, 42, OscillatorType::HiHat, 0.125f},
+    {14.5f, 42, OscillatorType::HiHat, 0.125f}, {15.5f, 42, OscillatorType::HiHat, 0.125f},
+    // === ACID BASS (TB-303 style) ===
+    {0.0f, 36, OscillatorType::AcidBass, 0.25f}, {0.5f, 36, OscillatorType::AcidBass, 0.125f},
+    {0.75f, 39, OscillatorType::AcidBass, 0.125f}, {1.0f, 36, OscillatorType::AcidBass, 0.25f},
+    {1.5f, 48, OscillatorType::AcidBass, 0.125f}, {1.75f, 36, OscillatorType::AcidBass, 0.125f},
+    {2.0f, 36, OscillatorType::AcidBass, 0.25f}, {2.5f, 36, OscillatorType::AcidBass, 0.125f},
+    {2.75f, 41, OscillatorType::AcidBass, 0.125f}, {3.0f, 36, OscillatorType::AcidBass, 0.25f},
+    {3.5f, 48, OscillatorType::AcidBass, 0.125f}, {3.75f, 36, OscillatorType::AcidBass, 0.125f},
+    {4.0f, 36, OscillatorType::AcidBass, 0.25f}, {4.5f, 36, OscillatorType::AcidBass, 0.125f},
+    {4.75f, 39, OscillatorType::AcidBass, 0.125f}, {5.0f, 36, OscillatorType::AcidBass, 0.25f},
+    {5.5f, 48, OscillatorType::AcidBass, 0.125f}, {5.75f, 36, OscillatorType::AcidBass, 0.125f},
+    {6.0f, 36, OscillatorType::AcidBass, 0.25f}, {6.5f, 36, OscillatorType::AcidBass, 0.125f},
+    {6.75f, 43, OscillatorType::AcidBass, 0.125f}, {7.0f, 36, OscillatorType::AcidBass, 0.25f},
+    {7.5f, 48, OscillatorType::AcidBass, 0.125f}, {7.75f, 36, OscillatorType::AcidBass, 0.125f},
+    // Repeat pattern bars 9-16
+    {8.0f, 36, OscillatorType::AcidBass, 0.25f}, {8.5f, 36, OscillatorType::AcidBass, 0.125f},
+    {8.75f, 39, OscillatorType::AcidBass, 0.125f}, {9.0f, 36, OscillatorType::AcidBass, 0.25f},
+    {9.5f, 48, OscillatorType::AcidBass, 0.125f}, {9.75f, 36, OscillatorType::AcidBass, 0.125f},
+    {10.0f, 36, OscillatorType::AcidBass, 0.25f}, {10.5f, 36, OscillatorType::AcidBass, 0.125f},
+    {10.75f, 41, OscillatorType::AcidBass, 0.125f}, {11.0f, 36, OscillatorType::AcidBass, 0.25f},
+    {11.5f, 48, OscillatorType::AcidBass, 0.125f}, {11.75f, 36, OscillatorType::AcidBass, 0.125f},
+    {12.0f, 36, OscillatorType::AcidBass, 0.25f}, {12.5f, 36, OscillatorType::AcidBass, 0.125f},
+    {12.75f, 39, OscillatorType::AcidBass, 0.125f}, {13.0f, 36, OscillatorType::AcidBass, 0.25f},
+    {13.5f, 48, OscillatorType::AcidBass, 0.125f}, {13.75f, 36, OscillatorType::AcidBass, 0.125f},
+    {14.0f, 36, OscillatorType::AcidBass, 0.25f}, {14.5f, 36, OscillatorType::AcidBass, 0.125f},
+    {14.75f, 43, OscillatorType::AcidBass, 0.125f}, {15.0f, 36, OscillatorType::AcidBass, 0.25f},
+    {15.5f, 48, OscillatorType::AcidBass, 0.125f}, {15.75f, 36, OscillatorType::AcidBass, 0.125f},
+};
+
+// Techno Track 2: "Dark Factory" - Darker, harder
+static const TrackNote g_TechnoDarkFactory[] = {
+    // === DRUMS (harder kick) ===
+    {0.0f, 36, OscillatorType::KickHard, 0.25f}, {1.0f, 36, OscillatorType::KickHard, 0.25f},
+    {2.0f, 36, OscillatorType::KickHard, 0.25f}, {3.0f, 36, OscillatorType::KickHard, 0.25f},
+    {4.0f, 36, OscillatorType::KickHard, 0.25f}, {5.0f, 36, OscillatorType::KickHard, 0.25f},
+    {6.0f, 36, OscillatorType::KickHard, 0.25f}, {7.0f, 36, OscillatorType::KickHard, 0.25f},
+    {8.0f, 36, OscillatorType::KickHard, 0.25f}, {9.0f, 36, OscillatorType::KickHard, 0.25f},
+    {10.0f, 36, OscillatorType::KickHard, 0.25f}, {11.0f, 36, OscillatorType::KickHard, 0.25f},
+    {12.0f, 36, OscillatorType::KickHard, 0.25f}, {13.0f, 36, OscillatorType::KickHard, 0.25f},
+    {14.0f, 36, OscillatorType::KickHard, 0.25f}, {15.0f, 36, OscillatorType::KickHard, 0.25f},
+    // Snare on 2 and 4
+    {1.0f, 38, OscillatorType::Snare, 0.25f}, {3.0f, 38, OscillatorType::Snare, 0.25f},
+    {5.0f, 38, OscillatorType::Snare, 0.25f}, {7.0f, 38, OscillatorType::Snare, 0.25f},
+    {9.0f, 38, OscillatorType::Snare, 0.25f}, {11.0f, 38, OscillatorType::Snare, 0.25f},
+    {13.0f, 38, OscillatorType::Snare, 0.25f}, {15.0f, 38, OscillatorType::Snare, 0.25f},
+    // Fast hihats
+    {0.25f, 42, OscillatorType::HiHat, 0.0625f}, {0.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.75f, 42, OscillatorType::HiHat, 0.0625f}, {1.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {1.5f, 42, OscillatorType::HiHat, 0.0625f}, {1.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.25f, 42, OscillatorType::HiHat, 0.0625f}, {2.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.75f, 42, OscillatorType::HiHat, 0.0625f}, {3.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.5f, 42, OscillatorType::HiHat, 0.0625f}, {3.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.25f, 42, OscillatorType::HiHat, 0.0625f}, {4.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.75f, 42, OscillatorType::HiHat, 0.0625f}, {5.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {5.5f, 42, OscillatorType::HiHat, 0.0625f}, {5.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {6.25f, 42, OscillatorType::HiHat, 0.0625f}, {6.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {6.75f, 42, OscillatorType::HiHat, 0.0625f}, {7.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {7.5f, 42, OscillatorType::HiHat, 0.0625f}, {7.75f, 42, OscillatorType::HiHat, 0.0625f},
+    // === REESE BASS (detuned) ===
+    {0.0f, 29, OscillatorType::Reese, 4.0f},   // F1
+    {4.0f, 27, OscillatorType::Reese, 4.0f},   // Eb1
+    {8.0f, 29, OscillatorType::Reese, 4.0f},   // F1
+    {12.0f, 32, OscillatorType::Reese, 4.0f},  // Ab1
+    // === STAB ===
+    {0.0f, 53, OscillatorType::TechnoStab, 0.125f},
+    {0.75f, 53, OscillatorType::TechnoStab, 0.125f},
+    {4.0f, 51, OscillatorType::TechnoStab, 0.125f},
+    {4.75f, 51, OscillatorType::TechnoStab, 0.125f},
+    {8.0f, 53, OscillatorType::TechnoStab, 0.125f},
+    {8.75f, 53, OscillatorType::TechnoStab, 0.125f},
+    {12.0f, 56, OscillatorType::TechnoStab, 0.125f},
+    {12.75f, 56, OscillatorType::TechnoStab, 0.125f},
+};
+
+// Techno Track 3: "Underground" - Rolling bass, hypnotic
+static const TrackNote g_TechnoUnderground[] = {
+    // === DRUMS ===
+    {0.0f, 36, OscillatorType::Kick, 0.25f}, {1.0f, 36, OscillatorType::Kick, 0.25f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f}, {3.0f, 36, OscillatorType::Kick, 0.25f},
+    {4.0f, 36, OscillatorType::Kick, 0.25f}, {5.0f, 36, OscillatorType::Kick, 0.25f},
+    {6.0f, 36, OscillatorType::Kick, 0.25f}, {7.0f, 36, OscillatorType::Kick, 0.25f},
+    // Rim on 2, clap on 4
+    {1.0f, 37, OscillatorType::SnareRim, 0.125f}, {3.0f, 39, OscillatorType::Clap, 0.25f},
+    {5.0f, 37, OscillatorType::SnareRim, 0.125f}, {7.0f, 39, OscillatorType::Clap, 0.25f},
+    // Shaker
+    {0.5f, 70, OscillatorType::Maracas, 0.125f}, {1.5f, 70, OscillatorType::Maracas, 0.125f},
+    {2.5f, 70, OscillatorType::Maracas, 0.125f}, {3.5f, 70, OscillatorType::Maracas, 0.125f},
+    {4.5f, 70, OscillatorType::Maracas, 0.125f}, {5.5f, 70, OscillatorType::Maracas, 0.125f},
+    {6.5f, 70, OscillatorType::Maracas, 0.125f}, {7.5f, 70, OscillatorType::Maracas, 0.125f},
+    // === ROLLING BASS (16th notes) ===
+    {0.0f, 33, OscillatorType::SynthBass, 0.25f}, {0.25f, 33, OscillatorType::SynthBass, 0.125f},
+    {0.5f, 33, OscillatorType::SynthBass, 0.25f}, {0.75f, 33, OscillatorType::SynthBass, 0.125f},
+    {1.0f, 33, OscillatorType::SynthBass, 0.25f}, {1.25f, 33, OscillatorType::SynthBass, 0.125f},
+    {1.5f, 33, OscillatorType::SynthBass, 0.25f}, {1.75f, 33, OscillatorType::SynthBass, 0.125f},
+    {2.0f, 31, OscillatorType::SynthBass, 0.25f}, {2.25f, 31, OscillatorType::SynthBass, 0.125f},
+    {2.5f, 31, OscillatorType::SynthBass, 0.25f}, {2.75f, 31, OscillatorType::SynthBass, 0.125f},
+    {3.0f, 31, OscillatorType::SynthBass, 0.25f}, {3.25f, 31, OscillatorType::SynthBass, 0.125f},
+    {3.5f, 31, OscillatorType::SynthBass, 0.25f}, {3.75f, 31, OscillatorType::SynthBass, 0.125f},
+    {4.0f, 36, OscillatorType::SynthBass, 0.25f}, {4.25f, 36, OscillatorType::SynthBass, 0.125f},
+    {4.5f, 36, OscillatorType::SynthBass, 0.25f}, {4.75f, 36, OscillatorType::SynthBass, 0.125f},
+    {5.0f, 36, OscillatorType::SynthBass, 0.25f}, {5.25f, 36, OscillatorType::SynthBass, 0.125f},
+    {5.5f, 36, OscillatorType::SynthBass, 0.25f}, {5.75f, 36, OscillatorType::SynthBass, 0.125f},
+    {6.0f, 38, OscillatorType::SynthBass, 0.25f}, {6.25f, 38, OscillatorType::SynthBass, 0.125f},
+    {6.5f, 38, OscillatorType::SynthBass, 0.25f}, {6.75f, 38, OscillatorType::SynthBass, 0.125f},
+    {7.0f, 38, OscillatorType::SynthBass, 0.25f}, {7.25f, 38, OscillatorType::SynthBass, 0.125f},
+    {7.5f, 38, OscillatorType::SynthBass, 0.25f}, {7.75f, 38, OscillatorType::SynthBass, 0.125f},
+};
+
+// ===========================================
+// CHIPTUNE TRACKS
+// ===========================================
+
+// Chiptune Track 1: "Level 1" - Bouncy Mario-style
+static const TrackNote g_ChiptuneLevel1[] = {
+    // === DRUMS ===
+    {0.0f, 36, OscillatorType::Kick, 0.25f}, {1.0f, 38, OscillatorType::Snare, 0.25f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f}, {2.5f, 36, OscillatorType::Kick, 0.125f},
+    {3.0f, 38, OscillatorType::Snare, 0.25f},
+    {4.0f, 36, OscillatorType::Kick, 0.25f}, {5.0f, 38, OscillatorType::Snare, 0.25f},
+    {6.0f, 36, OscillatorType::Kick, 0.25f}, {6.5f, 36, OscillatorType::Kick, 0.125f},
+    {7.0f, 38, OscillatorType::Snare, 0.25f},
+    // Hihats
+    {0.5f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f}, {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    {4.5f, 42, OscillatorType::HiHat, 0.125f}, {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.5f, 42, OscillatorType::HiHat, 0.125f}, {7.5f, 42, OscillatorType::HiHat, 0.125f},
+    // === BASS (Triangle - classic NES style) ===
+    {0.0f, 48, OscillatorType::Triangle, 0.5f}, {0.5f, 48, OscillatorType::Triangle, 0.5f},
+    {1.0f, 48, OscillatorType::Triangle, 0.5f}, {1.5f, 48, OscillatorType::Triangle, 0.5f},
+    {2.0f, 53, OscillatorType::Triangle, 0.5f}, {2.5f, 53, OscillatorType::Triangle, 0.5f},
+    {3.0f, 55, OscillatorType::Triangle, 0.5f}, {3.5f, 55, OscillatorType::Triangle, 0.5f},
+    {4.0f, 48, OscillatorType::Triangle, 0.5f}, {4.5f, 48, OscillatorType::Triangle, 0.5f},
+    {5.0f, 48, OscillatorType::Triangle, 0.5f}, {5.5f, 48, OscillatorType::Triangle, 0.5f},
+    {6.0f, 55, OscillatorType::Triangle, 0.5f}, {6.5f, 55, OscillatorType::Triangle, 0.5f},
+    {7.0f, 53, OscillatorType::Triangle, 0.5f}, {7.5f, 53, OscillatorType::Triangle, 0.5f},
+    // === MELODY (Pulse - 12.5% duty for that NES sound) ===
+    {0.0f, 72, OscillatorType::SynthChip, 0.25f},  // C5
+    {0.25f, 76, OscillatorType::SynthChip, 0.25f}, // E5
+    {0.5f, 79, OscillatorType::SynthChip, 0.5f},   // G5
+    {1.0f, 84, OscillatorType::SynthChip, 0.5f},   // C6
+    {1.5f, 79, OscillatorType::SynthChip, 0.25f},  // G5
+    {1.75f, 76, OscillatorType::SynthChip, 0.25f}, // E5
+    {2.0f, 77, OscillatorType::SynthChip, 0.5f},   // F5
+    {2.5f, 81, OscillatorType::SynthChip, 0.5f},   // A5
+    {3.0f, 79, OscillatorType::SynthChip, 0.5f},   // G5
+    {3.5f, 76, OscillatorType::SynthChip, 0.5f},   // E5
+    {4.0f, 72, OscillatorType::SynthChip, 0.25f},  // C5
+    {4.25f, 76, OscillatorType::SynthChip, 0.25f}, // E5
+    {4.5f, 79, OscillatorType::SynthChip, 0.5f},   // G5
+    {5.0f, 84, OscillatorType::SynthChip, 0.5f},   // C6
+    {5.5f, 86, OscillatorType::SynthChip, 0.25f},  // D6
+    {5.75f, 84, OscillatorType::SynthChip, 0.25f}, // C6
+    {6.0f, 79, OscillatorType::SynthChip, 1.0f},   // G5
+    {7.0f, 77, OscillatorType::SynthChip, 0.5f},   // F5
+    {7.5f, 76, OscillatorType::SynthChip, 0.5f},   // E5
+    // === HARMONY (Pulse 2 - lower) ===
+    {0.0f, 60, OscillatorType::Pulse, 0.5f},   // C4
+    {0.5f, 64, OscillatorType::Pulse, 0.5f},   // E4
+    {1.0f, 67, OscillatorType::Pulse, 0.5f},   // G4
+    {1.5f, 64, OscillatorType::Pulse, 0.5f},   // E4
+    {2.0f, 65, OscillatorType::Pulse, 0.5f},   // F4
+    {2.5f, 69, OscillatorType::Pulse, 0.5f},   // A4
+    {3.0f, 67, OscillatorType::Pulse, 0.5f},   // G4
+    {3.5f, 64, OscillatorType::Pulse, 0.5f},   // E4
+    {4.0f, 60, OscillatorType::Pulse, 0.5f},   // C4
+    {4.5f, 64, OscillatorType::Pulse, 0.5f},   // E4
+    {5.0f, 67, OscillatorType::Pulse, 0.5f},   // G4
+    {5.5f, 72, OscillatorType::Pulse, 0.5f},   // C5
+    {6.0f, 67, OscillatorType::Pulse, 1.0f},   // G4
+    {7.0f, 65, OscillatorType::Pulse, 0.5f},   // F4
+    {7.5f, 64, OscillatorType::Pulse, 0.5f},   // E4
+};
+
+// Chiptune Track 2: "Boss Fight" - Intense, faster
+static const TrackNote g_ChiptuneBossFight[] = {
+    // === DRUMS (fast and intense) ===
+    {0.0f, 36, OscillatorType::KickHard, 0.25f}, {0.5f, 38, OscillatorType::Snare, 0.125f},
+    {1.0f, 36, OscillatorType::KickHard, 0.25f}, {1.5f, 38, OscillatorType::Snare, 0.125f},
+    {2.0f, 36, OscillatorType::KickHard, 0.25f}, {2.5f, 38, OscillatorType::Snare, 0.125f},
+    {3.0f, 36, OscillatorType::KickHard, 0.25f}, {3.5f, 38, OscillatorType::Snare, 0.125f},
+    {4.0f, 36, OscillatorType::KickHard, 0.25f}, {4.5f, 38, OscillatorType::Snare, 0.125f},
+    {5.0f, 36, OscillatorType::KickHard, 0.25f}, {5.5f, 38, OscillatorType::Snare, 0.125f},
+    {6.0f, 36, OscillatorType::KickHard, 0.25f}, {6.5f, 38, OscillatorType::Snare, 0.125f},
+    {7.0f, 36, OscillatorType::KickHard, 0.25f}, {7.5f, 38, OscillatorType::Snare, 0.125f},
+    // Fast hihats
+    {0.25f, 42, OscillatorType::HiHat, 0.0625f}, {0.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {1.25f, 42, OscillatorType::HiHat, 0.0625f}, {1.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.25f, 42, OscillatorType::HiHat, 0.0625f}, {2.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.25f, 42, OscillatorType::HiHat, 0.0625f}, {3.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.25f, 42, OscillatorType::HiHat, 0.0625f}, {4.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {5.25f, 42, OscillatorType::HiHat, 0.0625f}, {5.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {6.25f, 42, OscillatorType::HiHat, 0.0625f}, {6.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {7.25f, 42, OscillatorType::HiHat, 0.0625f}, {7.75f, 42, OscillatorType::HiHat, 0.0625f},
+    // === BASS (aggressive) ===
+    {0.0f, 40, OscillatorType::Triangle, 0.25f}, {0.25f, 40, OscillatorType::Triangle, 0.25f},
+    {0.5f, 40, OscillatorType::Triangle, 0.25f}, {0.75f, 40, OscillatorType::Triangle, 0.25f},
+    {1.0f, 40, OscillatorType::Triangle, 0.25f}, {1.25f, 40, OscillatorType::Triangle, 0.25f},
+    {1.5f, 40, OscillatorType::Triangle, 0.25f}, {1.75f, 40, OscillatorType::Triangle, 0.25f},
+    {2.0f, 43, OscillatorType::Triangle, 0.25f}, {2.25f, 43, OscillatorType::Triangle, 0.25f},
+    {2.5f, 43, OscillatorType::Triangle, 0.25f}, {2.75f, 43, OscillatorType::Triangle, 0.25f},
+    {3.0f, 45, OscillatorType::Triangle, 0.25f}, {3.25f, 45, OscillatorType::Triangle, 0.25f},
+    {3.5f, 45, OscillatorType::Triangle, 0.25f}, {3.75f, 45, OscillatorType::Triangle, 0.25f},
+    {4.0f, 40, OscillatorType::Triangle, 0.25f}, {4.25f, 40, OscillatorType::Triangle, 0.25f},
+    {4.5f, 40, OscillatorType::Triangle, 0.25f}, {4.75f, 40, OscillatorType::Triangle, 0.25f},
+    {5.0f, 40, OscillatorType::Triangle, 0.25f}, {5.25f, 40, OscillatorType::Triangle, 0.25f},
+    {5.5f, 40, OscillatorType::Triangle, 0.25f}, {5.75f, 40, OscillatorType::Triangle, 0.25f},
+    {6.0f, 47, OscillatorType::Triangle, 0.25f}, {6.25f, 47, OscillatorType::Triangle, 0.25f},
+    {6.5f, 47, OscillatorType::Triangle, 0.25f}, {6.75f, 47, OscillatorType::Triangle, 0.25f},
+    {7.0f, 45, OscillatorType::Triangle, 0.25f}, {7.25f, 45, OscillatorType::Triangle, 0.25f},
+    {7.5f, 43, OscillatorType::Triangle, 0.25f}, {7.75f, 43, OscillatorType::Triangle, 0.25f},
+    // === MELODY (intense arpeggios) ===
+    {0.0f, 64, OscillatorType::SynthChip, 0.125f},  // E4
+    {0.125f, 67, OscillatorType::SynthChip, 0.125f}, // G4
+    {0.25f, 71, OscillatorType::SynthChip, 0.125f},  // B4
+    {0.375f, 76, OscillatorType::SynthChip, 0.125f}, // E5
+    {0.5f, 71, OscillatorType::SynthChip, 0.125f},   // B4
+    {0.625f, 67, OscillatorType::SynthChip, 0.125f}, // G4
+    {0.75f, 64, OscillatorType::SynthChip, 0.125f},  // E4
+    {0.875f, 67, OscillatorType::SynthChip, 0.125f}, // G4
+    {1.0f, 64, OscillatorType::SynthChip, 0.125f},
+    {1.125f, 67, OscillatorType::SynthChip, 0.125f},
+    {1.25f, 71, OscillatorType::SynthChip, 0.125f},
+    {1.375f, 76, OscillatorType::SynthChip, 0.125f},
+    {1.5f, 71, OscillatorType::SynthChip, 0.125f},
+    {1.625f, 67, OscillatorType::SynthChip, 0.125f},
+    {1.75f, 64, OscillatorType::SynthChip, 0.125f},
+    {1.875f, 67, OscillatorType::SynthChip, 0.125f},
+    {2.0f, 67, OscillatorType::SynthChip, 0.125f},   // G4
+    {2.125f, 70, OscillatorType::SynthChip, 0.125f}, // Bb4
+    {2.25f, 74, OscillatorType::SynthChip, 0.125f},  // D5
+    {2.375f, 79, OscillatorType::SynthChip, 0.125f}, // G5
+    {2.5f, 74, OscillatorType::SynthChip, 0.125f},
+    {2.625f, 70, OscillatorType::SynthChip, 0.125f},
+    {2.75f, 67, OscillatorType::SynthChip, 0.125f},
+    {2.875f, 70, OscillatorType::SynthChip, 0.125f},
+    {3.0f, 69, OscillatorType::SynthChip, 0.125f},   // A4
+    {3.125f, 72, OscillatorType::SynthChip, 0.125f}, // C5
+    {3.25f, 76, OscillatorType::SynthChip, 0.125f},  // E5
+    {3.375f, 81, OscillatorType::SynthChip, 0.125f}, // A5
+    {3.5f, 76, OscillatorType::SynthChip, 0.125f},
+    {3.625f, 72, OscillatorType::SynthChip, 0.125f},
+    {3.75f, 69, OscillatorType::SynthChip, 0.125f},
+    {3.875f, 72, OscillatorType::SynthChip, 0.125f},
+    // Repeat with variation
+    {4.0f, 64, OscillatorType::SynthChip, 0.125f},
+    {4.125f, 67, OscillatorType::SynthChip, 0.125f},
+    {4.25f, 71, OscillatorType::SynthChip, 0.125f},
+    {4.375f, 76, OscillatorType::SynthChip, 0.125f},
+    {4.5f, 79, OscillatorType::SynthChip, 0.125f},
+    {4.625f, 76, OscillatorType::SynthChip, 0.125f},
+    {4.75f, 71, OscillatorType::SynthChip, 0.125f},
+    {4.875f, 67, OscillatorType::SynthChip, 0.125f},
+    {5.0f, 64, OscillatorType::SynthChip, 0.125f},
+    {5.125f, 67, OscillatorType::SynthChip, 0.125f},
+    {5.25f, 71, OscillatorType::SynthChip, 0.125f},
+    {5.375f, 76, OscillatorType::SynthChip, 0.125f},
+    {5.5f, 79, OscillatorType::SynthChip, 0.125f},
+    {5.625f, 83, OscillatorType::SynthChip, 0.125f},
+    {5.75f, 79, OscillatorType::SynthChip, 0.125f},
+    {5.875f, 76, OscillatorType::SynthChip, 0.125f},
+    {6.0f, 71, OscillatorType::SynthChip, 0.5f},
+    {6.5f, 74, OscillatorType::SynthChip, 0.5f},
+    {7.0f, 76, OscillatorType::SynthChip, 0.5f},
+    {7.5f, 74, OscillatorType::SynthChip, 0.5f},
+};
+
+// Chiptune Track 3: "Victory Theme" - Triumphant fanfare
+static const TrackNote g_ChiptuneVictory[] = {
+    // === DRUMS ===
+    {0.0f, 36, OscillatorType::Kick, 0.25f},
+    {1.0f, 38, OscillatorType::Snare, 0.25f}, {1.5f, 38, OscillatorType::Snare, 0.125f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f}, {2.5f, 36, OscillatorType::Kick, 0.125f},
+    {3.0f, 38, OscillatorType::Snare, 0.25f},
+    {4.0f, 36, OscillatorType::Kick, 0.25f},
+    {5.0f, 38, OscillatorType::Snare, 0.25f}, {5.5f, 38, OscillatorType::Snare, 0.125f},
+    {6.0f, 38, OscillatorType::Snare, 0.125f}, {6.25f, 38, OscillatorType::Snare, 0.125f},
+    {6.5f, 38, OscillatorType::Snare, 0.125f}, {6.75f, 38, OscillatorType::Snare, 0.125f},
+    {7.0f, 49, OscillatorType::Crash, 1.0f},
+    // === BASS (triumphant) ===
+    {0.0f, 48, OscillatorType::Triangle, 1.0f},  // C3
+    {1.0f, 48, OscillatorType::Triangle, 1.0f},
+    {2.0f, 53, OscillatorType::Triangle, 1.0f},  // F3
+    {3.0f, 55, OscillatorType::Triangle, 1.0f},  // G3
+    {4.0f, 48, OscillatorType::Triangle, 1.0f},  // C3
+    {5.0f, 55, OscillatorType::Triangle, 1.0f},  // G3
+    {6.0f, 53, OscillatorType::Triangle, 1.0f},  // F3
+    {7.0f, 48, OscillatorType::Triangle, 1.0f},  // C3
+    // === MELODY (fanfare) ===
+    {0.0f, 72, OscillatorType::SynthChip, 0.5f},   // C5
+    {0.5f, 72, OscillatorType::SynthChip, 0.25f},
+    {0.75f, 74, OscillatorType::SynthChip, 0.25f}, // D5
+    {1.0f, 76, OscillatorType::SynthChip, 1.0f},   // E5
+    {2.0f, 77, OscillatorType::SynthChip, 0.5f},   // F5
+    {2.5f, 79, OscillatorType::SynthChip, 0.5f},   // G5
+    {3.0f, 84, OscillatorType::SynthChip, 1.0f},   // C6
+    {4.0f, 84, OscillatorType::SynthChip, 0.25f},  // C6
+    {4.25f, 83, OscillatorType::SynthChip, 0.25f}, // B5
+    {4.5f, 84, OscillatorType::SynthChip, 0.25f},  // C6
+    {4.75f, 86, OscillatorType::SynthChip, 0.25f}, // D6
+    {5.0f, 88, OscillatorType::SynthChip, 1.0f},   // E6
+    {6.0f, 91, OscillatorType::SynthChip, 0.5f},   // G6
+    {6.5f, 88, OscillatorType::SynthChip, 0.5f},   // E6
+    {7.0f, 84, OscillatorType::SynthChip, 1.0f},   // C6
+    // === HARMONY ===
+    {0.0f, 60, OscillatorType::Pulse, 0.5f},   // C4
+    {0.5f, 60, OscillatorType::Pulse, 0.5f},
+    {1.0f, 64, OscillatorType::Pulse, 1.0f},   // E4
+    {2.0f, 65, OscillatorType::Pulse, 0.5f},   // F4
+    {2.5f, 67, OscillatorType::Pulse, 0.5f},   // G4
+    {3.0f, 72, OscillatorType::Pulse, 1.0f},   // C5
+    {4.0f, 72, OscillatorType::Pulse, 0.5f},
+    {4.5f, 72, OscillatorType::Pulse, 0.5f},
+    {5.0f, 76, OscillatorType::Pulse, 1.0f},   // E5
+    {6.0f, 79, OscillatorType::Pulse, 0.5f},   // G5
+    {6.5f, 76, OscillatorType::Pulse, 0.5f},   // E5
+    {7.0f, 72, OscillatorType::Pulse, 1.0f},   // C5
+};
+
+// ===========================================
+// HIP HOP TRACKS
+// ===========================================
+
+// Hip Hop Track 1: "Boom Bap" - Classic 90s style
+static const TrackNote g_HipHopBoomBap[] = {
+    // === DRUMS (boom bap pattern) ===
+    {0.0f, 36, OscillatorType::Kick808, 0.5f},
+    {0.75f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 38, OscillatorType::Snare808, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.25f, 36, OscillatorType::Kick808, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.0f, 38, OscillatorType::Snare808, 0.25f},
+    {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f},
+    {4.75f, 42, OscillatorType::HiHat, 0.125f},
+    {5.0f, 38, OscillatorType::Snare808, 0.25f},
+    {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.25f, 36, OscillatorType::Kick808, 0.25f},
+    {6.5f, 42, OscillatorType::HiHat, 0.125f},
+    {7.0f, 38, OscillatorType::Snare808, 0.25f},
+    {7.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    // === BASS (deep 808 sub) ===
+    {0.0f, 33, OscillatorType::SubBass808, 2.0f},   // A1
+    {2.25f, 36, OscillatorType::SubBass808, 0.5f},  // C2
+    {3.0f, 33, OscillatorType::SubBass808, 1.0f},   // A1
+    {4.0f, 33, OscillatorType::SubBass808, 2.0f},   // A1
+    {6.25f, 38, OscillatorType::SubBass808, 0.5f},  // D2
+    {7.0f, 36, OscillatorType::SubBass808, 1.0f},   // C2
+    // === KEYS (lo-fi piano) ===
+    {0.0f, 57, OscillatorType::LoFiKeys, 0.5f},    // A3
+    {0.0f, 60, OscillatorType::LoFiKeys, 0.5f},    // C4
+    {0.0f, 64, OscillatorType::LoFiKeys, 0.5f},    // E4
+    {1.0f, 55, OscillatorType::LoFiKeys, 0.5f},    // G3
+    {1.0f, 59, OscillatorType::LoFiKeys, 0.5f},    // B3
+    {1.0f, 62, OscillatorType::LoFiKeys, 0.5f},    // D4
+    {2.0f, 53, OscillatorType::LoFiKeys, 0.5f},    // F3
+    {2.0f, 57, OscillatorType::LoFiKeys, 0.5f},    // A3
+    {2.0f, 60, OscillatorType::LoFiKeys, 0.5f},    // C4
+    {3.0f, 52, OscillatorType::LoFiKeys, 0.5f},    // E3
+    {3.0f, 55, OscillatorType::LoFiKeys, 0.5f},    // G3
+    {3.0f, 59, OscillatorType::LoFiKeys, 0.5f},    // B3
+    {4.0f, 57, OscillatorType::LoFiKeys, 0.5f},
+    {4.0f, 60, OscillatorType::LoFiKeys, 0.5f},
+    {4.0f, 64, OscillatorType::LoFiKeys, 0.5f},
+    {5.0f, 55, OscillatorType::LoFiKeys, 0.5f},
+    {5.0f, 59, OscillatorType::LoFiKeys, 0.5f},
+    {5.0f, 62, OscillatorType::LoFiKeys, 0.5f},
+    {6.0f, 53, OscillatorType::LoFiKeys, 0.5f},
+    {6.0f, 57, OscillatorType::LoFiKeys, 0.5f},
+    {6.0f, 60, OscillatorType::LoFiKeys, 0.5f},
+    {7.0f, 52, OscillatorType::LoFiKeys, 0.5f},
+    {7.0f, 55, OscillatorType::LoFiKeys, 0.5f},
+    {7.0f, 59, OscillatorType::LoFiKeys, 0.5f},
+};
+
+// Hip Hop Track 2: "Lo-Fi Chill" - Relaxed beats
+static const TrackNote g_HipHopLoFi[] = {
+    // === DRUMS (laid back) ===
+    {0.0f, 36, OscillatorType::KickSoft, 0.5f},
+    {1.0f, 42, OscillatorType::HiHat, 0.125f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 38, OscillatorType::Snare808, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.0f, 42, OscillatorType::HiHat, 0.125f},
+    {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    {4.0f, 36, OscillatorType::KickSoft, 0.5f},
+    {4.5f, 36, OscillatorType::KickSoft, 0.25f},
+    {5.0f, 42, OscillatorType::HiHat, 0.125f},
+    {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.0f, 38, OscillatorType::Snare808, 0.25f},
+    {6.5f, 42, OscillatorType::HiHat, 0.125f},
+    {7.0f, 42, OscillatorType::HiHat, 0.125f},
+    {7.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    // === BASS (mellow) ===
+    {0.0f, 41, OscillatorType::SynthBass, 1.5f},   // F2
+    {2.0f, 43, OscillatorType::SynthBass, 1.5f},   // G2
+    {4.0f, 45, OscillatorType::SynthBass, 1.5f},   // A2
+    {6.0f, 43, OscillatorType::SynthBass, 1.5f},   // G2
+    // === MELODY (jazzy) ===
+    {0.0f, 65, OscillatorType::LoFiKeys, 0.75f},   // F4
+    {1.0f, 68, OscillatorType::LoFiKeys, 0.5f},    // Ab4
+    {1.5f, 65, OscillatorType::LoFiKeys, 0.5f},    // F4
+    {2.0f, 67, OscillatorType::LoFiKeys, 1.0f},    // G4
+    {3.0f, 65, OscillatorType::LoFiKeys, 0.5f},    // F4
+    {3.5f, 63, OscillatorType::LoFiKeys, 0.5f},    // Eb4
+    {4.0f, 65, OscillatorType::LoFiKeys, 0.75f},   // F4
+    {5.0f, 70, OscillatorType::LoFiKeys, 0.5f},    // Bb4
+    {5.5f, 68, OscillatorType::LoFiKeys, 0.5f},    // Ab4
+    {6.0f, 67, OscillatorType::LoFiKeys, 1.0f},    // G4
+    {7.0f, 65, OscillatorType::LoFiKeys, 0.5f},    // F4
+    {7.5f, 63, OscillatorType::LoFiKeys, 0.5f},    // Eb4
+};
+
+// ===========================================
+// TRAP TRACKS
+// ===========================================
+
+// Trap Track 1: "808 Bounce" - Hard hitting
+static const TrackNote g_Trap808Bounce[] = {
+    // === DRUMS (trap pattern with rolls) ===
+    {0.0f, 36, OscillatorType::Kick808, 0.5f},
+    {0.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.375f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.625f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {0.875f, 42, OscillatorType::HiHat, 0.0625f},
+    {1.0f, 38, OscillatorType::Snare808, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 36, OscillatorType::Kick808, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.625f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {2.875f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.0f, 38, OscillatorType::Snare808, 0.25f},
+    {3.25f, 36, OscillatorType::Kick808, 0.25f},
+    {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.75f, 42, OscillatorType::HiHat, 0.125f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f},
+    {4.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.375f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.625f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.875f, 42, OscillatorType::HiHat, 0.0625f},
+    {5.0f, 38, OscillatorType::Snare808, 0.25f},
+    {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.0f, 36, OscillatorType::Kick808, 0.25f},
+    {6.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {6.625f, 42, OscillatorType::HiHat, 0.0625f},
+    {6.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {6.875f, 42, OscillatorType::HiHat, 0.0625f},
+    {7.0f, 38, OscillatorType::Snare808, 0.25f},
+    {7.25f, 36, OscillatorType::Kick808, 0.25f},
+    {7.5f, 42, OscillatorType::HiHat, 0.125f},
+    {7.75f, 42, OscillatorType::HiHatOpen, 0.125f},
+    // === 808 BASS (sliding) ===
+    {0.0f, 29, OscillatorType::SubBass808, 2.0f},   // F1
+    {3.25f, 34, OscillatorType::SubBass808, 0.5f},  // Bb1
+    {4.0f, 29, OscillatorType::SubBass808, 2.0f},   // F1
+    {6.0f, 24, OscillatorType::SubBass808, 1.0f},   // C1
+    {7.25f, 31, OscillatorType::SubBass808, 0.5f},  // G1
+    // === LEAD (trap melody) ===
+    {0.0f, 77, OscillatorType::TrapLead, 0.5f},    // F5
+    {0.5f, 75, OscillatorType::TrapLead, 0.25f},   // Eb5
+    {0.75f, 72, OscillatorType::TrapLead, 0.25f},  // C5
+    {1.0f, 70, OscillatorType::TrapLead, 0.5f},    // Bb4
+    {2.0f, 72, OscillatorType::TrapLead, 0.5f},    // C5
+    {2.5f, 70, OscillatorType::TrapLead, 0.5f},    // Bb4
+    {3.0f, 65, OscillatorType::TrapLead, 1.0f},    // F4
+    {4.0f, 77, OscillatorType::TrapLead, 0.5f},    // F5
+    {4.5f, 79, OscillatorType::TrapLead, 0.25f},   // G5
+    {4.75f, 77, OscillatorType::TrapLead, 0.25f},  // F5
+    {5.0f, 75, OscillatorType::TrapLead, 0.5f},    // Eb5
+    {6.0f, 72, OscillatorType::TrapLead, 0.5f},    // C5
+    {6.5f, 70, OscillatorType::TrapLead, 0.5f},    // Bb4
+    {7.0f, 67, OscillatorType::TrapLead, 1.0f},    // G4
+};
+
+// Trap Track 2: "Dark Trap" - Moody atmosphere
+static const TrackNote g_TrapDark[] = {
+    // === DRUMS ===
+    {0.0f, 36, OscillatorType::Kick808, 0.5f},
+    {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 38, OscillatorType::Clap, 0.25f},
+    {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 36, OscillatorType::Kick808, 0.25f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.0f, 38, OscillatorType::Clap, 0.25f},
+    {3.5f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.625f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.75f, 42, OscillatorType::HiHat, 0.0625f},
+    {3.875f, 42, OscillatorType::HiHat, 0.0625f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f},
+    {4.5f, 42, OscillatorType::HiHat, 0.125f},
+    {5.0f, 38, OscillatorType::Clap, 0.25f},
+    {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.0f, 36, OscillatorType::Kick808, 0.25f},
+    {6.25f, 36, OscillatorType::Kick808, 0.25f},
+    {6.5f, 42, OscillatorType::HiHat, 0.125f},
+    {7.0f, 38, OscillatorType::Clap, 0.25f},
+    {7.5f, 42, OscillatorType::HiHatOpen, 0.25f},
+    // === BASS ===
+    {0.0f, 28, OscillatorType::SubBass808, 2.0f},   // E1
+    {2.0f, 33, OscillatorType::SubBass808, 1.0f},   // A1
+    {3.0f, 31, OscillatorType::SubBass808, 1.0f},   // G1
+    {4.0f, 28, OscillatorType::SubBass808, 2.0f},   // E1
+    {6.0f, 26, OscillatorType::SubBass808, 1.0f},   // D1
+    {7.0f, 28, OscillatorType::SubBass808, 1.0f},   // E1
+    // === PAD (dark atmosphere) ===
+    {0.0f, 52, OscillatorType::SynthwavePad, 4.0f},  // E3
+    {0.0f, 55, OscillatorType::SynthwavePad, 4.0f},  // G3
+    {0.0f, 59, OscillatorType::SynthwavePad, 4.0f},  // B3
+    {4.0f, 50, OscillatorType::SynthwavePad, 4.0f},  // D3
+    {4.0f, 54, OscillatorType::SynthwavePad, 4.0f},  // F#3
+    {4.0f, 57, OscillatorType::SynthwavePad, 4.0f},  // A3
+    // === MELODY ===
+    {0.0f, 76, OscillatorType::TrapLead, 0.5f},    // E5
+    {0.5f, 74, OscillatorType::TrapLead, 0.5f},    // D5
+    {1.0f, 71, OscillatorType::TrapLead, 1.0f},    // B4
+    {2.0f, 69, OscillatorType::TrapLead, 0.5f},    // A4
+    {2.5f, 67, OscillatorType::TrapLead, 0.5f},    // G4
+    {3.0f, 64, OscillatorType::TrapLead, 1.0f},    // E4
+    {4.0f, 66, OscillatorType::TrapLead, 0.5f},    // F#4
+    {4.5f, 69, OscillatorType::TrapLead, 0.5f},    // A4
+    {5.0f, 71, OscillatorType::TrapLead, 1.0f},    // B4
+    {6.0f, 74, OscillatorType::TrapLead, 0.5f},    // D5
+    {6.5f, 71, OscillatorType::TrapLead, 0.5f},    // B4
+    {7.0f, 69, OscillatorType::TrapLead, 1.0f},    // A4
+};
+
+// ===========================================
+// HOUSE TRACKS
+// ===========================================
+
+// House Track 1: "Disco House" - Funky groovy
+static const TrackNote g_HouseDiscoHouse[] = {
+    // === DRUMS (4 on the floor with open hats) ===
+    {0.0f, 36, OscillatorType::Kick, 0.25f}, {1.0f, 36, OscillatorType::Kick, 0.25f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f}, {3.0f, 36, OscillatorType::Kick, 0.25f},
+    {4.0f, 36, OscillatorType::Kick, 0.25f}, {5.0f, 36, OscillatorType::Kick, 0.25f},
+    {6.0f, 36, OscillatorType::Kick, 0.25f}, {7.0f, 36, OscillatorType::Kick, 0.25f},
+    // Claps on 2 and 4
+    {1.0f, 39, OscillatorType::Clap, 0.25f}, {3.0f, 39, OscillatorType::Clap, 0.25f},
+    {5.0f, 39, OscillatorType::Clap, 0.25f}, {7.0f, 39, OscillatorType::Clap, 0.25f},
+    // Open hats on offbeats
+    {0.5f, 46, OscillatorType::HiHatOpen, 0.25f}, {1.5f, 46, OscillatorType::HiHatOpen, 0.25f},
+    {2.5f, 46, OscillatorType::HiHatOpen, 0.25f}, {3.5f, 46, OscillatorType::HiHatOpen, 0.25f},
+    {4.5f, 46, OscillatorType::HiHatOpen, 0.25f}, {5.5f, 46, OscillatorType::HiHatOpen, 0.25f},
+    {6.5f, 46, OscillatorType::HiHatOpen, 0.25f}, {7.5f, 46, OscillatorType::HiHatOpen, 0.25f},
+    // === BASS (funky octave jumps) ===
+    {0.0f, 36, OscillatorType::SynthBass, 0.25f},  // C2
+    {0.25f, 48, OscillatorType::SynthBass, 0.125f}, // C3
+    {0.5f, 36, OscillatorType::SynthBass, 0.25f},
+    {0.75f, 48, OscillatorType::SynthBass, 0.125f},
+    {1.0f, 36, OscillatorType::SynthBass, 0.25f},
+    {1.25f, 48, OscillatorType::SynthBass, 0.125f},
+    {1.5f, 38, OscillatorType::SynthBass, 0.25f},  // D2
+    {1.75f, 50, OscillatorType::SynthBass, 0.125f}, // D3
+    {2.0f, 41, OscillatorType::SynthBass, 0.25f},  // F2
+    {2.25f, 53, OscillatorType::SynthBass, 0.125f}, // F3
+    {2.5f, 41, OscillatorType::SynthBass, 0.25f},
+    {2.75f, 53, OscillatorType::SynthBass, 0.125f},
+    {3.0f, 41, OscillatorType::SynthBass, 0.25f},
+    {3.25f, 53, OscillatorType::SynthBass, 0.125f},
+    {3.5f, 43, OscillatorType::SynthBass, 0.25f},  // G2
+    {3.75f, 55, OscillatorType::SynthBass, 0.125f}, // G3
+    {4.0f, 36, OscillatorType::SynthBass, 0.25f},
+    {4.25f, 48, OscillatorType::SynthBass, 0.125f},
+    {4.5f, 36, OscillatorType::SynthBass, 0.25f},
+    {4.75f, 48, OscillatorType::SynthBass, 0.125f},
+    {5.0f, 36, OscillatorType::SynthBass, 0.25f},
+    {5.25f, 48, OscillatorType::SynthBass, 0.125f},
+    {5.5f, 38, OscillatorType::SynthBass, 0.25f},
+    {5.75f, 50, OscillatorType::SynthBass, 0.125f},
+    {6.0f, 41, OscillatorType::SynthBass, 0.25f},
+    {6.25f, 53, OscillatorType::SynthBass, 0.125f},
+    {6.5f, 41, OscillatorType::SynthBass, 0.25f},
+    {6.75f, 53, OscillatorType::SynthBass, 0.125f},
+    {7.0f, 43, OscillatorType::SynthBass, 0.25f},
+    {7.25f, 55, OscillatorType::SynthBass, 0.125f},
+    {7.5f, 41, OscillatorType::SynthBass, 0.25f},
+    {7.75f, 53, OscillatorType::SynthBass, 0.125f},
+    // === CHORDS (stabby) ===
+    {0.0f, 60, OscillatorType::SynthwaveChord, 0.25f},  // Cm
+    {0.0f, 63, OscillatorType::SynthwaveChord, 0.25f},
+    {0.0f, 67, OscillatorType::SynthwaveChord, 0.25f},
+    {0.5f, 60, OscillatorType::SynthwaveChord, 0.25f},
+    {0.5f, 63, OscillatorType::SynthwaveChord, 0.25f},
+    {0.5f, 67, OscillatorType::SynthwaveChord, 0.25f},
+    {2.0f, 65, OscillatorType::SynthwaveChord, 0.25f},  // Fm
+    {2.0f, 68, OscillatorType::SynthwaveChord, 0.25f},
+    {2.0f, 72, OscillatorType::SynthwaveChord, 0.25f},
+    {2.5f, 65, OscillatorType::SynthwaveChord, 0.25f},
+    {2.5f, 68, OscillatorType::SynthwaveChord, 0.25f},
+    {2.5f, 72, OscillatorType::SynthwaveChord, 0.25f},
+    {4.0f, 60, OscillatorType::SynthwaveChord, 0.25f},  // Cm
+    {4.0f, 63, OscillatorType::SynthwaveChord, 0.25f},
+    {4.0f, 67, OscillatorType::SynthwaveChord, 0.25f},
+    {4.5f, 60, OscillatorType::SynthwaveChord, 0.25f},
+    {4.5f, 63, OscillatorType::SynthwaveChord, 0.25f},
+    {4.5f, 67, OscillatorType::SynthwaveChord, 0.25f},
+    {6.0f, 67, OscillatorType::SynthwaveChord, 0.25f},  // G
+    {6.0f, 71, OscillatorType::SynthwaveChord, 0.25f},
+    {6.0f, 74, OscillatorType::SynthwaveChord, 0.25f},
+    {6.5f, 67, OscillatorType::SynthwaveChord, 0.25f},
+    {6.5f, 71, OscillatorType::SynthwaveChord, 0.25f},
+    {6.5f, 74, OscillatorType::SynthwaveChord, 0.25f},
+};
+
+// House Track 2: "Deep House" - Moody and deep
+static const TrackNote g_HouseDeepHouse[] = {
+    // === DRUMS ===
+    {0.0f, 36, OscillatorType::KickSoft, 0.25f}, {1.0f, 36, OscillatorType::KickSoft, 0.25f},
+    {2.0f, 36, OscillatorType::KickSoft, 0.25f}, {3.0f, 36, OscillatorType::KickSoft, 0.25f},
+    {4.0f, 36, OscillatorType::KickSoft, 0.25f}, {5.0f, 36, OscillatorType::KickSoft, 0.25f},
+    {6.0f, 36, OscillatorType::KickSoft, 0.25f}, {7.0f, 36, OscillatorType::KickSoft, 0.25f},
+    // Rim on 2 and 4
+    {1.0f, 37, OscillatorType::SnareRim, 0.125f}, {3.0f, 37, OscillatorType::SnareRim, 0.125f},
+    {5.0f, 37, OscillatorType::SnareRim, 0.125f}, {7.0f, 37, OscillatorType::SnareRim, 0.125f},
+    // Shaker
+    {0.5f, 70, OscillatorType::Maracas, 0.125f}, {1.5f, 70, OscillatorType::Maracas, 0.125f},
+    {2.5f, 70, OscillatorType::Maracas, 0.125f}, {3.5f, 70, OscillatorType::Maracas, 0.125f},
+    {4.5f, 70, OscillatorType::Maracas, 0.125f}, {5.5f, 70, OscillatorType::Maracas, 0.125f},
+    {6.5f, 70, OscillatorType::Maracas, 0.125f}, {7.5f, 70, OscillatorType::Maracas, 0.125f},
+    // === BASS (deep and minimal) ===
+    {0.0f, 33, OscillatorType::SynthBass, 2.0f},   // A1
+    {2.0f, 36, OscillatorType::SynthBass, 2.0f},   // C2
+    {4.0f, 33, OscillatorType::SynthBass, 2.0f},   // A1
+    {6.0f, 31, OscillatorType::SynthBass, 2.0f},   // G1
+    // === PAD (atmospheric) ===
+    {0.0f, 57, OscillatorType::SynthPad, 4.0f},    // Am
+    {0.0f, 60, OscillatorType::SynthPad, 4.0f},
+    {0.0f, 64, OscillatorType::SynthPad, 4.0f},
+    {4.0f, 55, OscillatorType::SynthPad, 4.0f},    // Gmaj7
+    {4.0f, 59, OscillatorType::SynthPad, 4.0f},
+    {4.0f, 62, OscillatorType::SynthPad, 4.0f},
+    {4.0f, 66, OscillatorType::SynthPad, 4.0f},
+    // === MELODY (sparse) ===
+    {0.0f, 69, OscillatorType::SynthLead, 0.5f},   // A4
+    {2.0f, 72, OscillatorType::SynthLead, 0.5f},   // C5
+    {4.0f, 71, OscillatorType::SynthLead, 0.5f},   // B4
+    {4.5f, 69, OscillatorType::SynthLead, 0.5f},   // A4
+    {6.0f, 67, OscillatorType::SynthLead, 1.0f},   // G4
+};
+
+// =============================================================================
+// REGGAETON SAMPLE TRACKS - Dembow rhythm at ~95 BPM
+// =============================================================================
+
+// Reggaeton Track 1: "Perreo" - Classic dembow beat
+static const TrackNote g_ReggaetonPerreo[] = {
+    // === DEMBOW DRUMS (8 beats, classic kick-snare pattern) ===
+    // Kick on 1, 2.5, 5, 6.5 (boom-ka pattern)
+    {0.0f, 36, OscillatorType::Dembow808, 0.25f}, {2.5f, 36, OscillatorType::Dembow808, 0.25f},
+    {4.0f, 36, OscillatorType::Dembow808, 0.25f}, {6.5f, 36, OscillatorType::Dembow808, 0.25f},
+    // Snare on 2, 4, 6, 8 (the backbeat)
+    {1.0f, 38, OscillatorType::Snare808, 0.125f}, {3.0f, 38, OscillatorType::Snare808, 0.125f},
+    {5.0f, 38, OscillatorType::Snare808, 0.125f}, {7.0f, 38, OscillatorType::Snare808, 0.125f},
+    // Guira (scraped metal) on every 8th note
+    {0.0f, 60, OscillatorType::Guira, 0.125f}, {0.5f, 60, OscillatorType::Guira, 0.125f},
+    {1.0f, 60, OscillatorType::Guira, 0.125f}, {1.5f, 60, OscillatorType::Guira, 0.125f},
+    {2.0f, 60, OscillatorType::Guira, 0.125f}, {2.5f, 60, OscillatorType::Guira, 0.125f},
+    {3.0f, 60, OscillatorType::Guira, 0.125f}, {3.5f, 60, OscillatorType::Guira, 0.125f},
+    {4.0f, 60, OscillatorType::Guira, 0.125f}, {4.5f, 60, OscillatorType::Guira, 0.125f},
+    {5.0f, 60, OscillatorType::Guira, 0.125f}, {5.5f, 60, OscillatorType::Guira, 0.125f},
+    {6.0f, 60, OscillatorType::Guira, 0.125f}, {6.5f, 60, OscillatorType::Guira, 0.125f},
+    {7.0f, 60, OscillatorType::Guira, 0.125f}, {7.5f, 60, OscillatorType::Guira, 0.125f},
+    // === BASS (punchy reggaeton bass following the dembow) ===
+    {0.0f, 33, OscillatorType::ReggaetonBass, 0.5f},   // A1
+    {2.5f, 33, OscillatorType::ReggaetonBass, 0.5f},   // A1
+    {4.0f, 36, OscillatorType::ReggaetonBass, 0.5f},   // C2
+    {6.5f, 36, OscillatorType::ReggaetonBass, 0.5f},   // C2
+    // === BRASS STABS (on offbeats for hooks) ===
+    {1.5f, 69, OscillatorType::LatinBrass, 0.25f},     // A4
+    {5.5f, 69, OscillatorType::LatinBrass, 0.25f},     // A4
+    // === MELODY (simple Latin hook) ===
+    {0.0f, 72, OscillatorType::SynthLead, 0.5f},       // C5
+    {0.75f, 71, OscillatorType::SynthLead, 0.25f},     // B4
+    {1.25f, 69, OscillatorType::SynthLead, 0.5f},      // A4
+    {4.0f, 72, OscillatorType::SynthLead, 0.5f},       // C5
+    {4.75f, 74, OscillatorType::SynthLead, 0.25f},     // D5
+    {5.25f, 72, OscillatorType::SynthLead, 0.75f},     // C5
+};
+
+// Reggaeton Track 2: "Gasolina" - Energetic party dembow
+static const TrackNote g_ReggaetonGasolina[] = {
+    // === DRUMS (high energy dembow with extra hi-hats) ===
+    // Kick pattern (more aggressive)
+    {0.0f, 36, OscillatorType::Dembow808, 0.25f}, {0.75f, 36, OscillatorType::Dembow808, 0.125f},
+    {2.5f, 36, OscillatorType::Dembow808, 0.25f},
+    {4.0f, 36, OscillatorType::Dembow808, 0.25f}, {4.75f, 36, OscillatorType::Dembow808, 0.125f},
+    {6.5f, 36, OscillatorType::Dembow808, 0.25f},
+    // Snare/clap combo
+    {1.0f, 39, OscillatorType::Clap, 0.125f}, {3.0f, 39, OscillatorType::Clap, 0.125f},
+    {5.0f, 39, OscillatorType::Clap, 0.125f}, {7.0f, 39, OscillatorType::Clap, 0.125f},
+    // Open hi-hat on &s
+    {0.5f, 46, OscillatorType::HiHatOpen, 0.125f}, {2.5f, 46, OscillatorType::HiHatOpen, 0.125f},
+    {4.5f, 46, OscillatorType::HiHatOpen, 0.125f}, {6.5f, 46, OscillatorType::HiHatOpen, 0.125f},
+    // Bongo fills
+    {1.75f, 60, OscillatorType::Bongo, 0.125f}, {3.75f, 60, OscillatorType::Bongo, 0.125f},
+    {5.75f, 60, OscillatorType::Bongo, 0.125f}, {7.75f, 60, OscillatorType::Bongo, 0.125f},
+    // Timbale accent
+    {3.5f, 60, OscillatorType::Timbale, 0.125f}, {7.5f, 60, OscillatorType::Timbale, 0.125f},
+    // === BASS (syncopated reggaeton bass) ===
+    {0.0f, 36, OscillatorType::ReggaetonBass, 0.375f},   // C2
+    {2.5f, 38, OscillatorType::ReggaetonBass, 0.375f},   // D2
+    {4.0f, 33, OscillatorType::ReggaetonBass, 0.375f},   // A1
+    {6.5f, 35, OscillatorType::ReggaetonBass, 0.375f},   // B1
+    // === BRASS (energetic stabs) ===
+    {0.0f, 60, OscillatorType::LatinBrass, 0.25f},       // C4
+    {0.0f, 64, OscillatorType::LatinBrass, 0.25f},       // E4
+    {0.0f, 67, OscillatorType::LatinBrass, 0.25f},       // G4
+    {3.0f, 62, OscillatorType::LatinBrass, 0.25f},       // D4
+    {3.0f, 65, OscillatorType::LatinBrass, 0.25f},       // F4
+    {3.0f, 69, OscillatorType::LatinBrass, 0.25f},       // A4
+    // === MELODY (catchy hook) ===
+    {0.5f, 72, OscillatorType::SynthwaveLead, 0.5f},     // C5
+    {1.25f, 74, OscillatorType::SynthwaveLead, 0.25f},   // D5
+    {1.75f, 76, OscillatorType::SynthwaveLead, 0.75f},   // E5
+    {4.5f, 79, OscillatorType::SynthwaveLead, 0.5f},     // G5
+    {5.25f, 77, OscillatorType::SynthwaveLead, 0.25f},   // F5
+    {5.75f, 76, OscillatorType::SynthwaveLead, 0.75f},   // E5
+};
+
+// Reggaeton Track 3: "Noche" - Dark/moody reggaeton
+static const TrackNote g_ReggaetonNoche[] = {
+    // === DRUMS (slower, moodier dembow) ===
+    // Deep kick
+    {0.0f, 36, OscillatorType::Kick808, 0.5f}, {2.5f, 36, OscillatorType::Kick808, 0.5f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f}, {6.5f, 36, OscillatorType::Kick808, 0.5f},
+    // Snare (softer)
+    {1.0f, 38, OscillatorType::SnareRim, 0.125f}, {3.0f, 38, OscillatorType::SnareRim, 0.125f},
+    {5.0f, 38, OscillatorType::SnareRim, 0.125f}, {7.0f, 38, OscillatorType::SnareRim, 0.125f},
+    // Closed hi-hat pattern
+    {0.0f, 42, OscillatorType::HiHat, 0.125f}, {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.0f, 42, OscillatorType::HiHat, 0.125f}, {2.5f, 42, OscillatorType::HiHat, 0.125f},
+    {3.0f, 42, OscillatorType::HiHat, 0.125f}, {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    {4.0f, 42, OscillatorType::HiHat, 0.125f}, {4.5f, 42, OscillatorType::HiHat, 0.125f},
+    {5.0f, 42, OscillatorType::HiHat, 0.125f}, {5.5f, 42, OscillatorType::HiHat, 0.125f},
+    {6.0f, 42, OscillatorType::HiHat, 0.125f}, {6.5f, 42, OscillatorType::HiHat, 0.125f},
+    {7.0f, 42, OscillatorType::HiHat, 0.125f}, {7.5f, 42, OscillatorType::HiHat, 0.125f},
+    // Conga accent
+    {1.5f, 63, OscillatorType::Conga, 0.25f}, {5.5f, 63, OscillatorType::Conga, 0.25f},
+    // === BASS (dark, minimal) ===
+    {0.0f, 33, OscillatorType::ReggaetonBass, 1.0f},     // A1
+    {2.5f, 33, OscillatorType::ReggaetonBass, 0.5f},     // A1
+    {4.0f, 31, OscillatorType::ReggaetonBass, 1.0f},     // G1
+    {6.5f, 31, OscillatorType::ReggaetonBass, 0.5f},     // G1
+    // === PAD (dark atmosphere) ===
+    {0.0f, 57, OscillatorType::SynthwavePad, 4.0f},      // Am chord
+    {0.0f, 60, OscillatorType::SynthwavePad, 4.0f},
+    {0.0f, 64, OscillatorType::SynthwavePad, 4.0f},
+    {4.0f, 55, OscillatorType::SynthwavePad, 4.0f},      // Gm chord
+    {4.0f, 58, OscillatorType::SynthwavePad, 4.0f},
+    {4.0f, 62, OscillatorType::SynthwavePad, 4.0f},
+    // === MELODY (haunting, sparse) ===
+    {0.0f, 69, OscillatorType::SynthBell, 1.0f},         // A4
+    {2.0f, 67, OscillatorType::SynthBell, 0.5f},         // G4
+    {3.0f, 65, OscillatorType::SynthBell, 1.0f},         // F4
+    {6.0f, 64, OscillatorType::SynthBell, 2.0f},         // E4
+};
+
+// Array of all sample tracks
+static const SampleTrack g_SampleTracks[] = {
+    // Synthwave
+    {"Midnight Drive", "Synthwave", "Driving 80s retrowave", g_SynthwaveMidnightDrive, sizeof(g_SynthwaveMidnightDrive)/sizeof(TrackNote), 16, 110},
+    {"Neon Dreams", "Synthwave", "Dreamy arpeggiated", g_SynthwaveNeonDreams, sizeof(g_SynthwaveNeonDreams)/sizeof(TrackNote), 16, 100},
+    {"Retro Racer", "Synthwave", "Energetic driving", g_SynthwaveRetroRacer, sizeof(g_SynthwaveRetroRacer)/sizeof(TrackNote), 16, 118},
+    // Techno
+    {"Machine", "Techno", "Acid techno groove", g_TechnoMachine, sizeof(g_TechnoMachine)/sizeof(TrackNote), 16, 130},
+    {"Dark Factory", "Techno", "Hard dark techno", g_TechnoDarkFactory, sizeof(g_TechnoDarkFactory)/sizeof(TrackNote), 16, 135},
+    {"Underground", "Techno", "Rolling hypnotic", g_TechnoUnderground, sizeof(g_TechnoUnderground)/sizeof(TrackNote), 8, 126},
+    // Chiptune
+    {"Level 1", "Chiptune", "Bouncy game theme", g_ChiptuneLevel1, sizeof(g_ChiptuneLevel1)/sizeof(TrackNote), 8, 140},
+    {"Boss Fight", "Chiptune", "Intense battle music", g_ChiptuneBossFight, sizeof(g_ChiptuneBossFight)/sizeof(TrackNote), 8, 160},
+    {"Victory Theme", "Chiptune", "Triumphant fanfare", g_ChiptuneVictory, sizeof(g_ChiptuneVictory)/sizeof(TrackNote), 8, 120},
+    // Hip Hop
+    {"Boom Bap", "Hip Hop", "Classic 90s beat", g_HipHopBoomBap, sizeof(g_HipHopBoomBap)/sizeof(TrackNote), 8, 90},
+    {"Lo-Fi Chill", "Hip Hop", "Relaxed lo-fi", g_HipHopLoFi, sizeof(g_HipHopLoFi)/sizeof(TrackNote), 8, 85},
+    // Trap
+    {"808 Bounce", "Trap", "Hard hitting 808", g_Trap808Bounce, sizeof(g_Trap808Bounce)/sizeof(TrackNote), 8, 140},
+    {"Dark Trap", "Trap", "Moody atmosphere", g_TrapDark, sizeof(g_TrapDark)/sizeof(TrackNote), 8, 135},
+    // House
+    {"Disco House", "House", "Funky groovy", g_HouseDiscoHouse, sizeof(g_HouseDiscoHouse)/sizeof(TrackNote), 8, 124},
+    {"Deep House", "House", "Moody and deep", g_HouseDeepHouse, sizeof(g_HouseDeepHouse)/sizeof(TrackNote), 8, 122},
+    // Reggaeton
+    {"Perreo", "Reggaeton", "Classic dembow beat", g_ReggaetonPerreo, sizeof(g_ReggaetonPerreo)/sizeof(TrackNote), 8, 95},
+    {"Gasolina", "Reggaeton", "Energetic party dembow", g_ReggaetonGasolina, sizeof(g_ReggaetonGasolina)/sizeof(TrackNote), 8, 100},
+    {"Noche", "Reggaeton", "Dark moody reggaeton", g_ReggaetonNoche, sizeof(g_ReggaetonNoche)/sizeof(TrackNote), 8, 90},
+};
+static constexpr int g_NumSampleTracks = sizeof(g_SampleTracks) / sizeof(g_SampleTracks[0]);
+
+// Sample track preview state
+static bool g_IsSampleTrackPreviewing = false;
+static int g_PreviewSampleTrackIndex = -1;
+
+// Palette expansion state for sample tracks
+static bool g_PaletteExpanded_SampleTracks = true;
+static bool g_PaletteExpanded_SynthwaveTracks = true;
+static bool g_PaletteExpanded_TechnoTracks = false;
+static bool g_PaletteExpanded_ChiptuneTracks = false;
+static bool g_PaletteExpanded_HipHopTracks = false;
+static bool g_PaletteExpanded_TrapTracks = false;
+static bool g_PaletteExpanded_HouseTracks = false;
+static bool g_PaletteExpanded_ReggaetonTracks = false;
 
 // Global undo/redo history
 static UndoHistory g_UndoHistory;
@@ -2460,6 +3675,118 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             "Click to place | Escape to cancel | Right-click to cancel");
     }
 
+    // ========================================================================
+    // Draw pattern preview (ghost notes) if in pattern preview mode
+    // ========================================================================
+    if (g_IsPatternPreviewing && g_PreviewPatternIndex >= 0 && g_PreviewPatternIndex < g_NumDrumPatterns) {
+        const DrumPattern& dp = g_DrumPatterns[g_PreviewPatternIndex];
+
+        // Calculate mouse position for ghost notes
+        ImVec2 mousePos = ImGui::GetMousePos();
+        float ghostRelX = mousePos.x - canvasPos.x - keyWidth + ui.scrollX;
+        float ghostRelY = mousePos.y - canvasPos.y + ui.scrollY;
+        float ghostBaseBeat = std::floor(ghostRelX / beatWidth * 4.0f) / 4.0f;  // Snap to 1/4 beat
+        if (ghostBaseBeat < 0) ghostBaseBeat = 0;
+
+        // Draw each ghost note from the pattern
+        for (int i = 0; i < dp.noteCount; ++i) {
+            const PatternNote& pn = dp.notes[i];
+            float noteTime = ghostBaseBeat + pn.beat;
+            int notePitch = pn.pitch;
+
+            // Skip if out of visible range
+            if (notePitch < lowestNote || notePitch >= highestNote) continue;
+
+            float x = canvasPos.x + keyWidth + noteTime * beatWidth - ui.scrollX;
+            float y = canvasPos.y + (highestNote - notePitch - 1) * noteHeight - ui.scrollY;
+            float w = pn.duration * beatWidth;
+
+            // Ghost note style - green tint for patterns
+            ImU32 ghostColor = IM_COL32(100, 255, 150, 100);  // Light green, semi-transparent
+            ImU32 ghostBorder = IM_COL32(100, 255, 150, 200);
+
+            // Fill
+            drawList->AddRectFilled(
+                ImVec2(x, y + 1),
+                ImVec2(x + w - 1, y + noteHeight - 1),
+                ghostColor);
+
+            // Border
+            drawList->AddRect(
+                ImVec2(x, y),
+                ImVec2(x + w, y + noteHeight),
+                ghostBorder, 0.0f, 0, 2.0f);
+        }
+
+        // Draw helper text with pattern name
+        char helpText[128];
+        snprintf(helpText, sizeof(helpText), "%s pattern | Click to place | Escape to cancel", dp.name);
+        drawList->AddText(
+            ImVec2(canvasPos.x + keyWidth + 10, canvasPos.y + 10),
+            IM_COL32(100, 255, 150, 255),
+            helpText);
+    }
+
+    // ========================================================================
+    // Draw sample track preview (ghost notes) if in sample track preview mode
+    // ========================================================================
+    if (g_IsSampleTrackPreviewing && g_PreviewSampleTrackIndex >= 0 && g_PreviewSampleTrackIndex < g_NumSampleTracks) {
+        const SampleTrack& st = g_SampleTracks[g_PreviewSampleTrackIndex];
+
+        // Calculate mouse position for ghost notes
+        ImVec2 mousePos = ImGui::GetMousePos();
+        float ghostRelX = mousePos.x - canvasPos.x - keyWidth + ui.scrollX;
+        float ghostBaseBeat = std::floor(ghostRelX / beatWidth * 4.0f) / 4.0f;  // Snap to 1/4 beat
+        if (ghostBaseBeat < 0) ghostBaseBeat = 0;
+
+        // Draw each ghost note from the sample track
+        for (int i = 0; i < st.noteCount; ++i) {
+            const TrackNote& tn = st.notes[i];
+            float noteTime = ghostBaseBeat + tn.beat;
+            int notePitch = tn.pitch;
+
+            // Skip if out of visible range
+            if (notePitch < lowestNote || notePitch >= highestNote) continue;
+
+            float x = canvasPos.x + keyWidth + noteTime * beatWidth - ui.scrollX;
+            float y = canvasPos.y + (highestNote - notePitch - 1) * noteHeight - ui.scrollY;
+            float w = tn.duration * beatWidth;
+
+            // Ghost note style - purple/magenta tint for sample tracks
+            ImU32 ghostColor = IM_COL32(200, 100, 255, 100);  // Light purple, semi-transparent
+            ImU32 ghostBorder = IM_COL32(200, 100, 255, 200);
+
+            // Fill
+            drawList->AddRectFilled(
+                ImVec2(x, y + 1),
+                ImVec2(x + w - 1, y + noteHeight - 1),
+                ghostColor);
+
+            // Border
+            drawList->AddRect(
+                ImVec2(x, y),
+                ImVec2(x + w, y + noteHeight),
+                ghostBorder, 0.0f, 0, 2.0f);
+        }
+
+        // Draw helper text with track name
+        char helpText[256];
+        snprintf(helpText, sizeof(helpText), "%s (%s) - %d notes | Click to place | Escape to cancel",
+                 st.name, st.genre, st.noteCount);
+        drawList->AddText(
+            ImVec2(canvasPos.x + keyWidth + 10, canvasPos.y + 10),
+            IM_COL32(200, 100, 255, 255),
+            helpText);
+
+        // Also show suggested BPM
+        char bpmText[64];
+        snprintf(bpmText, sizeof(bpmText), "Suggested BPM: %d", st.bpm);
+        drawList->AddText(
+            ImVec2(canvasPos.x + keyWidth + 10, canvasPos.y + 26),
+            IM_COL32(200, 100, 255, 200),
+            bpmText);
+    }
+
     // Playhead (with latency compensation for audio buffer)
     // Audio buffer is 512 frames * 2 (double buffer) at 44100 Hz = ~23ms
     // Convert to beats: latency_seconds * (BPM / 60)
@@ -2515,10 +3842,16 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             }
         }
 
-        // Escape to deselect or cancel paste preview
+        // Escape to deselect or cancel paste/pattern/sample track preview
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             if (ui.isPastePreviewing) {
                 ui.isPastePreviewing = false;
+            } else if (g_IsPatternPreviewing) {
+                g_IsPatternPreviewing = false;
+                g_PreviewPatternIndex = -1;
+            } else if (g_IsSampleTrackPreviewing) {
+                g_IsSampleTrackPreviewing = false;
+                g_PreviewSampleTrackIndex = -1;
             } else {
                 ui.selectedNoteIndex = -1;
                 ui.selectedNoteIndices.clear();
@@ -2671,10 +4004,10 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 newNote.startTime = std::floor(droppedBeat * 4.0f) / 4.0f;
                 newNote.oscillatorType = static_cast<OscillatorType>(oscType);  // Per-note oscillator
 
-                // Drums auto-adjust duration based on BPM
+                // Drums auto-adjust duration based on BPM and selected duration variant
                 if (isDrumType(newNote.oscillatorType)) {
                     float decayTime = getDrumDecayTime(newNote.oscillatorType);
-                    newNote.duration = decayTime * (project.bpm / 60.0f);
+                    newNote.duration = decayTime * (project.bpm / 60.0f) * g_SelectedDurationMult;
                 } else {
                     newNote.duration = 0.5f;
                 }
@@ -2779,6 +4112,108 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             // Right click cancels paste preview
             if (ImGui::IsMouseClicked(1)) {
                 ui.isPastePreviewing = false;
+            }
+        }
+        // Handle pattern preview placement
+        else if (g_IsPatternPreviewing && g_PreviewPatternIndex >= 0 && g_PreviewPatternIndex < g_NumDrumPatterns) {
+            const DrumPattern& dp = g_DrumPatterns[g_PreviewPatternIndex];
+
+            // Left click places the pattern
+            if (ImGui::IsMouseClicked(0) && relX >= 0) {
+                // Save state for undo
+                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+
+                // Calculate placement position (snap to 1/4 beat)
+                float placeBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                if (placeBeat < 0) placeBeat = 0;
+
+                // Clear selection and prepare to select placed notes
+                ui.selectedNoteIndices.clear();
+
+                // Add all notes from the pattern template
+                for (int j = 0; j < dp.noteCount; ++j) {
+                    const PatternNote& pn = dp.notes[j];
+                    Note newNote;
+                    newNote.pitch = pn.pitch;
+                    newNote.startTime = placeBeat + pn.beat;
+                    newNote.oscillatorType = pn.osc;
+                    newNote.duration = pn.duration;
+                    newNote.velocity = 0.8f;
+                    pattern.notes.push_back(newNote);
+                    ui.selectedNoteIndices.push_back(static_cast<int>(pattern.notes.size()) - 1);
+
+                    // Auto-extend pattern length if needed
+                    float noteEnd = newNote.startTime + newNote.duration;
+                    if (noteEnd > pattern.length) {
+                        pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                    }
+                }
+
+                // Select the first placed note as primary
+                if (!ui.selectedNoteIndices.empty()) {
+                    ui.selectedNoteIndex = ui.selectedNoteIndices[0];
+                }
+
+                // Exit pattern preview mode
+                g_IsPatternPreviewing = false;
+                g_PreviewPatternIndex = -1;
+            }
+
+            // Right click cancels pattern preview
+            if (ImGui::IsMouseClicked(1)) {
+                g_IsPatternPreviewing = false;
+                g_PreviewPatternIndex = -1;
+            }
+        }
+        // Handle sample track preview placement
+        else if (g_IsSampleTrackPreviewing && g_PreviewSampleTrackIndex >= 0 && g_PreviewSampleTrackIndex < g_NumSampleTracks) {
+            const SampleTrack& st = g_SampleTracks[g_PreviewSampleTrackIndex];
+
+            // Left click places the sample track
+            if (ImGui::IsMouseClicked(0) && relX >= 0) {
+                // Save state for undo
+                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+
+                // Calculate placement position (snap to 1/4 beat)
+                float placeBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                if (placeBeat < 0) placeBeat = 0;
+
+                // Clear selection and prepare to select placed notes
+                ui.selectedNoteIndices.clear();
+
+                // Add all notes from the sample track
+                for (int j = 0; j < st.noteCount; ++j) {
+                    const TrackNote& tn = st.notes[j];
+                    Note newNote;
+                    newNote.pitch = tn.pitch;
+                    newNote.startTime = placeBeat + tn.beat;
+                    newNote.oscillatorType = tn.osc;
+                    newNote.duration = tn.duration;
+                    newNote.velocity = 0.8f;
+                    pattern.notes.push_back(newNote);
+                    ui.selectedNoteIndices.push_back(static_cast<int>(pattern.notes.size()) - 1);
+
+                    // Auto-extend pattern length if needed
+                    float noteEnd = newNote.startTime + newNote.duration;
+                    if (noteEnd > pattern.length) {
+                        pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                    }
+                }
+
+                // Select the first placed note as primary
+                if (!ui.selectedNoteIndices.empty()) {
+                    ui.selectedNoteIndex = ui.selectedNoteIndices[0];
+                }
+
+                // Exit sample track preview mode
+                g_IsSampleTrackPreviewing = false;
+                g_PreviewSampleTrackIndex = -1;
+            }
+
+            // Right click cancels sample track preview
+            if (ImGui::IsMouseClicked(1)) {
+                g_IsSampleTrackPreviewing = false;
+                g_PreviewSampleTrackIndex = -1;
             }
         }
         // Handle mouse down (normal mode)
@@ -4319,31 +5754,55 @@ inline void DrawWaveformIcon(ImDrawList* drawList, ImVec2 pos, ImVec2 size, Osci
 inline void DrawDrumVariant(ImDrawList* drawList, int oscIndex, const char* name, const char* desc,
                             float durationMult, const char* durationLabel,
                             Project& project, UIState& ui, Sequencer& seq) {
-    ImVec2 itemSize(120, 28);
+    // Fixed button width but with visual length indicator inside
+    ImVec2 itemSize(90, 32);
     ImVec2 pos = ImGui::GetCursorScreenPos();
 
     bool isPaletteSelected = (g_SelectedPaletteItem == oscIndex && std::abs(g_SelectedDurationMult - durationMult) < 0.01f);
 
     // Colors based on selection state
-    ImU32 bgColor = isPaletteSelected ? IM_COL32(140, 80, 80, 255) : IM_COL32(50, 40, 40, 200);
+    ImU32 bgColor = isPaletteSelected ? IM_COL32(140, 80, 80, 255) : IM_COL32(45, 40, 40, 200);
     ImU32 textColor = isPaletteSelected ? IM_COL32(255, 220, 220, 255) : IM_COL32(200, 150, 150, 255);
     ImU32 borderColor = isPaletteSelected ? IM_COL32(255, 150, 150, 255) : IM_COL32(80, 60, 60, 255);
 
-    drawList->AddRectFilled(pos, ImVec2(pos.x + itemSize.x, pos.y + itemSize.y), bgColor, 3.0f);
-    drawList->AddRect(pos, ImVec2(pos.x + itemSize.x, pos.y + itemSize.y), borderColor, 3.0f, 0, isPaletteSelected ? 2.0f : 1.0f);
+    // Duration bar color - more vibrant
+    ImU32 durationBarColor = durationMult < 0.75f ? IM_COL32(80, 200, 80, 255) :   // Short = bright green
+                             durationMult > 1.5f ? IM_COL32(200, 80, 80, 255) :    // Long = bright red
+                             IM_COL32(200, 200, 80, 255);                           // Normal = bright yellow
 
-    // Draw small icon
-    ImVec2 iconPos(pos.x + 4, pos.y + 4);
-    ImVec2 iconSize(20, 20);
-    DrawWaveformIcon(drawList, iconPos, iconSize, static_cast<OscillatorType>(oscIndex), textColor);
+    // Draw background
+    drawList->AddRectFilled(pos, ImVec2(pos.x + itemSize.x, pos.y + itemSize.y), bgColor, 4.0f);
+    drawList->AddRect(pos, ImVec2(pos.x + itemSize.x, pos.y + itemSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 2.5f : 1.0f);
 
-    // Draw text
-    char label[64];
-    snprintf(label, sizeof(label), "%s %s", name, durationLabel);
-    drawList->AddText(ImVec2(pos.x + 28, pos.y + 6), textColor, label);
+    // Draw duration label at top
+    const char* shortLabel = durationMult < 0.75f ? "SHORT" : durationMult > 1.5f ? "LONG" : "NORMAL";
+    ImVec2 textSize = ImGui::CalcTextSize(shortLabel);
+    float textX = pos.x + (itemSize.x - textSize.x) * 0.5f;
+    drawList->AddText(ImVec2(textX, pos.y + 3), textColor, shortLabel);
+
+    // Draw visual length bar at bottom - this shows the relative duration clearly
+    float barMaxWidth = itemSize.x - 8.0f;
+    float barWidth = barMaxWidth * (durationMult / 2.0f);  // 0.5x = 25%, 1.0x = 50%, 2.0x = 100%
+    barWidth = std::max(barWidth, 10.0f);  // Minimum visible width
+
+    float barHeight = 8.0f;
+    float barY = pos.y + itemSize.y - barHeight - 4.0f;
+    float barX = pos.x + 4.0f;
+
+    // Draw bar background (gray)
+    drawList->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barMaxWidth, barY + barHeight),
+                           IM_COL32(30, 30, 30, 200), 3.0f);
+
+    // Draw actual duration bar
+    drawList->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barWidth, barY + barHeight),
+                           durationBarColor, 3.0f);
+
+    // Unique ID using both oscillator and duration
+    char buttonId[64];
+    snprintf(buttonId, sizeof(buttonId), "drum_%d_%.1f", oscIndex, durationMult);
 
     // Invisible button for interaction
-    ImGui::InvisibleButton(label, itemSize);
+    ImGui::InvisibleButton(buttonId, itemSize);
 
     if (ImGui::IsItemClicked()) {
         if (isPaletteSelected) {
@@ -4360,9 +5819,9 @@ inline void DrawDrumVariant(ImDrawList* drawList, int oscIndex, const char* name
 
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
-        ImGui::Text("%s (%s)", name, durationLabel);
+        ImGui::Text("%s (%s)", name, shortLabel);
         ImGui::TextDisabled("%s", desc);
-        ImGui::TextDisabled("Duration: %.1fx", durationMult);
+        ImGui::TextDisabled("Duration: %.1fx (scales with BPM)", durationMult);
         if (isPaletteSelected) {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "SELECTED");
         }
@@ -4416,33 +5875,57 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Separator();
 
     const char* oscNames[] = {
+        // Oscillators (7)
         "Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Supersaw", "Custom",
+        // Synths (10)
         "Lead", "Pad", "Bass", "Pluck", "Arp", "Organ", "Strings", "Brass", "Chip", "Bell",
+        // Synthwave (6)
         "SW Lead", "SW Bass", "SW Pad", "SW Arp", "SW Chord", "SW FM",
+        // Techno (5)
+        "Acid", "Stab", "Hoover", "Rave", "Reese",
+        // Hip Hop (4)
+        "Sub808", "LoFi", "Vinyl", "Trap",
+        // Additional (3)
+        "Gated", "Poly", "Sync",
+        // Drums (21) - indices 35-55
         "Kick", "Kick808", "KickHard", "KickSoft",
         "Snare", "Snare808", "SnareRim", "Clap",
         "HiHat", "HiHatOpen", "HiHatPedal",
         "Tom", "TomLow", "TomHigh",
         "Crash", "Ride",
-        "Cowbell", "Clave", "Conga", "Maracas", "Tambourine"
+        "Cowbell", "Clave", "Conga", "Maracas", "Tambourine",
+        // Reggaeton Instruments (6) - indices 56-61
+        "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow808"
     };
     const char* oscDesc[] = {
+        // Oscillators (7) - indices 0-6
         "Square wave - Classic NES", "Triangle - Soft, flute-like", "Sawtooth - Rich, buzzy",
         "Sine - Pure, clean", "Noise - Percussion", "7 detuned saws - Massive", "Custom - Adjustable",
+        // Synths (10) - indices 7-16
         "Thick detuned saws", "Soft, atmospheric", "Deep punchy bass", "Short, plucky",
         "Crisp arpeggios", "Classic drawbar", "Lush ensemble", "Rich, brassy", "12.5% chiptune", "FM bell/chime",
+        // Synthwave (6) - indices 17-22
         "80s PWM lead - Bright, cutting", "808 saw bass - Deep sub", "Supersaw pad - Lush, wide",
         "Crisp arp - Tight sequences", "Poly stab - Chord hits", "DX7 FM - Brass/keys",
+        // Techno (5) - indices 23-27
+        "TB-303 acid bass", "Techno chord stab", "Classic hoover", "Rave piano", "Reese bass",
+        // Hip Hop (4) - indices 28-31
+        "Deep 808 sub", "Dusty lo-fi keys", "Vinyl crackle", "Trap lead",
+        // Additional (3) - indices 32-34
+        "Gated pad", "Poly synth", "Sync lead",
+        // Drums (21) - indices 35-55
         "Standard pitch sweep", "Deep 808 sub-bass", "Punchy tight", "Soft warm",
         "Standard with noise", "808 more tonal", "Rimshot clicky", "Hand clap bursts",
         "Closed", "Open longer", "Pedal very short",
         "Mid tom", "Floor tom", "High tom",
         "Crash long", "Ride sustained",
-        "808 cowbell", "Wood block", "Conga", "Shaker", "Jingly"
+        "808 cowbell", "Wood block", "Conga", "Shaker", "Jingly",
+        // Reggaeton Instruments (6) - indices 56-61
+        "Punchy reggaeton bass", "Latin brass stab", "Scraped dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick"
     };
 
     constexpr int NUM_OSCILLATORS = 7;  // Pulse, Triangle, Sawtooth, Sine, Noise, Supersaw, Custom
-    constexpr int NUM_SYNTHS = 16;  // 10 original + 6 synthwave
+    constexpr int NUM_SYNTHS = 28;  // 10 original + 6 synthwave + 5 techno + 4 hip-hop + 3 additional (reggaeton synths are in Reggaeton section)
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // ========== OSCILLATORS (Collapsible) ==========
@@ -4544,9 +6027,9 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Separator();
     ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f), "DRUMS (click category to expand)");
 
-    // Kicks (indices shifted by 6 for synthwave synths)
+    // Kicks (indices: 7 oscillators + 28 synths = 35 base)
     {
-        const int indices[] = { 22, 23, 24, 25 };
+        const int indices[] = { 35, 36, 37, 38 };
         const char* names[] = { "Kick", "Kick808", "KickHard", "KickSoft" };
         const char* descs[] = { "Standard pitch sweep", "Deep 808 sub-bass", "Punchy tight", "Soft warm" };
         DrawDrumCategory("Kicks", g_PaletteExpanded_Kicks, indices, names, descs, 4, project, ui, seq);
@@ -4554,7 +6037,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // Snares
     {
-        const int indices[] = { 26, 27, 28, 29 };
+        const int indices[] = { 39, 40, 41, 42 };
         const char* names[] = { "Snare", "Snare808", "SnareRim", "Clap" };
         const char* descs[] = { "Standard with noise", "808 more tonal", "Rimshot clicky", "Hand clap bursts" };
         DrawDrumCategory("Snares & Claps", g_PaletteExpanded_Snares, indices, names, descs, 4, project, ui, seq);
@@ -4562,7 +6045,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // Hi-Hats
     {
-        const int indices[] = { 30, 31, 32 };
+        const int indices[] = { 43, 44, 45 };
         const char* names[] = { "HiHat", "HiHatOpen", "HiHatPedal" };
         const char* descs[] = { "Closed hi-hat", "Open longer decay", "Pedal very short" };
         DrawDrumCategory("Hi-Hats", g_PaletteExpanded_HiHats, indices, names, descs, 3, project, ui, seq);
@@ -4570,7 +6053,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // Toms
     {
-        const int indices[] = { 33, 34, 35 };
+        const int indices[] = { 46, 47, 48 };
         const char* names[] = { "Tom", "TomLow", "TomHigh" };
         const char* descs[] = { "Mid tom", "Floor tom low pitch", "High tom" };
         DrawDrumCategory("Toms", g_PaletteExpanded_Toms, indices, names, descs, 3, project, ui, seq);
@@ -4578,7 +6061,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // Cymbals
     {
-        const int indices[] = { 36, 37 };
+        const int indices[] = { 49, 50 };
         const char* names[] = { "Crash", "Ride" };
         const char* descs[] = { "Crash cymbal long decay", "Ride cymbal sustained" };
         DrawDrumCategory("Cymbals", g_PaletteExpanded_Cymbals, indices, names, descs, 2, project, ui, seq);
@@ -4586,11 +6069,246 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // Percussion
     {
-        const int indices[] = { 38, 39, 40, 41, 42 };
+        const int indices[] = { 51, 52, 53, 54, 55 };
         const char* names[] = { "Cowbell", "Clave", "Conga", "Maracas", "Tambourine" };
         const char* descs[] = { "808 cowbell", "Wood block click", "Conga drum", "Shaker", "Jingly metallic" };
         DrawDrumCategory("Percussion", g_PaletteExpanded_Percussion, indices, names, descs, 5, project, ui, seq);
     }
+
+    // Reggaeton (synths + drums)
+    {
+        const int indices[] = { 56, 57, 58, 59, 60, 61 };
+        const char* names[] = { "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow 808" };
+        const char* descs[] = { "Punchy reggaeton bass", "Latin brass stab", "Scraped metal dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick" };
+        DrawDrumCategory("Reggaeton", g_PaletteExpanded_Reggaeton, indices, names, descs, 6, project, ui, seq);
+    }
+
+    // ========== PATTERN TEMPLATES ==========
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "PATTERNS (click to insert)");
+
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.3f, 0.4f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.4f, 0.5f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.5f, 0.6f, 1.0f));
+
+    if (ImGui::CollapsingHeader("Drum Patterns", g_PaletteExpanded_Patterns ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        g_PaletteExpanded_Patterns = true;
+        ImGui::Indent(10.0f);
+
+        Pattern& pattern = project.patterns[ui.selectedPattern];
+
+        for (int i = 0; i < g_NumDrumPatterns; ++i) {
+            const DrumPattern& dp = g_DrumPatterns[i];
+            ImGui::PushID(i + 1000);  // Unique ID for patterns
+
+            ImVec2 buttonSize(130, 40);
+            ImVec2 pos = ImGui::GetCursorScreenPos();
+
+            // Button colors
+            ImU32 bgColor = IM_COL32(40, 50, 70, 255);
+            ImU32 borderColor = IM_COL32(80, 100, 140, 255);
+            ImU32 textColor = IM_COL32(180, 200, 255, 255);
+
+            drawList->AddRectFilled(pos, ImVec2(pos.x + buttonSize.x, pos.y + buttonSize.y), bgColor, 5.0f);
+            drawList->AddRect(pos, ImVec2(pos.x + buttonSize.x, pos.y + buttonSize.y), borderColor, 5.0f, 0, 1.5f);
+
+            // Pattern name
+            drawList->AddText(ImVec2(pos.x + 8, pos.y + 4), textColor, dp.name);
+            // Description in smaller text
+            ImU32 descColor = IM_COL32(120, 140, 180, 255);
+            drawList->AddText(ImVec2(pos.x + 8, pos.y + 20), descColor, dp.description);
+
+            // Note count indicator
+            char noteCountStr[16];
+            snprintf(noteCountStr, sizeof(noteCountStr), "%d notes", dp.noteCount);
+            ImVec2 textSize = ImGui::CalcTextSize(noteCountStr);
+            drawList->AddText(ImVec2(pos.x + buttonSize.x - textSize.x - 6, pos.y + 4), descColor, noteCountStr);
+
+            ImGui::InvisibleButton("##pattern", buttonSize);
+
+            // Check if this pattern is being previewed
+            bool isBeingPreviewed = (g_IsPatternPreviewing && g_PreviewPatternIndex == i);
+
+            if (ImGui::IsItemClicked()) {
+                if (isBeingPreviewed) {
+                    // Cancel preview if clicking the same pattern
+                    g_IsPatternPreviewing = false;
+                    g_PreviewPatternIndex = -1;
+                } else {
+                    // Enter preview mode for this pattern
+                    g_IsPatternPreviewing = true;
+                    g_PreviewPatternIndex = i;
+                    ui.isPastePreviewing = false;  // Cancel any paste preview
+                }
+            }
+
+            if (ImGui::IsItemHovered() || isBeingPreviewed) {
+                // Highlight on hover or when previewing
+                ImU32 highlightColor = isBeingPreviewed ? IM_COL32(100, 255, 150, 255) : IM_COL32(150, 180, 255, 255);
+                drawList->AddRect(pos, ImVec2(pos.x + buttonSize.x, pos.y + buttonSize.y),
+                                 highlightColor, 5.0f, 0, 2.0f);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("%s", dp.name);
+                    ImGui::TextDisabled("%s", dp.description);
+                    ImGui::TextDisabled("%d notes, %d beats", dp.noteCount, dp.lengthBeats);
+                    if (isBeingPreviewed) {
+                        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "PREVIEWING - Click piano roll to place");
+                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.5f, 1.0f), "Press Escape or click here to cancel");
+                    } else {
+                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Click to preview, then click piano roll to place");
+                    }
+                    ImGui::EndTooltip();
+                }
+            }
+
+            // Show "PREVIEW" indicator on the button if active
+            if (isBeingPreviewed) {
+                ImU32 previewColor = IM_COL32(100, 255, 150, 255);
+                drawList->AddRectFilled(ImVec2(pos.x + buttonSize.x - 55, pos.y + 2),
+                                        ImVec2(pos.x + buttonSize.x - 2, pos.y + 14),
+                                        IM_COL32(50, 100, 50, 255), 3.0f);
+                drawList->AddText(ImVec2(pos.x + buttonSize.x - 52, pos.y + 2), previewColor, "PREVIEW");
+            }
+
+            // 2 patterns per row
+            if (i % 2 == 0 && i < g_NumDrumPatterns - 1) {
+                ImGui::SameLine();
+            }
+
+            ImGui::PopID();
+        }
+
+        ImGui::Unindent(10.0f);
+    } else {
+        g_PaletteExpanded_Patterns = false;
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1.0f), "SAMPLE TRACKS (full songs)");
+
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.2f, 0.4f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.4f, 0.3f, 0.5f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.4f, 0.6f, 1.0f));
+
+    if (ImGui::CollapsingHeader("Sample Tracks", g_PaletteExpanded_SampleTracks ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        g_PaletteExpanded_SampleTracks = true;
+        ImGui::Indent(10.0f);
+
+        // Group tracks by genre
+        const char* genres[] = {"Synthwave", "Techno", "Chiptune", "Hip Hop", "Trap", "House", "Reggaeton"};
+        bool* genreExpanded[] = {&g_PaletteExpanded_SynthwaveTracks, &g_PaletteExpanded_TechnoTracks,
+                                 &g_PaletteExpanded_ChiptuneTracks, &g_PaletteExpanded_HipHopTracks,
+                                 &g_PaletteExpanded_TrapTracks, &g_PaletteExpanded_HouseTracks,
+                                 &g_PaletteExpanded_ReggaetonTracks};
+        ImU32 genreColors[] = {
+            IM_COL32(255, 100, 200, 255),  // Synthwave - pink
+            IM_COL32(100, 255, 200, 255),  // Techno - cyan
+            IM_COL32(100, 255, 100, 255),  // Chiptune - green
+            IM_COL32(255, 200, 100, 255),  // Hip Hop - orange
+            IM_COL32(255, 100, 100, 255),  // Trap - red
+            IM_COL32(100, 200, 255, 255),  // House - blue
+            IM_COL32(255, 215, 0, 255),    // Reggaeton - gold
+        };
+
+        for (int g = 0; g < 7; ++g) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(genreColors[g]));
+            if (ImGui::TreeNodeEx(genres[g], *genreExpanded[g] ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+                *genreExpanded[g] = true;
+                ImGui::PopStyleColor();
+
+                // Find all tracks of this genre
+                for (int i = 0; i < g_NumSampleTracks; ++i) {
+                    const SampleTrack& st = g_SampleTracks[i];
+                    if (strcmp(st.genre, genres[g]) != 0) continue;
+
+                    ImGui::PushID(i + 2000);  // Unique ID for sample tracks
+
+                    ImVec2 buttonSize(160, 50);
+                    ImVec2 pos = ImGui::GetCursorScreenPos();
+
+                    // Button colors - purple theme for sample tracks
+                    ImU32 bgColor = IM_COL32(50, 35, 70, 255);
+                    ImU32 borderColor = genreColors[g];
+                    ImU32 textColor = IM_COL32(220, 200, 255, 255);
+
+                    drawList->AddRectFilled(pos, ImVec2(pos.x + buttonSize.x, pos.y + buttonSize.y), bgColor, 5.0f);
+                    drawList->AddRect(pos, ImVec2(pos.x + buttonSize.x, pos.y + buttonSize.y), borderColor, 5.0f, 0, 1.5f);
+
+                    // Track name
+                    drawList->AddText(ImVec2(pos.x + 8, pos.y + 4), textColor, st.name);
+                    // Description in smaller text
+                    ImU32 descColor = IM_COL32(160, 140, 200, 255);
+                    drawList->AddText(ImVec2(pos.x + 8, pos.y + 20), descColor, st.description);
+                    // Note count and BPM
+                    char infoStr[32];
+                    snprintf(infoStr, sizeof(infoStr), "%d notes | %d BPM", st.noteCount, st.bpm);
+                    drawList->AddText(ImVec2(pos.x + 8, pos.y + 34), descColor, infoStr);
+
+                    ImGui::InvisibleButton("##sampletrack", buttonSize);
+
+                    // Check if this track is being previewed
+                    bool isBeingPreviewed = (g_IsSampleTrackPreviewing && g_PreviewSampleTrackIndex == i);
+
+                    if (ImGui::IsItemClicked()) {
+                        if (isBeingPreviewed) {
+                            // Cancel preview if clicking the same track
+                            g_IsSampleTrackPreviewing = false;
+                            g_PreviewSampleTrackIndex = -1;
+                        } else {
+                            // Enter preview mode for this track
+                            g_IsSampleTrackPreviewing = true;
+                            g_PreviewSampleTrackIndex = i;
+                            g_IsPatternPreviewing = false;  // Cancel pattern preview
+                            ui.isPastePreviewing = false;   // Cancel paste preview
+                        }
+                    }
+
+                    if (ImGui::IsItemHovered() || isBeingPreviewed) {
+                        // Highlight on hover or when previewing
+                        ImU32 highlightColor = isBeingPreviewed ? IM_COL32(200, 100, 255, 255) : IM_COL32(180, 150, 255, 255);
+                        drawList->AddRect(pos, ImVec2(pos.x + buttonSize.x, pos.y + buttonSize.y),
+                                         highlightColor, 5.0f, 0, 2.0f);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::BeginTooltip();
+                            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(genreColors[g]), "%s", st.name);
+                            ImGui::TextDisabled("%s - %s", st.genre, st.description);
+                            ImGui::TextDisabled("%d notes, %d beats, suggested BPM: %d", st.noteCount, st.lengthBeats, st.bpm);
+                            if (isBeingPreviewed) {
+                                ImGui::TextColored(ImVec4(0.8f, 0.4f, 1.0f, 1.0f), "PREVIEWING - Click piano roll to place");
+                                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.5f, 1.0f), "Press Escape or click here to cancel");
+                            } else {
+                                ImGui::TextColored(ImVec4(0.6f, 0.5f, 0.8f, 1.0f), "Click to preview, then click piano roll to place");
+                            }
+                            ImGui::EndTooltip();
+                        }
+                    }
+
+                    // Show "PREVIEW" indicator on the button if active
+                    if (isBeingPreviewed) {
+                        ImU32 previewColor = IM_COL32(200, 100, 255, 255);
+                        drawList->AddRectFilled(ImVec2(pos.x + buttonSize.x - 55, pos.y + 2),
+                                                ImVec2(pos.x + buttonSize.x - 2, pos.y + 14),
+                                                IM_COL32(80, 40, 100, 255), 3.0f);
+                        drawList->AddText(ImVec2(pos.x + buttonSize.x - 52, pos.y + 2), previewColor, "PREVIEW");
+                    }
+
+                    ImGui::PopID();
+                }
+
+                ImGui::TreePop();
+            } else {
+                *genreExpanded[g] = false;
+                ImGui::PopStyleColor();
+            }
+        }
+
+        ImGui::Unindent(10.0f);
+    } else {
+        g_PaletteExpanded_SampleTracks = false;
+    }
+    ImGui::PopStyleColor(3);
 
     ImGui::Separator();
 

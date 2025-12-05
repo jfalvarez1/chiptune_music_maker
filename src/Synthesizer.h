@@ -39,6 +39,7 @@ struct Voice {
     // Note timing
     float startTime = 0.0f;
     float releaseTime = 0.0f;
+    float realTimeElapsed = 0.0f;  // Real time elapsed since noteOn (for preview cutoff)
 
     // Fade in/out (in seconds)
     float fadeInDuration = 0.0f;
@@ -54,6 +55,7 @@ struct Voice {
         envStage = EnvStage::Off;
         envLevel = 0.0f;
         envTime = 0.0f;
+        realTimeElapsed = 0.0f;
         lfsr = 0x0001;
         fadeInDuration = 0.0f;
         fadeOutDuration = 0.0f;
@@ -77,6 +79,30 @@ inline bool isSynthType(OscillatorType type) {
         case OscillatorType::SynthBrass:
         case OscillatorType::SynthChip:
         case OscillatorType::SynthBell:
+        case OscillatorType::SynthwaveLead:
+        case OscillatorType::SynthwaveBass:
+        case OscillatorType::SynthwavePad:
+        case OscillatorType::SynthwaveArp:
+        case OscillatorType::SynthwaveChord:
+        case OscillatorType::SynthwaveFM:
+        // Techno/Electronic
+        case OscillatorType::AcidBass:
+        case OscillatorType::TechnoStab:
+        case OscillatorType::Hoover:
+        case OscillatorType::RaveChord:
+        case OscillatorType::Reese:
+        // Hip Hop
+        case OscillatorType::SubBass808:
+        case OscillatorType::LoFiKeys:
+        case OscillatorType::VinylNoise:
+        case OscillatorType::TrapLead:
+        // Additional Synthwave
+        case OscillatorType::GatedPad:
+        case OscillatorType::PolySynth:
+        case OscillatorType::SyncLead:
+        // Reggaeton synths
+        case OscillatorType::ReggaetonBass:
+        case OscillatorType::LatinBrass:
             return true;
         default:
             return false;
@@ -109,6 +135,11 @@ inline bool isDrumType(OscillatorType type) {
         case OscillatorType::Conga:
         case OscillatorType::Maracas:
         case OscillatorType::Tambourine:
+        // Reggaeton drums
+        case OscillatorType::Guira:
+        case OscillatorType::Bongo:
+        case OscillatorType::Timbale:
+        case OscillatorType::Dembow808:
             return true;
         default:
             return false;
@@ -139,6 +170,11 @@ inline float getDrumDecayTime(OscillatorType type) {
         case OscillatorType::Conga:      return 0.4f;
         case OscillatorType::Maracas:    return 0.1f;
         case OscillatorType::Tambourine: return 0.2f;
+        // Reggaeton drums
+        case OscillatorType::Guira:      return 0.15f;
+        case OscillatorType::Bongo:      return 0.3f;
+        case OscillatorType::Timbale:    return 0.25f;
+        case OscillatorType::Dembow808:  return 0.6f;
         default:                         return 0.5f;
     }
 }
@@ -202,6 +238,7 @@ public:
             v.envStage = Voice::EnvStage::Attack;
             v.envTime = 0.0f;
             v.envLevel = 0.0f;
+            v.realTimeElapsed = 0.0f;
             v.lfsr = 0x0001;
 
             // Fade parameters
@@ -270,6 +307,21 @@ public:
                     voice.active = false;
                 }
             } else {
+                // Track real time elapsed (independent of playback state and envelope stages)
+                voice.realTimeElapsed += 1.0f / m_sampleRate;
+
+                // Auto-release synth notes when their duration is reached (for preview)
+                if (voice.noteDuration > 0.0f) {
+                    if (voice.realTimeElapsed >= voice.noteDuration && voice.envStage != Voice::EnvStage::Release) {
+                        voice.envStage = Voice::EnvStage::Release;
+                        voice.envTime = 0.0f;  // Reset envelope time for release phase
+                    }
+                    // Hard cutoff: deactivate after duration + short release time
+                    if (voice.realTimeElapsed >= voice.noteDuration + 0.2f) {
+                        voice.active = false;
+                        continue;  // Skip processing this voice
+                    }
+                }
                 envGain = processEnvelope(voice);
             }
 
@@ -359,6 +411,10 @@ private:
 
             case OscillatorType::Noise:
                 sample = generateNoise(voice);
+                break;
+
+            case OscillatorType::Supersaw:
+                sample = generateSupersaw(voice);
                 break;
 
             case OscillatorType::Custom:
@@ -471,6 +527,88 @@ private:
             case OscillatorType::SynthBell:
                 sample = generateSynthBell(voice);
                 break;
+
+            // Synthwave Presets
+            case OscillatorType::SynthwaveLead:
+                sample = generateSynthwaveLead(voice);
+                break;
+            case OscillatorType::SynthwaveBass:
+                sample = generateSynthwaveBass(voice);
+                break;
+            case OscillatorType::SynthwavePad:
+                sample = generateSynthwavePad(voice);
+                break;
+            case OscillatorType::SynthwaveArp:
+                sample = generateSynthwaveArp(voice);
+                break;
+            case OscillatorType::SynthwaveChord:
+                sample = generateSynthwaveChord(voice);
+                break;
+            case OscillatorType::SynthwaveFM:
+                sample = generateSynthwaveFM(voice);
+                break;
+
+            // Techno/Electronic Presets
+            case OscillatorType::AcidBass:
+                sample = generateAcidBass(voice);
+                break;
+            case OscillatorType::TechnoStab:
+                sample = generateTechnoStab(voice);
+                break;
+            case OscillatorType::Hoover:
+                sample = generateHoover(voice);
+                break;
+            case OscillatorType::RaveChord:
+                sample = generateRaveChord(voice);
+                break;
+            case OscillatorType::Reese:
+                sample = generateReese(voice);
+                break;
+
+            // Hip Hop Presets
+            case OscillatorType::SubBass808:
+                sample = generateSubBass808(voice);
+                break;
+            case OscillatorType::LoFiKeys:
+                sample = generateLoFiKeys(voice);
+                break;
+            case OscillatorType::VinylNoise:
+                sample = generateVinylNoise(voice);
+                break;
+            case OscillatorType::TrapLead:
+                sample = generateTrapLead(voice);
+                break;
+
+            // Additional Synthwave
+            case OscillatorType::GatedPad:
+                sample = generateGatedPad(voice);
+                break;
+            case OscillatorType::PolySynth:
+                sample = generatePolySynth(voice);
+                break;
+            case OscillatorType::SyncLead:
+                sample = generateSyncLead(voice);
+                break;
+
+            // Reggaeton Instruments
+            case OscillatorType::ReggaetonBass:
+                sample = generateReggaetonBass(voice);
+                break;
+            case OscillatorType::LatinBrass:
+                sample = generateLatinBrass(voice);
+                break;
+            case OscillatorType::Guira:
+                sample = generateGuira(voice);
+                break;
+            case OscillatorType::Bongo:
+                sample = generateBongo(voice);
+                break;
+            case OscillatorType::Timbale:
+                sample = generateTimbale(voice);
+                break;
+            case OscillatorType::Dembow808:
+                sample = generateDembow808(voice);
+                break;
         }
 
         // Advance phase
@@ -549,6 +687,32 @@ private:
         return 0.0f;
     }
 
+    // Supersaw - 7 detuned sawtooth oscillators for massive sound
+    float generateSupersaw(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // 7 oscillators with carefully chosen detuning (in semitones equivalent)
+        // Center oscillator + 3 pairs at increasing detune
+        const float detunes[] = { 0.0f, -0.015f, 0.015f, -0.030f, 0.030f, -0.008f, 0.008f };
+        const float gains[] = { 1.0f, 0.8f, 0.8f, 0.6f, 0.6f, 0.9f, 0.9f };
+
+        float mix = 0.0f;
+        for (int i = 0; i < 7; ++i) {
+            // Each oscillator has slight phase offset based on detune
+            float phase = std::fmod(t * (1.0f + detunes[i]) + std::abs(detunes[i]) * 0.5f + 1.0f, 1.0f);
+
+            // Generate saw with PolyBLEP
+            float saw = 2.0f * phase - 1.0f;
+            saw -= polyBlep(phase, dt * (1.0f + detunes[i]));
+
+            mix += saw * gains[i];
+        }
+
+        // Normalize and add slight warmth
+        return std::tanh(mix * 0.14f * 1.3f);
+    }
+
     // ========================================================================
     // Drum Synthesis - Classic chiptune/8-bit style
     // ========================================================================
@@ -610,27 +774,38 @@ private:
     float generateHiHat(Voice& voice) {
         float noteTime = voice.envTime;
 
-        // Very fast decay - classic closed hi-hat
-        float envelope = std::exp(-noteTime * 50.0f);
+        // Set fixed phase increment for hi-hat (must be FIRST, before using phase)
+        voice.phaseIncrement = 800.0f / m_sampleRate;
+
+        // Fast decay with high-frequency emphasis at start for immediate "tss" attack
+        // The decay is tuned so even short notes have the characteristic hi-hat sound
+        float envelope = std::exp(-noteTime * 40.0f);
+
+        // Immediate high-frequency burst at the very start (the "t" of "tss")
+        float attack = noteTime < 0.005f ? (1.0f - noteTime / 0.005f) * 0.5f : 0.0f;
+
+        // Use envTime-based phase for metallic sound (independent of MIDI note pitch)
+        // Higher frequencies for brighter, more cutting "tss" sound
+        float metallicPhase = noteTime * 1200.0f;  // 1200Hz base frequency (brighter)
 
         // Multiple square waves at inharmonic frequencies for metallic ring
         float metallic = 0.0f;
-        metallic += (std::fmod(voice.phase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
-        metallic += (std::fmod(voice.phase * 1.47f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
-        metallic += (std::fmod(voice.phase * 1.83f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+        metallic += (std::fmod(metallicPhase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        metallic += (std::fmod(metallicPhase * 1.47f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        metallic += (std::fmod(metallicPhase * 1.83f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        metallic += (std::fmod(metallicPhase * 2.67f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;  // Extra high harmonic
 
         // Short-mode LFSR noise for that classic metallic hi-hat sound
+        // Generate more noise samples per audio sample for denser, brighter noise
         float noise = 0.0f;
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 12; ++i) {
             uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;  // Short mode = metallic
             voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
 
-        // High frequency phase for brightness
-        voice.phaseIncrement = 800.0f / m_sampleRate;
-
-        return (noise * 0.6f + metallic * 0.4f) * envelope;
+        // Mix with more noise for that sizzly character, plus the attack burst
+        return (noise * 0.65f + metallic * 0.35f) * envelope + attack * noise;
     }
 
     // Tom drum - pitched "bom" with resonance
@@ -812,15 +987,21 @@ private:
     float generateHiHatOpen(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Set fixed phase increment (must be FIRST)
+        voice.phaseIncrement = 800.0f / m_sampleRate;
+
         // Longer decay than closed
         float envelope = std::exp(-noteTime * 10.0f);
 
+        // Use envTime-based phase for consistent metallic sound
+        float metallicPhase = noteTime * 800.0f;
+
         // Metallic frequencies
         float metallic = 0.0f;
-        metallic += (std::fmod(voice.phase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
-        metallic += (std::fmod(voice.phase * 1.47f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
-        metallic += (std::fmod(voice.phase * 1.83f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
-        metallic += (std::fmod(voice.phase * 2.17f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        metallic += (std::fmod(metallicPhase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+        metallic += (std::fmod(metallicPhase * 1.47f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+        metallic += (std::fmod(metallicPhase * 1.83f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+        metallic += (std::fmod(metallicPhase * 2.17f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
 
         // Noise
         float noise = 0.0f;
@@ -830,32 +1011,39 @@ private:
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
 
-        voice.phaseIncrement = 800.0f / m_sampleRate;
-
         return (noise * 0.5f + metallic * 0.5f) * envelope;
     }
 
-    // HiHatPedal - Very short, muted
+    // HiHatPedal - Very short, muted but still sounds like a hi-hat
     float generateHiHatPedal(Voice& voice) {
         float noteTime = voice.envTime;
 
-        // Ultra-fast decay
-        float envelope = std::exp(-noteTime * 100.0f);
+        // Set fixed phase increment (must be FIRST)
+        voice.phaseIncrement = 900.0f / m_sampleRate;
 
-        // Minimal metallic
-        float metallic = (std::fmod(voice.phase * 1.5f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.3f;
+        // Fast decay but not so fast that it sounds like a click
+        float envelope = std::exp(-noteTime * 60.0f);
 
-        // Muted noise
+        // Quick attack burst for immediate "tick" character
+        float attack = noteTime < 0.003f ? (1.0f - noteTime / 0.003f) * 0.4f : 0.0f;
+
+        // Use envTime-based phase for consistent metallic sound
+        float metallicPhase = noteTime * 900.0f;
+
+        // Metallic with higher frequencies for brightness
+        float metallic = 0.0f;
+        metallic += (std::fmod(metallicPhase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+        metallic += (std::fmod(metallicPhase * 1.6f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+
+        // Denser noise for that "chick" sound
         float noise = 0.0f;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 8; ++i) {
             uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
             voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
         }
-        noise = ((voice.lfsr & 1) ? 1.0f : -1.0f) * 0.5f;
+        noise = ((voice.lfsr & 1) ? 1.0f : -1.0f) * 0.6f;
 
-        voice.phaseIncrement = 600.0f / m_sampleRate;
-
-        return (noise + metallic) * envelope;
+        return (noise * 0.6f + metallic * 0.4f) * envelope + attack * noise;
     }
 
     // TomLow - Floor tom
@@ -902,19 +1090,25 @@ private:
     float generateCrash(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Set fixed phase increment (must be FIRST)
+        voice.phaseIncrement = 1000.0f / m_sampleRate;
+
         // Long decay
         float envelope = std::exp(-noteTime * 3.0f);
 
         // Initial burst
         float attack = (noteTime < 0.01f) ? (1.0f + 2.0f * (1.0f - noteTime / 0.01f)) : 1.0f;
 
+        // Use envTime-based phase for consistent metallic sound
+        float metallicPhase = noteTime * 1000.0f;
+
         // Complex metallic frequencies
         float metallic = 0.0f;
-        metallic += (std::fmod(voice.phase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
-        metallic += (std::fmod(voice.phase * 1.34f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
-        metallic += (std::fmod(voice.phase * 1.87f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
-        metallic += (std::fmod(voice.phase * 2.43f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;
-        metallic += (std::fmod(voice.phase * 3.17f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.08f;
+        metallic += (std::fmod(metallicPhase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        metallic += (std::fmod(metallicPhase * 1.34f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        metallic += (std::fmod(metallicPhase * 1.87f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
+        metallic += (std::fmod(metallicPhase * 2.43f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;
+        metallic += (std::fmod(metallicPhase * 3.17f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.08f;
 
         // Noise
         float noise = 0.0f;
@@ -924,8 +1118,6 @@ private:
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
 
-        voice.phaseIncrement = 1000.0f / m_sampleRate;
-
         return (noise * 0.4f + metallic * 0.6f) * envelope * attack;
     }
 
@@ -933,17 +1125,23 @@ private:
     float generateRide(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Set fixed phase increment (must be FIRST)
+        voice.phaseIncrement = 900.0f / m_sampleRate;
+
         // Medium-long decay with sustain
         float envelope = std::exp(-noteTime * 5.0f);
 
+        // Use envTime-based phase for consistent sound
+        float metallicPhase = noteTime * 900.0f;
+
         // Ping attack
-        float ping = std::sin(voice.phase * TWO_PI * 3.0f) * std::exp(-noteTime * 30.0f) * 0.4f;
+        float ping = std::sin(metallicPhase * TWO_PI * 3.0f) * std::exp(-noteTime * 30.0f) * 0.4f;
 
         // Metallic sustain
         float metallic = 0.0f;
-        metallic += (std::fmod(voice.phase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
-        metallic += (std::fmod(voice.phase * 1.5f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
-        metallic += (std::fmod(voice.phase * 2.1f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;
+        metallic += (std::fmod(metallicPhase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
+        metallic += (std::fmod(metallicPhase * 1.5f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
+        metallic += (std::fmod(metallicPhase * 2.1f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;
 
         // Light noise
         float noise = 0.0f;
@@ -952,8 +1150,6 @@ private:
             voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f) * 0.2f;
-
-        voice.phaseIncrement = 900.0f / m_sampleRate;
 
         return (ping + metallic + noise) * envelope;
     }
@@ -964,12 +1160,13 @@ private:
 
         float envelope = std::exp(-noteTime * 15.0f);
 
-        // Two detuned square waves (classic 808 cowbell frequencies)
+        // Two detuned square waves at fixed frequencies (classic 808 cowbell)
         float freq1 = 587.0f;  // D5
         float freq2 = 845.0f;  // Slightly sharp G#5
 
-        float osc1 = (std::fmod(voice.phase * freq1 / voice.frequency, 1.0f) < 0.5f) ? 1.0f : -1.0f;
-        float osc2 = (std::fmod(voice.phase * freq2 / voice.frequency, 1.0f) < 0.5f) ? 1.0f : -1.0f;
+        // Use envTime-based oscillators for consistent pitch
+        float osc1 = (std::fmod(noteTime * freq1, 1.0f) < 0.5f) ? 1.0f : -1.0f;
+        float osc2 = (std::fmod(noteTime * freq2, 1.0f) < 0.5f) ? 1.0f : -1.0f;
 
         float sample = (osc1 + osc2 * 0.7f) * 0.4f;
 
@@ -1047,14 +1244,20 @@ private:
     float generateTambourine(Voice& voice) {
         float noteTime = voice.envTime;
 
+        // Set fixed phase increment (must be FIRST)
+        voice.phaseIncrement = 1200.0f / m_sampleRate;
+
         float envelope = std::exp(-noteTime * 25.0f);
+
+        // Use envTime-based phase for consistent jingle sound
+        float jinglePhase = noteTime * 1200.0f;
 
         // Multiple metallic jingles
         float jingle = 0.0f;
-        jingle += (std::fmod(voice.phase * 2.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
-        jingle += (std::fmod(voice.phase * 2.73f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
-        jingle += (std::fmod(voice.phase * 3.41f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
-        jingle += (std::fmod(voice.phase * 4.17f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;
+        jingle += (std::fmod(jinglePhase * 2.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        jingle += (std::fmod(jinglePhase * 2.73f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        jingle += (std::fmod(jinglePhase * 3.41f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
+        jingle += (std::fmod(jinglePhase * 4.17f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;
 
         // Noise component
         float noise = 0.0f;
@@ -1063,8 +1266,6 @@ private:
             voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f) * 0.3f;
-
-        voice.phaseIncrement = 1200.0f / m_sampleRate;
 
         return (jingle + noise) * envelope;
     }
@@ -1240,6 +1441,615 @@ private:
         float shimmer = std::sin(t * TWO_PI * 5.0f) * 0.15f;
 
         return (carrier * 0.7f + shimmer) * 0.8f;
+    }
+
+    // ========================================================================
+    // Synthwave Preset Generators
+    // ========================================================================
+
+    // SynthwaveLead - Bright PWM lead with warmth (classic 80s lead)
+    float generateSynthwaveLead(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Animated PWM (pulse width modulation)
+        float pwmLfo = 0.3f + 0.2f * std::sin(voice.envTime * 4.0f);  // PWM between 0.1 and 0.5
+
+        // Main pulse with animated width
+        float pulse = (t < pwmLfo) ? 1.0f : -1.0f;
+        pulse += polyBlep(t, dt);
+        pulse -= polyBlep(std::fmod(t + (1.0f - pwmLfo), 1.0f), dt);
+
+        // Add bright saw for cut-through
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        // Slight octave-up for brightness
+        float octUp = std::sin(t * TWO_PI * 2.0f) * 0.15f;
+
+        return (pulse * 0.5f + saw * 0.3f + octUp) * 0.75f;
+    }
+
+    // SynthwaveBass - Deep 808-style saw bass with sub
+    float generateSynthwaveBass(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Strong sub sine (foundation)
+        float sub = std::sin(t * TWO_PI) * 0.7f;
+
+        // Saw for harmonics and grit
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        // Slight detuned saw for thickness
+        float detune = 0.005f;
+        float saw2 = 2.0f * std::fmod(t + detune, 1.0f) - 1.0f;
+        saw2 -= polyBlep(std::fmod(t + detune, 1.0f), dt);
+
+        // Soft saturation for warmth
+        float mix = sub + (saw + saw2) * 0.25f;
+        return std::tanh(mix * 1.2f) * 0.8f;
+    }
+
+    // SynthwavePad - Warm lush evolving pad (classic synthwave atmosphere)
+    float generateSynthwavePad(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Multiple detuned saws (supersaw-lite)
+        float detunes[] = { 0.0f, 0.006f, -0.006f, 0.012f, -0.012f, 0.003f, -0.003f };
+        float mix = 0.0f;
+
+        for (float detune : detunes) {
+            float phase = std::fmod(t + detune + 1.0f, 1.0f);
+            float saw = 2.0f * phase - 1.0f;
+            saw -= polyBlep(phase, dt);
+            mix += saw;
+        }
+
+        // Slow LFO for movement
+        float lfo = 0.3f * std::sin(voice.envTime * 1.5f);
+
+        // Add soft sine layer
+        float sine = std::sin(t * TWO_PI) * 0.3f;
+
+        return (mix * 0.12f + sine * (1.0f + lfo * 0.3f)) * 0.7f;
+    }
+
+    // SynthwaveArp - Crisp sequence/arp sound (tight and punchy)
+    float generateSynthwaveArp(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Tight 12.5% pulse (classic arp sound)
+        float width = 0.125f;
+        float pulse = (t < width) ? 1.0f : -1.0f;
+        pulse += polyBlep(t, dt);
+        pulse -= polyBlep(std::fmod(t + (1.0f - width), 1.0f), dt);
+
+        // Add a bit of saw for edge
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        // Octave up sine for shimmer
+        float shimmer = std::sin(t * TWO_PI * 2.0f) * 0.1f;
+
+        return (pulse * 0.6f + saw * 0.2f + shimmer) * 0.8f;
+    }
+
+    // SynthwaveChord - Polyphonic stab for chords (80s poly synth)
+    float generateSynthwaveChord(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // PWM with slow modulation
+        float pwm = 0.45f + 0.1f * std::sin(voice.envTime * 2.0f);
+
+        // Two slightly detuned pulses
+        float pulse1 = (t < pwm) ? 1.0f : -1.0f;
+        pulse1 += polyBlep(t, dt);
+        pulse1 -= polyBlep(std::fmod(t + (1.0f - pwm), 1.0f), dt);
+
+        float phase2 = std::fmod(t + 0.004f, 1.0f);
+        float pulse2 = (phase2 < pwm) ? 1.0f : -1.0f;
+        pulse2 += polyBlep(phase2, dt);
+        pulse2 -= polyBlep(std::fmod(phase2 + (1.0f - pwm), 1.0f), dt);
+
+        // Add sine for warmth
+        float sine = std::sin(t * TWO_PI) * 0.2f;
+
+        // Subtle chorus-like detuning
+        float chorus = std::sin(t * TWO_PI * 1.003f) * 0.1f;
+
+        return ((pulse1 + pulse2) * 0.35f + sine + chorus) * 0.7f;
+    }
+
+    // SynthwaveFM - Classic DX7-style FM brass/keys
+    float generateSynthwaveFM(Voice& voice) {
+        float t = voice.phase;
+
+        // Classic FM algorithm: 2 operators
+        // Modulator -> Carrier
+
+        // Operator 2 (modulator) - ratio 2:1 or 3:1 for brass
+        float modRatio = 2.0f;
+        float modIndex = 2.5f + 0.5f * std::sin(voice.envTime * 3.0f);  // Animated mod index
+
+        float modulator = std::sin(t * TWO_PI * modRatio);
+
+        // Operator 1 (carrier)
+        float carrier = std::sin(t * TWO_PI + modulator * modIndex);
+
+        // Add second carrier at slight detune for thickness
+        float carrier2 = std::sin(t * TWO_PI * 1.002f + modulator * modIndex * 0.8f);
+
+        // Optional: Add brightness with higher ratio modulator
+        float brightMod = std::sin(t * TWO_PI * 4.0f) * 0.3f;
+        float bright = std::sin(t * TWO_PI * 2.0f + brightMod) * 0.15f;
+
+        return (carrier * 0.5f + carrier2 * 0.3f + bright) * 0.75f;
+    }
+
+    // ========================================================================
+    // Techno/Electronic Generators
+    // ========================================================================
+
+    // AcidBass - TB-303 style resonant bass with filter sweep
+    float generateAcidBass(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Base sawtooth
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        // Resonant filter simulation with envelope
+        float filterEnv = std::exp(-voice.envTime * 4.0f);  // Fast decay
+        float cutoff = 0.2f + 0.6f * filterEnv;  // Filter opens then closes
+
+        // Simple resonant lowpass approximation
+        static float filterState = 0.0f;
+        float resonance = 0.85f;
+        filterState += cutoff * (saw - filterState + resonance * (filterState - filterState));
+        float filtered = filterState + (saw - filterState) * cutoff;
+
+        // Add some squelch/accent
+        float accent = 1.0f + filterEnv * 0.5f;
+
+        return std::tanh(filtered * accent * 1.5f) * 0.8f;
+    }
+
+    // TechnoStab - Short chord stab
+    float generateTechnoStab(Voice& voice) {
+        float t = voice.phase;
+
+        // Minor chord stab (root, minor 3rd, 5th)
+        float root = std::sin(t * TWO_PI);
+        float minor3rd = std::sin(t * TWO_PI * 1.189f);  // ~3 semitones up
+        float fifth = std::sin(t * TWO_PI * 1.498f);     // ~7 semitones up
+
+        // Add saw for edge
+        float saw = (2.0f * t - 1.0f) * 0.3f;
+
+        // Quick decay for stab effect
+        float stab = std::exp(-voice.envTime * 8.0f);
+
+        return ((root + minor3rd * 0.8f + fifth * 0.6f) * 0.25f + saw) * stab * 0.9f;
+    }
+
+    // Hoover - Classic rave hoover/reese sound
+    float generateHoover(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Multiple detuned saws (the classic hoover sound)
+        const float detunes[] = { 0.0f, -0.03f, 0.03f, -0.06f, 0.06f, -0.01f, 0.01f };
+        float mix = 0.0f;
+
+        for (int i = 0; i < 7; ++i) {
+            float phase = std::fmod(t * (1.0f + detunes[i]) + i * 0.1f, 1.0f);
+            float saw = 2.0f * phase - 1.0f;
+            mix += saw;
+        }
+
+        // Add some PWM for movement
+        float pwm = std::sin(voice.envTime * 3.0f) * 0.2f + 0.5f;
+        float pulse = (t < pwm) ? 1.0f : -1.0f;
+
+        // Pitch bend down effect (characteristic hoover portamento)
+        float bend = std::exp(-voice.envTime * 0.5f);
+
+        return std::tanh((mix * 0.12f + pulse * 0.15f) * (0.7f + bend * 0.3f)) * 0.85f;
+    }
+
+    // RaveChord - Rave piano/organ chord
+    float generateRaveChord(Voice& voice) {
+        float t = voice.phase;
+
+        // Major chord (root, major 3rd, 5th, octave)
+        float root = std::sin(t * TWO_PI);
+        float major3rd = std::sin(t * TWO_PI * 1.26f);   // ~4 semitones
+        float fifth = std::sin(t * TWO_PI * 1.498f);     // ~7 semitones
+        float octave = std::sin(t * TWO_PI * 2.0f);
+
+        // Add some brightness with higher harmonics
+        float bright = std::sin(t * TWO_PI * 3.0f) * 0.2f + std::sin(t * TWO_PI * 4.0f) * 0.1f;
+
+        // Organ-like attack
+        float attack = 1.0f - std::exp(-voice.envTime * 20.0f);
+
+        return (root * 0.4f + major3rd * 0.3f + fifth * 0.25f + octave * 0.15f + bright) * attack * 0.6f;
+    }
+
+    // Reese - Detuned saw bass (drum & bass style)
+    float generateReese(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Two heavily detuned saws
+        float phase1 = t;
+        float phase2 = std::fmod(t * 1.008f + 0.3f, 1.0f);  // Slight detune
+
+        float saw1 = 2.0f * phase1 - 1.0f;
+        saw1 -= polyBlep(phase1, dt);
+
+        float saw2 = 2.0f * phase2 - 1.0f;
+        saw2 -= polyBlep(phase2, dt * 1.008f);
+
+        // Modulate the detune amount over time (the "reese" wobble)
+        float wobble = std::sin(voice.envTime * 4.0f) * 0.003f;
+        float phase3 = std::fmod(t * (1.0f + wobble) + 0.6f, 1.0f);
+        float saw3 = 2.0f * phase3 - 1.0f;
+
+        return std::tanh((saw1 + saw2 + saw3) * 0.4f) * 0.85f;
+    }
+
+    // ========================================================================
+    // Hip Hop Generators
+    // ========================================================================
+
+    // SubBass808 - Deep 808 sub bass
+    float generateSubBass808(Voice& voice) {
+        float t = voice.phase;
+
+        // Pure sub sine with slight harmonics
+        float sub = std::sin(t * TWO_PI);
+
+        // Add subtle second harmonic for warmth
+        float second = std::sin(t * TWO_PI * 2.0f) * 0.15f;
+
+        // Pitch drop at start (808 characteristic)
+        float pitchEnv = 1.0f + std::exp(-voice.envTime * 15.0f) * 0.3f;
+        float dropped = std::sin(t * TWO_PI * pitchEnv);
+
+        // Soft saturation
+        return std::tanh((dropped * 0.8f + sub * 0.2f + second) * 1.2f) * 0.9f;
+    }
+
+    // LoFiKeys - Dusty lo-fi piano/rhodes
+    float generateLoFiKeys(Voice& voice) {
+        float t = voice.phase;
+
+        // Electric piano-like FM
+        float modulator = std::sin(t * TWO_PI * 7.0f);
+        float carrier = std::sin(t * TWO_PI + modulator * 0.8f);
+
+        // Add second voice for richness
+        float carrier2 = std::sin(t * TWO_PI * 2.0f + modulator * 0.4f);
+
+        // Bell-like decay
+        float decay = std::exp(-voice.envTime * 3.0f);
+
+        // Add noise/dust
+        float noise = (static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f) * 0.02f;
+
+        // Bit crush effect for lo-fi
+        float sample = (carrier * 0.6f + carrier2 * 0.3f) * decay + noise;
+        sample = std::floor(sample * 16.0f) / 16.0f;  // Reduce bit depth
+
+        return sample * 0.7f;
+    }
+
+    // VinylNoise - Vinyl crackle texture
+    float generateVinylNoise(Voice& voice) {
+        // Continuous vinyl texture
+        float noise = (static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f);
+
+        // Crackle (occasional pops)
+        float crackle = 0.0f;
+        if (rand() % 1000 < 3) {  // Occasional pop
+            crackle = (static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f) * 0.5f;
+        }
+
+        // Rumble (low frequency content)
+        float rumble = std::sin(voice.phase * TWO_PI * 0.1f) * 0.1f;
+
+        // High-pass the noise for hiss
+        static float hissFilter = 0.0f;
+        hissFilter = hissFilter * 0.95f + noise * 0.05f;
+        float hiss = noise - hissFilter;
+
+        return (hiss * 0.3f + crackle + rumble) * 0.4f;
+    }
+
+    // TrapLead - Trap-style plucky lead
+    float generateTrapLead(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Square wave base
+        float square = (t < 0.5f) ? 1.0f : -1.0f;
+        square += polyBlep(t, dt);
+        square -= polyBlep(std::fmod(t + 0.5f, 1.0f), dt);
+
+        // Add portamento/pitch slide feel
+        float pitchEnv = 1.0f + std::exp(-voice.envTime * 20.0f) * 0.15f;
+
+        // Plucky envelope
+        float pluck = std::exp(-voice.envTime * 6.0f);
+
+        // Add some harmonics
+        float octave = std::sin(t * TWO_PI * 2.0f * pitchEnv) * 0.3f;
+
+        return (square * 0.6f + octave) * pluck * 0.8f;
+    }
+
+    // ========================================================================
+    // Additional Synthwave Generators
+    // ========================================================================
+
+    // GatedPad - Rhythmic gated pad
+    float generateGatedPad(Voice& voice) {
+        float t = voice.phase;
+
+        // Lush pad base (multiple detuned sines)
+        float pad1 = std::sin(t * TWO_PI);
+        float pad2 = std::sin(t * TWO_PI * 1.002f);
+        float pad3 = std::sin(t * TWO_PI * 0.998f);
+        float pad4 = std::sin(t * TWO_PI * 2.0f) * 0.3f;  // Octave
+
+        float pad = (pad1 + pad2 + pad3) * 0.3f + pad4;
+
+        // Gate effect (rhythmic amplitude modulation)
+        // Simulate 1/8 note gate at ~120 BPM (4 gates per second)
+        float gateFreq = 4.0f;
+        float gate = (std::sin(voice.envTime * TWO_PI * gateFreq) > 0.0f) ? 1.0f : 0.2f;
+
+        // Smooth the gate slightly
+        static float gateSmooth = 1.0f;
+        gateSmooth += (gate - gateSmooth) * 0.1f;
+
+        return pad * gateSmooth * 0.7f;
+    }
+
+    // PolySynth - Rich polyphonic synth
+    float generatePolySynth(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Saw + Pulse combo
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        float pwm = std::sin(voice.envTime * 2.0f) * 0.15f + 0.5f;
+        float pulse = (t < pwm) ? 1.0f : -1.0f;
+
+        // Sub oscillator
+        float sub = std::sin(t * TWO_PI * 0.5f) * 0.4f;
+
+        // Detuned layer
+        float detunedPhase = std::fmod(t * 1.003f + 0.25f, 1.0f);
+        float detuned = 2.0f * detunedPhase - 1.0f;
+
+        // Filter-like envelope
+        float brightness = 0.3f + 0.7f * std::exp(-voice.envTime * 2.0f);
+
+        return ((saw * 0.3f + pulse * 0.25f + detuned * 0.2f) * brightness + sub) * 0.7f;
+    }
+
+    // SyncLead - Hard sync lead sound
+    float generateSyncLead(Voice& voice) {
+        float t = voice.phase;
+
+        // Hard sync: slave oscillator resets when master completes cycle
+        // Simulate by using master as reset trigger
+        float masterFreq = 1.0f;
+        float slaveRatio = 2.5f + std::sin(voice.envTime * 3.0f) * 0.5f;  // Animated ratio
+
+        float masterPhase = t;
+        float slavePhase = std::fmod(t * slaveRatio, 1.0f);
+
+        // Slave waveform (saw)
+        float slave = 2.0f * slavePhase - 1.0f;
+
+        // Add brightness based on sync ratio
+        float harmonic = std::sin(slavePhase * TWO_PI * 2.0f) * 0.3f;
+
+        // Characteristic sync "bark" at attack
+        float bark = std::exp(-voice.envTime * 10.0f) * 0.3f;
+
+        return (slave * 0.6f + harmonic + bark * std::sin(t * TWO_PI * 5.0f)) * 0.75f;
+    }
+
+    // ========================================================================
+    // Reggaeton Instrument Generators
+    // ========================================================================
+
+    // ReggaetonBass - Deep punchy bass with 808-style pitch sweep and characteristic "perreo" sound
+    float generateReggaetonBass(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Strong sub sine (foundation)
+        float sub = std::sin(t * TWO_PI) * 0.8f;
+
+        // Pitch drop at start (808-style attack)
+        float pitchEnv = 1.0f + std::exp(-voice.envTime * 12.0f) * 0.4f;
+        float dropped = std::sin(t * TWO_PI * pitchEnv);
+
+        // Add sawtooth harmonics for presence
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        // Square wave for punch
+        float sq = (t < 0.5f) ? 1.0f : -1.0f;
+        sq += polyBlep(t, dt);
+        sq -= polyBlep(std::fmod(t + 0.5f, 1.0f), dt);
+
+        // Mix with heavy saturation for that reggaeton punch
+        float mix = dropped * 0.5f + sub * 0.3f + saw * 0.15f + sq * 0.1f;
+        return std::tanh(mix * 2.0f) * 0.85f;
+    }
+
+    // LatinBrass - Punchy brass stab for reggaeton hooks and perreo breaks
+    float generateLatinBrass(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Main sawtooth for brass character
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        // Square for body
+        float sq = (t < 0.5f) ? 1.0f : -1.0f;
+        sq += polyBlep(t, dt);
+        sq -= polyBlep(std::fmod(t + 0.5f, 1.0f), dt);
+
+        // Add harmonics for brass character
+        float harm2 = std::sin(t * TWO_PI * 2.0f) * 0.4f;
+        float harm3 = std::sin(t * TWO_PI * 3.0f) * 0.2f;
+        float harm4 = std::sin(t * TWO_PI * 4.0f) * 0.1f;
+
+        // Brightness envelope (opens up then closes for stab feel)
+        float brightness = 0.4f + 0.6f * std::exp(-voice.envTime * 3.0f);
+
+        // Slight detuned layer for thickness
+        float phase2 = std::fmod(t + 0.003f, 1.0f);
+        float saw2 = 2.0f * phase2 - 1.0f;
+
+        float mix = (saw * 0.4f + sq * 0.2f + saw2 * 0.15f + harm2 + harm3 + harm4) * brightness;
+        return std::tanh(mix * 1.3f) * 0.8f;
+    }
+
+    // Guira - Scraped metal percussion essential for dembow rhythm
+    float generateGuira(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Set fixed phase increment
+        voice.phaseIncrement = 1500.0f / m_sampleRate;
+
+        // Fast decay for the scrape
+        float envelope = std::exp(-noteTime * 30.0f);
+
+        // Use envTime-based phase for metallic scrape
+        float scrapePhase = noteTime * 1500.0f;
+
+        // Multiple metallic frequencies for scraping texture
+        float metallic = 0.0f;
+        metallic += (std::fmod(scrapePhase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+        metallic += (std::fmod(scrapePhase * 1.33f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.15f;
+        metallic += (std::fmod(scrapePhase * 2.11f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.12f;
+        metallic += (std::fmod(scrapePhase * 2.89f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.1f;
+
+        // Noisy texture for scraping sound
+        float noise = 0.0f;
+        for (int i = 0; i < 10; ++i) {
+            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
+            voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+        }
+        noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
+
+        return (metallic * 0.5f + noise * 0.5f) * envelope;
+    }
+
+    // Bongo - Latin bongo drums with characteristic pitch and tone
+    float generateBongo(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Medium-fast decay
+        float envelope = std::exp(-noteTime * 15.0f);
+
+        // Pitch envelope for that characteristic bongo "bom"
+        float pitchEnv = std::exp(-noteTime * 25.0f);
+        float basePitch = 400.0f;  // Higher than conga
+        float freq = basePitch * (1.0f + 0.4f * pitchEnv);
+
+        // Main tone
+        float sample = std::sin(voice.phase * TWO_PI);
+        voice.phaseIncrement = freq / m_sampleRate;
+
+        // Add harmonics for body
+        float harm2 = std::sin(voice.phase * TWO_PI * 2.0f) * 0.35f;
+        float harm3 = std::sin(voice.phase * TWO_PI * 3.0f) * 0.2f;
+
+        // Slap attack transient
+        float slap = 0.0f;
+        if (noteTime < 0.003f) {
+            slap = (1.0f - noteTime / 0.003f) * 0.5f;
+        }
+
+        sample = std::tanh((sample + harm2 + harm3) * 1.3f);
+
+        return (sample + slap) * envelope;
+    }
+
+    // Timbale - High-pitched Latin percussion with metallic ring
+    float generateTimbale(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Fast initial decay with some sustain
+        float envelope = std::exp(-noteTime * 20.0f);
+
+        // Use envTime-based phase for consistent pitch
+        float basePitch = 600.0f;  // High pitched
+        float pitchEnv = std::exp(-noteTime * 30.0f);
+        float freq = basePitch * (1.0f + 0.3f * pitchEnv);
+
+        // Main tone with metallic character
+        float tone = std::sin(voice.phase * TWO_PI);
+        voice.phaseIncrement = freq / m_sampleRate;
+
+        // Metallic harmonics
+        float ring1 = std::sin(voice.phase * TWO_PI * 2.23f) * 0.3f;  // Inharmonic
+        float ring2 = std::sin(voice.phase * TWO_PI * 3.47f) * 0.2f;  // Inharmonic
+
+        // Sharp attack click
+        float click = 0.0f;
+        if (noteTime < 0.002f) {
+            click = (1.0f - noteTime / 0.002f) * 0.6f;
+        }
+
+        return (tone + ring1 + ring2 + click) * envelope * 0.7f;
+    }
+
+    // Dembow808 - 808-style kick tuned for dembow rhythm (lower, punchy)
+    float generateDembow808(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Longer decay for that dembow bounce
+        float envelope = std::exp(-noteTime * 6.0f);
+
+        // Deep pitch sweep characteristic of reggaeton
+        float startFreq = 130.0f;
+        float endFreq = 38.0f;
+        float pitchEnv = std::exp(-noteTime * 30.0f);
+        float freq = endFreq + (startFreq - endFreq) * pitchEnv;
+
+        // Generate sine wave with pitch sweep
+        float sample = std::sin(voice.phase * TWO_PI);
+        voice.phaseIncrement = freq / m_sampleRate;
+
+        // Add subtle click for attack
+        float click = 0.0f;
+        if (noteTime < 0.005f) {
+            click = (1.0f - noteTime / 0.005f) * 0.2f;
+        }
+
+        // Warm saturation
+        sample = std::tanh(sample * 1.5f);
+
+        return (sample + click) * envelope;
     }
 
     // ========================================================================
