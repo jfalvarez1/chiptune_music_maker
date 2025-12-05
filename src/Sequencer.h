@@ -11,6 +11,7 @@
 #include "Synthesizer.h"
 #include <array>
 #include <algorithm>
+#include <cstdlib>
 
 namespace ChiptuneTracker {
 
@@ -129,24 +130,45 @@ public:
                 processNoteEvents(prevBeat, m_state.currentBeat);
             }
 
-            // Mix all channels
+            // ============================================================
+            // Two-pass mix for sidechain support
+            // ============================================================
+
+            // Pass 1: Generate all channel samples (pre-sidechain)
+            std::array<float, MAX_CHANNELS> channelSamples = {};
+            for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+                channelSamples[ch] = m_synths[ch].process(m_state.currentTime);
+            }
+
+            // Pass 2: Update sidechain envelopes and apply sidechain compression
+            for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+                auto& fx = m_synths[ch].effects();
+                if (fx.sidechainEnabled && fx.sidechainSource >= 0 && fx.sidechainSource < MAX_CHANNELS) {
+                    // Update envelope from source channel
+                    fx.sidechain.updateEnvelope(channelSamples[fx.sidechainSource]);
+                    // Apply sidechain compression to this channel
+                    channelSamples[ch] = fx.sidechain.process(channelSamples[ch]);
+                }
+            }
+
+            // Pass 3: Mix channels to stereo output
             float left = 0.0f;
             float right = 0.0f;
 
+            // Check for solo state once
+            bool hasSolo = false;
+            for (int c = 0; c < MAX_CHANNELS; ++c) {
+                if (m_project->channels[c].solo) {
+                    hasSolo = true;
+                    break;
+                }
+            }
+
             for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
                 if (m_project->channels[ch].muted) continue;
-
-                // Check solo
-                bool hasSolo = false;
-                for (int c = 0; c < MAX_CHANNELS; ++c) {
-                    if (m_project->channels[c].solo) {
-                        hasSolo = true;
-                        break;
-                    }
-                }
                 if (hasSolo && !m_project->channels[ch].solo) continue;
 
-                float sample = m_synths[ch].process(m_state.currentTime);
+                float sample = channelSamples[ch];
                 float volume = m_project->channels[ch].volume;
                 float pan = m_project->channels[ch].pan;
 
@@ -181,6 +203,28 @@ public:
         if (channel >= 0 && channel < MAX_CHANNELS) {
             m_synths[channel].noteOff(note, m_state.currentTime);
         }
+    }
+
+    // Preview note with specific oscillator type (for sound preview when placing)
+    void previewNote(int note, float velocity, OscillatorType oscType, float durationSec = 0.3f) {
+        // Use a dedicated preview channel (last channel)
+        const int previewChannel = MAX_CHANNELS - 1;
+
+        // Stop any currently playing preview sounds first
+        m_synths[previewChannel].allNotesOff();
+
+        // For drums, use their natural duration
+        if (isDrumType(oscType)) {
+            durationSec = getDrumDecayTime(oscType) * 1.5f;
+        }
+
+        m_synths[previewChannel].noteOn(
+            note, velocity, m_state.currentTime,
+            0.0f,  // fadeIn
+            0.05f, // fadeOut (short fade to avoid clicks)
+            durationSec,
+            oscType
+        );
     }
 
     // ========================================================================
@@ -253,7 +297,8 @@ private:
 
                     m_synths[clip.channelIndex].noteOn(
                         note.pitch, note.velocity, m_state.currentTime,
-                        fadeInSec, fadeOutSec, durationSec);
+                        fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
+                        note.vibrato, note.arpeggio, note.slide);
                 }
 
                 // Note off
@@ -287,20 +332,29 @@ private:
 
     void processPatternNotes(const Pattern& pattern, float fromBeat, float toBeat) {
         for (const auto& note : pattern.notes) {
+            // Apply swing to note start time
+            float swungStart = applySwing(note.startTime);
+
             // Note on
-            if (note.startTime >= fromBeat && note.startTime < toBeat) {
+            if (swungStart >= fromBeat && swungStart < toBeat) {
                 // Convert fade times from beats to seconds
                 float fadeInSec = beatsToSeconds(note.fadeIn);
                 float fadeOutSec = beatsToSeconds(note.fadeOut);
                 float durationSec = beatsToSeconds(note.duration);
 
+                // Apply humanize
+                float startTime = m_state.currentTime;
+                float velocity = note.velocity;
+                applyHumanize(startTime, velocity);
+
                 m_synths[m_previewChannel].noteOn(
-                    note.pitch, note.velocity, m_state.currentTime,
-                    fadeInSec, fadeOutSec, durationSec, note.oscillatorType);
+                    note.pitch, velocity, startTime,
+                    fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
+                    note.vibrato, note.arpeggio, note.slide);
             }
 
-            // Note off
-            float noteEnd = note.startTime + note.duration;
+            // Note off (also swing the end time)
+            float noteEnd = applySwing(note.startTime) + note.duration;
             if (noteEnd >= fromBeat && noteEnd < toBeat) {
                 m_synths[m_previewChannel].noteOff(note.pitch, m_state.currentTime);
             }
@@ -311,6 +365,43 @@ private:
     float beatsToSeconds(float beats) const {
         if (!m_project || m_project->bpm <= 0.0f) return 0.0f;
         return beats * 60.0f / m_project->bpm;
+    }
+
+    // Apply swing to a beat position
+    // Swing shifts off-beat notes forward in time (e.g., 8th note upbeats)
+    float applySwing(float beat) const {
+        if (!m_project || m_project->swing <= 0.0f) return beat;
+
+        float grid = m_project->swingGrid;  // e.g., 0.5 for 8th notes
+        float swing = m_project->swing;     // 0.0 to 1.0
+
+        // Find position within the grid
+        float gridPos = std::fmod(beat, grid * 2.0f);
+
+        // Check if this is an off-beat (second half of the pair)
+        if (gridPos >= grid - 0.001f && gridPos < grid * 2.0f - 0.001f) {
+            // This is an off-beat - shift it forward
+            // Maximum swing (1.0) creates triplet feel (shift by grid/3)
+            float swingOffset = grid * swing * 0.333f;
+            float basePos = std::floor(beat / grid) * grid;
+            float offBeatStart = basePos + grid;
+            return offBeatStart + swingOffset;
+        }
+
+        return beat;
+    }
+
+    // Apply humanize (random timing/velocity variation)
+    void applyHumanize(float& startTime, float& velocity) const {
+        if (!m_project || !m_project->humanize) return;
+
+        // Add random timing variation
+        float timeVariation = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f;
+        startTime += timeVariation * m_project->humanizeAmount;
+
+        // Add random velocity variation
+        float velVariation = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f;
+        velocity = std::max(0.1f, std::min(1.0f, velocity + velVariation * m_project->humanizeVelocity));
     }
 
     // Calculate when the last note in the pattern ends

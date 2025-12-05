@@ -407,6 +407,67 @@ private:
 };
 
 // ============================================================================
+// Sidechain Compressor - Duck signal based on another source (e.g., kick)
+// ============================================================================
+class Sidechain {
+public:
+    float threshold = 0.3f;         // Sidechain signal level to trigger ducking
+    float amount = 0.8f;            // How much to duck (0.0 = none, 1.0 = full silence)
+    float attack = 0.005f;          // Attack time in seconds (how fast to duck)
+    float release = 0.15f;          // Release time in seconds (how fast to return)
+    float sampleRate = 44100.0f;
+
+    void setSampleRate(float sr) {
+        sampleRate = sr;
+    }
+
+    // Update envelope from sidechain source signal
+    void updateEnvelope(float sidechainInput) {
+        float absInput = std::abs(sidechainInput);
+
+        // Envelope follower with separate attack/release
+        if (absInput > m_envelope) {
+            // Attack - rising quickly
+            float attackCoef = std::exp(-1.0f / (attack * sampleRate + 0.001f));
+            m_envelope = attackCoef * m_envelope + (1.0f - attackCoef) * absInput;
+        } else {
+            // Release - falling slowly
+            float releaseCoef = std::exp(-1.0f / (release * sampleRate + 0.001f));
+            m_envelope = releaseCoef * m_envelope + (1.0f - releaseCoef) * absInput;
+        }
+    }
+
+    // Process main signal with current envelope
+    float process(float input) {
+        // Calculate gain reduction based on how much envelope exceeds threshold
+        float overThreshold = std::max(0.0f, m_envelope - threshold);
+        float gainReduction = overThreshold / (1.0f - threshold + 0.001f);  // Normalize to 0-1
+        gainReduction = std::min(1.0f, gainReduction);  // Clamp
+
+        // Apply ducking
+        float gain = 1.0f - (gainReduction * amount);
+        return input * gain;
+    }
+
+    // Get current envelope level (for visualization)
+    float getEnvelope() const { return m_envelope; }
+
+    // Get current gain reduction (for visualization)
+    float getGainReduction() const {
+        float overThreshold = std::max(0.0f, m_envelope - threshold);
+        float gainReduction = overThreshold / (1.0f - threshold + 0.001f);
+        return std::min(1.0f, gainReduction) * amount;
+    }
+
+    void reset() {
+        m_envelope = 0.0f;
+    }
+
+private:
+    float m_envelope = 0.0f;
+};
+
+// ============================================================================
 // Effects Chain - Combines all effects for a channel
 // ============================================================================
 struct EffectsChain {
@@ -419,6 +480,7 @@ struct EffectsChain {
     Tremolo tremolo;
     Phaser phaser;
     RingModulator ringMod;
+    Sidechain sidechain;
 
     // Enable flags
     bool bitcrusherEnabled = false;
@@ -429,11 +491,14 @@ struct EffectsChain {
     bool tremoloEnabled = false;
     bool phaserEnabled = false;
     bool ringModEnabled = false;
+    bool sidechainEnabled = false;
+    int sidechainSource = -1;  // Source channel index (-1 = none)
 
     void setSampleRate(float sr) {
         filter.setSampleRate(sr);
         delay.setSampleRate(sr);
         chorus.setSampleRate(sr);
+        sidechain.setSampleRate(sr);
     }
 
     float process(float input, float time) {
@@ -458,6 +523,7 @@ struct EffectsChain {
         delay.reset();
         chorus.reset();
         phaser.reset();
+        sidechain.reset();
     }
 };
 

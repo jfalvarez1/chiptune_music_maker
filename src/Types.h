@@ -224,6 +224,13 @@ struct Project {
     int beatsPerMeasure = 4;
     float masterVolume = 0.7f;      // Master volume (0.0 to 1.0)
 
+    // Swing/groove settings
+    float swing = 0.0f;             // Swing amount: 0.0 = no swing, 1.0 = max swing (triplet feel)
+    float swingGrid = 0.5f;         // Grid division for swing (0.5 = 8th notes, 0.25 = 16th notes)
+    bool humanize = false;          // Add random timing variation
+    float humanizeAmount = 0.02f;   // Humanize timing variation (beats)
+    float humanizeVelocity = 0.1f;  // Humanize velocity variation (0.0 to 1.0)
+
     std::array<ChannelConfig, MAX_CHANNELS> channels;
     std::vector<Pattern> patterns;
     std::vector<Clip> arrangement;

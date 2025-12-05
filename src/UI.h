@@ -2902,6 +2902,9 @@ inline void DrawThemeBackground(Theme theme, float deltaTime) {
 // Transport Bar
 // ============================================================================
 inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& state, UIState& ui) {
+    // Set initial window position on first use (top-left)
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(350, 120), ImGuiCond_FirstUseEver);
     ImGui::Begin("Transport", nullptr, ImGuiWindowFlags_NoCollapse);
 
     // Row 1: Playback controls
@@ -2958,6 +2961,55 @@ inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& st
         project.masterVolume = masterPct / 100.0f;
     }
 
+    ImGui::Separator();
+
+    // Row 4: Swing/Groove settings
+    ImGui::Text("Swing:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    float swingPct = project.swing * 100.0f;
+    if (ImGui::SliderFloat("##swing", &swingPct, 0.0f, 100.0f, "%.0f%%")) {
+        project.swing = swingPct / 100.0f;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shifts off-beat notes forward for groove feel");
+
+    ImGui::SameLine();
+    ImGui::Text("Grid:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
+    const char* gridItems[] = { "1/8", "1/16", "1/32" };
+    float gridValues[] = { 0.5f, 0.25f, 0.125f };
+    int gridIdx = 0;
+    if (project.swingGrid <= 0.125f) gridIdx = 2;
+    else if (project.swingGrid <= 0.25f) gridIdx = 1;
+    else gridIdx = 0;
+    if (ImGui::Combo("##swingGrid", &gridIdx, gridItems, 3)) {
+        project.swingGrid = gridValues[gridIdx];
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Note grid for swing (8th, 16th, 32nd)");
+
+    ImGui::SameLine();
+    ImGui::Checkbox("Humanize", &project.humanize);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add random timing/velocity variation");
+
+    if (project.humanize) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        float timePct = project.humanizeAmount * 1000.0f;  // Convert to ms
+        if (ImGui::SliderFloat("##humTime", &timePct, 0.0f, 50.0f, "%.0fms")) {
+            project.humanizeAmount = timePct / 1000.0f;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Timing variation amount");
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        float velPct = project.humanizeVelocity * 100.0f;
+        if (ImGui::SliderFloat("##humVel", &velPct, 0.0f, 30.0f, "%.0f%%")) {
+            project.humanizeVelocity = velPct / 100.0f;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Velocity variation amount");
+    }
+
     // Update preview pattern for playback
     seq.setPreviewPattern(ui.selectedPattern, ui.selectedChannel);
 
@@ -2968,6 +3020,9 @@ inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& st
 // File Menu Bar
 // ============================================================================
 inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
+    // Set initial window position on first use (top, next to Transport)
+    ImGui::SetNextWindowPos(ImVec2(370, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(400, 120), ImGuiCond_FirstUseEver);
     ImGui::Begin("File", nullptr, ImGuiWindowFlags_NoCollapse);
 
     // New project
@@ -3221,6 +3276,9 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
 // Piano Roll Editor - Full Featured
 // ============================================================================
 inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
+    // Set initial window position on first use (main center area)
+    ImGui::SetNextWindowPos(ImVec2(220, 140), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(900, 500), ImGuiCond_FirstUseEver);
     ImGui::Begin("Piano Roll", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
     if (ui.selectedPattern < 0 || ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
@@ -3436,6 +3494,160 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             showClearConfirm = false;
             ImGui::CloseCurrentPopup();
         }
+        ImGui::EndPopup();
+    }
+
+    ImGui::SameLine(0, 15);
+
+    // ========================================================================
+    // Hi-Hat Roll Generator Tool
+    // ========================================================================
+    static bool showRollPopup = false;
+    static float rollStartBeat = 0.0f;
+    static float rollEndBeat = 4.0f;
+    static int rollDensity = 2;  // 0=8th, 1=16th, 2=32nd
+    static int rollHatType = 0;  // 0=closed, 1=open, 2=pedal
+    static int rollVelocityMode = 0;  // 0=flat, 1=crescendo, 2=decrescendo
+    static float rollVelocityStart = 0.8f;
+    static float rollVelocityEnd = 0.8f;
+    static int rollPitch = 42;  // Default hi-hat pitch
+
+    if (ImGui::Button("Roll Gen")) {
+        showRollPopup = true;
+        rollStartBeat = std::fmod(seq.getCurrentBeat(), static_cast<float>(pattern.length));
+        rollEndBeat = std::min(rollStartBeat + 2.0f, static_cast<float>(pattern.length));
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Generate hi-hat rolls and fills");
+
+    // Roll generator popup
+    if (showRollPopup) {
+        ImGui::OpenPopup("Roll Generator");
+    }
+    if (ImGui::BeginPopupModal("Roll Generator", &showRollPopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Generate Hi-Hat Roll");
+        ImGui::Separator();
+
+        // Position controls
+        ImGui::Text("Position:");
+        ImGui::SliderFloat("Start (beat)##roll", &rollStartBeat, 0.0f, static_cast<float>(pattern.length) - 0.125f, "%.2f");
+        ImGui::SliderFloat("End (beat)##roll", &rollEndBeat, rollStartBeat + 0.125f, static_cast<float>(pattern.length), "%.2f");
+
+        // Duration presets
+        ImGui::Text("Quick Length:");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("1/4")) { rollEndBeat = std::min(rollStartBeat + 0.25f, static_cast<float>(pattern.length)); }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("1/2")) { rollEndBeat = std::min(rollStartBeat + 0.5f, static_cast<float>(pattern.length)); }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("1 beat")) { rollEndBeat = std::min(rollStartBeat + 1.0f, static_cast<float>(pattern.length)); }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("2 beats")) { rollEndBeat = std::min(rollStartBeat + 2.0f, static_cast<float>(pattern.length)); }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("4 beats")) { rollEndBeat = std::min(rollStartBeat + 4.0f, static_cast<float>(pattern.length)); }
+
+        ImGui::Separator();
+
+        // Density
+        ImGui::Text("Density:");
+        ImGui::RadioButton("8th##roll", &rollDensity, 0); ImGui::SameLine();
+        ImGui::RadioButton("16th##roll", &rollDensity, 1); ImGui::SameLine();
+        ImGui::RadioButton("32nd##roll", &rollDensity, 2); ImGui::SameLine();
+        ImGui::RadioButton("64th##roll", &rollDensity, 3);
+
+        ImGui::Separator();
+
+        // Hi-hat type
+        ImGui::Text("Hi-Hat Type:");
+        ImGui::RadioButton("Closed##hat", &rollHatType, 0); ImGui::SameLine();
+        ImGui::RadioButton("Open##hat", &rollHatType, 1); ImGui::SameLine();
+        ImGui::RadioButton("Pedal##hat", &rollHatType, 2);
+
+        // Pitch
+        ImGui::SliderInt("Pitch##roll", &rollPitch, 36, 84, "MIDI %d");
+
+        ImGui::Separator();
+
+        // Velocity
+        ImGui::Text("Velocity Mode:");
+        ImGui::RadioButton("Flat##vel", &rollVelocityMode, 0); ImGui::SameLine();
+        ImGui::RadioButton("Crescendo##vel", &rollVelocityMode, 1); ImGui::SameLine();
+        ImGui::RadioButton("Decrescendo##vel", &rollVelocityMode, 2);
+
+        if (rollVelocityMode == 0) {
+            ImGui::SliderFloat("Velocity##rollvel", &rollVelocityStart, 0.1f, 1.0f, "%.2f");
+            rollVelocityEnd = rollVelocityStart;
+        } else {
+            ImGui::SliderFloat("Start Velocity##roll", &rollVelocityStart, 0.1f, 1.0f, "%.2f");
+            ImGui::SliderFloat("End Velocity##roll", &rollVelocityEnd, 0.1f, 1.0f, "%.2f");
+        }
+
+        ImGui::Separator();
+
+        // Preview info
+        float stepSize = 0.5f;  // 8th notes
+        if (rollDensity == 1) stepSize = 0.25f;  // 16th
+        else if (rollDensity == 2) stepSize = 0.125f;  // 32nd
+        else if (rollDensity == 3) stepSize = 0.0625f;  // 64th
+
+        int numNotes = static_cast<int>((rollEndBeat - rollStartBeat) / stepSize);
+        ImGui::TextColored(ImVec4(0.7f, 0.9f, 0.7f, 1.0f), "Will generate %d notes", numNotes);
+
+        ImGui::Separator();
+
+        // Generate button
+        if (ImGui::Button("Generate Roll", ImVec2(140, 30))) {
+            // Save state for undo
+            g_UndoHistory.saveState(pattern, ui.selectedPattern);
+
+            // Determine oscillator type
+            OscillatorType hatOsc = OscillatorType::HiHat;
+            if (rollHatType == 1) hatOsc = OscillatorType::HiHatOpen;
+            else if (rollHatType == 2) hatOsc = OscillatorType::HiHatPedal;
+
+            // Generate notes
+            float t = rollStartBeat;
+            int noteIndex = 0;
+            ui.selectedNoteIndices.clear();
+
+            while (t < rollEndBeat - 0.001f) {
+                Note newNote;
+                newNote.startTime = t;
+                newNote.duration = stepSize * 0.8f;  // Slightly shorter than step
+                newNote.pitch = rollPitch;
+                newNote.oscillatorType = hatOsc;
+
+                // Calculate velocity based on mode
+                float progress = (numNotes > 1) ? static_cast<float>(noteIndex) / static_cast<float>(numNotes - 1) : 0.0f;
+                if (rollVelocityMode == 0) {
+                    newNote.velocity = rollVelocityStart;
+                } else if (rollVelocityMode == 1) {
+                    // Crescendo
+                    newNote.velocity = rollVelocityStart + (rollVelocityEnd - rollVelocityStart) * progress;
+                } else {
+                    // Decrescendo
+                    newNote.velocity = rollVelocityStart + (rollVelocityEnd - rollVelocityStart) * progress;
+                }
+
+                pattern.notes.push_back(newNote);
+                ui.selectedNoteIndices.push_back(static_cast<int>(pattern.notes.size()) - 1);
+
+                t += stepSize;
+                noteIndex++;
+            }
+
+            if (!ui.selectedNoteIndices.empty()) {
+                ui.selectedNoteIndex = ui.selectedNoteIndices[0];
+            }
+
+            showRollPopup = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##roll", ImVec2(100, 30))) {
+            showRollPopup = false;
+            ImGui::CloseCurrentPopup();
+        }
+
         ImGui::EndPopup();
     }
 
@@ -4493,6 +4705,8 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 // Tracker View
 // ============================================================================
 inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
+    ImGui::SetNextWindowPos(ImVec2(930, 650), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(480, 200), ImGuiCond_FirstUseEver);
     ImGui::Begin("Tracker", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
     if (ui.selectedPattern < 0 || ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
@@ -4571,17 +4785,81 @@ inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
 // Arrangement Timeline
 // ============================================================================
 inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
+    ImGui::SetNextWindowPos(ImVec2(220, 860), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(900, 200), ImGuiCond_FirstUseEver);
     ImGui::Begin("Arrangement", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
+    // ========================================================================
+    // Toolbar
+    // ========================================================================
+    ImGui::Text("Song Length:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
+    int songLen = static_cast<int>(project.songLength);
+    if (ImGui::InputInt("##songlen", &songLen, 4, 16)) {
+        project.songLength = std::clamp(static_cast<float>(songLen), 4.0f, 256.0f);
+    }
+    ImGui::SameLine();
+    ImGui::Text("beats");
+
+    ImGui::SameLine(0, 20);
+    ImGui::Text("Pattern:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::BeginCombo("##arrpattern", ui.selectedPattern >= 0 && ui.selectedPattern < static_cast<int>(project.patterns.size())
+            ? project.patterns[ui.selectedPattern].name.c_str() : "Select...")) {
+        for (size_t i = 0; i < project.patterns.size(); ++i) {
+            bool isSelected = (static_cast<int>(i) == ui.selectedPattern);
+            if (ImGui::Selectable(project.patterns[i].name.c_str(), isSelected)) {
+                ui.selectedPattern = static_cast<int>(i);
+            }
+            if (isSelected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::SameLine(0, 20);
+    if (ImGui::Button("Clear All##arr")) {
+        project.arrangement.clear();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove all clips from arrangement");
+
+    ImGui::SameLine(0, 10);
+    static int selectedClipIndex = -1;
+    if (selectedClipIndex >= 0 && selectedClipIndex < static_cast<int>(project.arrangement.size())) {
+        if (ImGui::Button("Delete Selected##arr")) {
+            project.arrangement.erase(project.arrangement.begin() + selectedClipIndex);
+            selectedClipIndex = -1;
+        }
+    } else {
+        ImGui::BeginDisabled();
+        ImGui::Button("Delete Selected##arr");
+        ImGui::EndDisabled();
+    }
+
+    ImGui::SameLine(0, 20);
+    ImGui::TextDisabled("Double-click to add clip | Right-click clip to delete | Drag to move");
+
+    ImGui::Separator();
+
+    // ========================================================================
+    // Canvas setup
+    // ========================================================================
     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
-    canvasSize.y = std::max(canvasSize.y, 300.0f);
+    canvasSize.y = std::max(canvasSize.y, 260.0f);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     const float trackHeight = 30.0f;
     const float headerWidth = 100.0f;
     const float beatWidth = 20.0f * ui.zoomX;
+
+    // Static state for dragging
+    static bool isDraggingClip = false;
+    static int draggingClipIndex = -1;
+    static float dragStartBeat = 0.0f;
+    static int dragStartChannel = 0;
 
     // Background
     drawList->AddRectFilled(canvasPos,
@@ -4616,29 +4894,58 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
         float x = canvasPos.x + headerWidth + beat * beatWidth - ui.scrollX;
         if (x < canvasPos.x + headerWidth || x > canvasPos.x + canvasSize.x) continue;
 
-        ImU32 lineColor = (static_cast<int>(beat) % project.beatsPerMeasure == 0)
-            ? IM_COL32(80, 80, 90, 255)
-            : IM_COL32(45, 45, 50, 255);
+        bool isMeasure = (static_cast<int>(beat) % project.beatsPerMeasure == 0);
+        ImU32 lineColor = isMeasure ? IM_COL32(80, 80, 90, 255) : IM_COL32(45, 45, 50, 255);
         drawList->AddLine(
             ImVec2(x, canvasPos.y),
             ImVec2(x, canvasPos.y + 8 * trackHeight),
             lineColor);
+
+        // Draw beat numbers on measure lines
+        if (isMeasure) {
+            char beatLabel[16];
+            snprintf(beatLabel, sizeof(beatLabel), "%d", static_cast<int>(beat));
+            drawList->AddText(ImVec2(x + 2, canvasPos.y + 8 * trackHeight + 2),
+                IM_COL32(100, 100, 110, 255), beatLabel);
+        }
     }
 
     // Draw clips
-    for (const auto& clip : project.arrangement) {
+    int hoveredClipIndex = -1;
+    for (size_t i = 0; i < project.arrangement.size(); ++i) {
+        const auto& clip = project.arrangement[i];
         float x = canvasPos.x + headerWidth + clip.startBeat * beatWidth - ui.scrollX;
         float y = canvasPos.y + clip.channelIndex * trackHeight;
         float w = clip.lengthBeats * beatWidth;
 
         if (x + w < canvasPos.x + headerWidth || x > canvasPos.x + canvasSize.x) continue;
 
-        ImU32 clipColor = CHANNEL_COLORS[clip.channelIndex % 8];
+        // Check if hovered
+        ImVec2 mousePos = ImGui::GetMousePos();
+        bool isHovered = (mousePos.x >= x && mousePos.x <= x + w &&
+                          mousePos.y >= y && mousePos.y <= y + trackHeight);
+        bool isSelected = (static_cast<int>(i) == selectedClipIndex);
 
+        if (isHovered) hoveredClipIndex = static_cast<int>(i);
+
+        ImU32 clipColor = CHANNEL_COLORS[clip.channelIndex % 8];
+        ImU32 borderColor = isSelected ? IM_COL32(255, 255, 255, 255)
+                         : isHovered ? IM_COL32(200, 200, 200, 200)
+                         : IM_COL32(0, 0, 0, 100);
+
+        // Clip body
         drawList->AddRectFilled(
             ImVec2(x + 1, y + 2),
             ImVec2(x + w - 1, y + trackHeight - 3),
             clipColor);
+
+        // Border for selected/hovered
+        if (isSelected || isHovered) {
+            drawList->AddRect(
+                ImVec2(x + 1, y + 2),
+                ImVec2(x + w - 1, y + trackHeight - 3),
+                borderColor, 0.0f, 0, 2.0f);
+        }
 
         // Pattern name
         if (clip.patternIndex >= 0 && clip.patternIndex < static_cast<int>(project.patterns.size())) {
@@ -4650,31 +4957,78 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
 
     // Playhead
     float playheadX = canvasPos.x + headerWidth + seq.getCurrentBeat() * beatWidth - ui.scrollX;
-    if (playheadX >= canvasPos.x + headerWidth) {
+    if (playheadX >= canvasPos.x + headerWidth && playheadX <= canvasPos.x + canvasSize.x) {
         drawList->AddLine(
             ImVec2(playheadX, canvasPos.y),
             ImVec2(playheadX, canvasPos.y + 8 * trackHeight),
             IM_COL32(255, 80, 80, 255), 2.0f);
+
+        // Playhead triangle
+        drawList->AddTriangleFilled(
+            ImVec2(playheadX - 6, canvasPos.y),
+            ImVec2(playheadX + 6, canvasPos.y),
+            ImVec2(playheadX, canvasPos.y + 10),
+            IM_COL32(255, 80, 80, 255));
     }
 
+    // Song end marker
+    float songEndX = canvasPos.x + headerWidth + project.songLength * beatWidth - ui.scrollX;
+    if (songEndX >= canvasPos.x + headerWidth && songEndX <= canvasPos.x + canvasSize.x) {
+        drawList->AddLine(
+            ImVec2(songEndX, canvasPos.y),
+            ImVec2(songEndX, canvasPos.y + 8 * trackHeight),
+            IM_COL32(150, 80, 80, 200), 2.0f);
+        drawList->AddText(ImVec2(songEndX + 4, canvasPos.y + 4),
+            IM_COL32(150, 80, 80, 255), "END");
+    }
+
+    // ========================================================================
     // Handle mouse input
+    // ========================================================================
     ImGui::SetCursorScreenPos(canvasPos);
     ImGui::InvisibleButton("##arrangement", canvasSize);
 
-    if (ImGui::IsItemHovered()) {
+    if (ImGui::IsItemHovered() || isDraggingClip) {
         ImVec2 mousePos = ImGui::GetMousePos();
         float relX = mousePos.x - canvasPos.x - headerWidth + ui.scrollX;
         int hoveredChannel = static_cast<int>((mousePos.y - canvasPos.y) / trackHeight);
+        hoveredChannel = std::clamp(hoveredChannel, 0, 7);
 
-        // Left click to select channel
-        if (ImGui::IsMouseClicked(0) && mousePos.x < canvasPos.x + headerWidth) {
-            if (hoveredChannel >= 0 && hoveredChannel < 8) {
-                ui.selectedChannel = hoveredChannel;
+        // Left click to select channel or clip
+        if (ImGui::IsMouseClicked(0)) {
+            if (mousePos.x < canvasPos.x + headerWidth) {
+                // Click on header - select channel
+                if (hoveredChannel >= 0 && hoveredChannel < 8) {
+                    ui.selectedChannel = hoveredChannel;
+                }
+            } else if (hoveredClipIndex >= 0) {
+                // Click on clip - select and start drag
+                selectedClipIndex = hoveredClipIndex;
+                isDraggingClip = true;
+                draggingClipIndex = hoveredClipIndex;
+                dragStartBeat = project.arrangement[hoveredClipIndex].startBeat;
+                dragStartChannel = project.arrangement[hoveredClipIndex].channelIndex;
+            } else {
+                // Click on empty space - deselect
+                selectedClipIndex = -1;
+            }
+        }
+
+        // Drag clip
+        if (isDraggingClip && draggingClipIndex >= 0 && draggingClipIndex < static_cast<int>(project.arrangement.size())) {
+            if (ImGui::IsMouseDown(0)) {
+                Clip& clip = project.arrangement[draggingClipIndex];
+                float newBeat = std::max(0.0f, std::floor(relX / beatWidth));
+                clip.startBeat = newBeat;
+                clip.channelIndex = hoveredChannel;
+            } else {
+                isDraggingClip = false;
+                draggingClipIndex = -1;
             }
         }
 
         // Double-click to add clip
-        if (ImGui::IsMouseDoubleClicked(0) && relX >= 0 && hoveredChannel >= 0 && hoveredChannel < 8) {
+        if (ImGui::IsMouseDoubleClicked(0) && relX >= 0 && hoveredChannel >= 0 && hoveredChannel < 8 && hoveredClipIndex < 0) {
             Clip newClip;
             newClip.channelIndex = hoveredChannel;
             newClip.patternIndex = ui.selectedPattern;
@@ -4684,7 +5038,44 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
                 ? static_cast<float>(project.patterns[ui.selectedPattern].length)
                 : 16.0f;
             project.arrangement.push_back(newClip);
+            selectedClipIndex = static_cast<int>(project.arrangement.size()) - 1;
         }
+
+        // Right-click to delete clip
+        if (ImGui::IsMouseClicked(1) && hoveredClipIndex >= 0) {
+            project.arrangement.erase(project.arrangement.begin() + hoveredClipIndex);
+            if (selectedClipIndex == hoveredClipIndex) selectedClipIndex = -1;
+            else if (selectedClipIndex > hoveredClipIndex) selectedClipIndex--;
+        }
+
+        // Right-click on empty space - context menu
+        if (ImGui::IsMouseClicked(1) && hoveredClipIndex < 0 && relX >= 0) {
+            ImGui::OpenPopup("ArrangementContextMenu");
+        }
+    }
+
+    // Context menu
+    if (ImGui::BeginPopup("ArrangementContextMenu")) {
+        ImVec2 mousePos = ImGui::GetMousePos();
+        float relX = mousePos.x - canvasPos.x - headerWidth + ui.scrollX;
+        int targetChannel = static_cast<int>((mousePos.y - canvasPos.y) / trackHeight);
+        targetChannel = std::clamp(targetChannel, 0, 7);
+        float targetBeat = std::floor(relX / beatWidth);
+
+        ImGui::Text("Add Pattern at beat %.0f, Ch %d", targetBeat, targetChannel + 1);
+        ImGui::Separator();
+
+        for (size_t i = 0; i < project.patterns.size(); ++i) {
+            if (ImGui::MenuItem(project.patterns[i].name.c_str())) {
+                Clip newClip;
+                newClip.channelIndex = targetChannel;
+                newClip.patternIndex = static_cast<int>(i);
+                newClip.startBeat = targetBeat;
+                newClip.lengthBeats = static_cast<float>(project.patterns[i].length);
+                project.arrangement.push_back(newClip);
+            }
+        }
+        ImGui::EndPopup();
     }
 
     // Scroll
@@ -4697,6 +5088,14 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
         }
     }
 
+    // Delete key to remove selected clip
+    if (ImGui::IsWindowFocused() && selectedClipIndex >= 0 && selectedClipIndex < static_cast<int>(project.arrangement.size())) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
+            project.arrangement.erase(project.arrangement.begin() + selectedClipIndex);
+            selectedClipIndex = -1;
+        }
+    }
+
     ImGui::End();
 }
 
@@ -4704,6 +5103,9 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
 // Mixer
 // ============================================================================
 inline void DrawMixer(Project& project, UIState& ui, Sequencer& seq) {
+    // Set initial window position on first use (bottom center)
+    ImGui::SetNextWindowPos(ImVec2(220, 650), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(700, 200), ImGuiCond_FirstUseEver);
     ImGui::Begin("Mixer", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
     for (int ch = 0; ch < 8; ++ch) {
@@ -4759,6 +5161,8 @@ inline void DrawMixer(Project& project, UIState& ui, Sequencer& seq) {
 // Channel Editor (Oscillator & Effects)
 // ============================================================================
 inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
+    ImGui::SetNextWindowPos(ImVec2(1130, 450), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(280, 300), ImGuiCond_FirstUseEver);
     ImGui::Begin("Channel Editor");
 
     if (ui.selectedChannel < 0 || ui.selectedChannel >= 8) {
@@ -4915,6 +5319,77 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::SliderFloat("Mix##ring", &fx.ringMod.mix, 0.0f, 1.0f);
             ImGui::Unindent();
         }
+
+        // Sidechain Compression (for that classic EDM pumping effect)
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Sidechain Compression");
+        ImGui::Checkbox("Enable Sidechain", &fx.sidechainEnabled);
+        if (fx.sidechainEnabled) {
+            ImGui::Indent();
+
+            // Source channel selector
+            ImGui::Text("Duck this channel when source plays");
+            const char* channelNames[] = {"Ch 1", "Ch 2", "Ch 3", "Ch 4", "Ch 5", "Ch 6", "Ch 7", "Ch 8"};
+            int srcIdx = fx.sidechainSource;
+            if (srcIdx < 0) srcIdx = 0;
+            if (ImGui::Combo("Source Channel", &srcIdx, channelNames, IM_ARRAYSIZE(channelNames))) {
+                fx.sidechainSource = srcIdx;
+            }
+            if (fx.sidechainSource == ui.selectedChannel) {
+                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Warning: Source is same as target!");
+            }
+
+            ImGui::SliderFloat("Threshold##sc", &fx.sidechain.threshold, 0.01f, 0.9f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Level at which ducking starts");
+
+            ImGui::SliderFloat("Amount##sc", &fx.sidechain.amount, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much to duck (1.0 = full silence)");
+
+            ImGui::SliderFloat("Attack##sc", &fx.sidechain.attack, 0.001f, 0.1f, "%.3f s");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the duck kicks in");
+
+            ImGui::SliderFloat("Release##sc", &fx.sidechain.release, 0.05f, 1.0f, "%.2f s");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the volume returns");
+
+            // Visual feedback - show current gain reduction
+            float gainRed = fx.sidechain.getGainReduction();
+            ImGui::ProgressBar(gainRed, ImVec2(-1, 0), "");
+            ImGui::SameLine(0, 0);
+            ImGui::Text(" Ducking: %.0f%%", gainRed * 100.0f);
+
+            // Quick presets
+            ImGui::Text("Presets:");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Subtle##sc")) {
+                fx.sidechain.threshold = 0.3f;
+                fx.sidechain.amount = 0.3f;
+                fx.sidechain.attack = 0.005f;
+                fx.sidechain.release = 0.2f;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Normal##sc")) {
+                fx.sidechain.threshold = 0.2f;
+                fx.sidechain.amount = 0.6f;
+                fx.sidechain.attack = 0.005f;
+                fx.sidechain.release = 0.15f;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Heavy##sc")) {
+                fx.sidechain.threshold = 0.1f;
+                fx.sidechain.amount = 0.9f;
+                fx.sidechain.attack = 0.002f;
+                fx.sidechain.release = 0.1f;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Pumping##sc")) {
+                fx.sidechain.threshold = 0.05f;
+                fx.sidechain.amount = 1.0f;
+                fx.sidechain.attack = 0.001f;
+                fx.sidechain.release = 0.25f;
+            }
+
+            ImGui::Unindent();
+        }
     }
 
     ImGui::End();
@@ -4924,6 +5399,8 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
 // Pattern List
 // ============================================================================
 inline void DrawPatternList(Project& project, UIState& ui) {
+    ImGui::SetNextWindowPos(ImVec2(10, 650), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(200, 200), ImGuiCond_FirstUseEver);
     ImGui::Begin("Patterns");
 
     if (ImGui::Button("+ New Pattern")) {
@@ -4950,6 +5427,8 @@ inline void DrawPatternList(Project& project, UIState& ui) {
 // Note Editor Panel - Edit selected note properties
 // ============================================================================
 inline void DrawNoteEditor(Project& project, UIState& ui) {
+    ImGui::SetNextWindowPos(ImVec2(1130, 140), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(280, 300), ImGuiCond_FirstUseEver);
     ImGui::Begin("Note Editor");
 
     if (ui.selectedPattern < 0 || ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
@@ -5132,15 +5611,56 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
     }
 
     // Per-note effects
-    if (ImGui::CollapsingHeader("Note Effects")) {
+    if (ImGui::CollapsingHeader("Note Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Vibrato
+        ImGui::Text("Vibrato (pitch wobble):");
         ImGui::SetNextItemWidth(120);
-        ImGui::SliderFloat("Vibrato", &note.vibrato, 0.0f, 1.0f);
+        ImGui::SliderFloat("##Vibrato", &note.vibrato, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("0##vib")) note.vibrato = 0.0f;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("0.3##vib")) note.vibrato = 0.3f;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("0.5##vib")) note.vibrato = 0.5f;
 
+        // Arpeggio (tracker-style 0xy effect)
+        ImGui::Text("Arpeggio (chord cycling):");
+        int arpX = (note.arpeggio >> 4) & 0x0F;
+        int arpY = note.arpeggio & 0x0F;
+        ImGui::SetNextItemWidth(60);
+        if (ImGui::SliderInt("X##arp", &arpX, 0, 12, "+%d")) {
+            note.arpeggio = (arpX << 4) | (note.arpeggio & 0x0F);
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        if (ImGui::SliderInt("Y##arp", &arpY, 0, 12, "+%d")) {
+            note.arpeggio = (note.arpeggio & 0xF0) | (arpY & 0x0F);
+        }
+        // Arpeggio presets
+        ImGui::Text("Presets:");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Off##arp")) note.arpeggio = 0x00;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Maj##arp")) note.arpeggio = 0x47;  // +4, +7 = major chord
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Min##arp")) note.arpeggio = 0x37;  // +3, +7 = minor chord
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Oct##arp")) note.arpeggio = 0xC0;  // +12, +0 = octave
+
+        // Slide/Portamento
+        ImGui::Text("Slide (pitch start offset):");
         ImGui::SetNextItemWidth(120);
-        ImGui::SliderFloat("Slide", &note.slide, -12.0f, 12.0f, "%.1f semitones");
+        ImGui::SliderFloat("##Slide", &note.slide, -12.0f, 12.0f, "%.1f st");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("0##slide")) note.slide = 0.0f;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("-12##slide")) note.slide = -12.0f;  // Slide up from octave below
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+12##slide")) note.slide = 12.0f;   // Slide down from octave above
 
-        // Reset effects
-        if (ImGui::Button("Reset Effects")) {
+        ImGui::Separator();
+        // Reset all effects
+        if (ImGui::Button("Reset All Effects")) {
             note.vibrato = 0.0f;
             note.slide = 0.0f;
             note.arpeggio = 0;
@@ -5179,6 +5699,9 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
 // View Tabs
 // ============================================================================
 inline void DrawViewTabs(UIState& ui) {
+    // Set initial window position on first use (top right)
+    ImGui::SetNextWindowPos(ImVec2(780, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500, 60), ImGuiCond_FirstUseEver);
     ImGui::Begin("Views", nullptr, ImGuiWindowFlags_NoCollapse);
 
     if (ImGui::Button("Piano Roll", ImVec2(100, 30))) {
@@ -5891,6 +6414,9 @@ inline void DrawDrumCategory(const char* categoryName, bool& expanded,
 }
 
 inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
+    // Set initial window position on first use (left side)
+    ImGui::SetNextWindowPos(ImVec2(10, 140), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(200, 500), ImGuiCond_FirstUseEver);
     ImGui::Begin("Sound Palette");
 
     ImGui::Text("Click to select, then draw on Piano Roll");
@@ -6687,6 +7213,8 @@ inline void DrawPadController(Project& project, UIState& ui, Sequencer& sequence
         }
     }
 
+    ImGui::SetNextWindowPos(ImVec2(10, 860), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(200, 200), ImGuiCond_FirstUseEver);
     ImGui::Begin("Pad Controller", nullptr, ImGuiWindowFlags_NoCollapse);
 
     ImVec2 windowSize = ImGui::GetContentRegionAvail();
