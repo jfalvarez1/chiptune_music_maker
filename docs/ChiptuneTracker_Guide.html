@@ -656,6 +656,7 @@
             <li><a href="#adsr" data-section="ADSR Envelope"></a></li>
             <li><a href="#oscillators" data-section="Oscillators"></a></li>
             <li><a href="#drums" data-section="Drums"></a></li>
+            <li><a href="#files" data-section="Files"></a></li>
             <li><a href="#workflow" data-section="Workflow"></a></li>
             <li><a href="#shortcuts" data-section="Shortcuts"></a></li>
             <li><a href="#advanced" data-section="Advanced"></a></li>
@@ -1061,40 +1062,94 @@
 
         <!-- Drums -->
         <section id="drums">
-            <h2>Drum Sounds</h2>
+            <h2>Drum Sounds (21 Types!)</h2>
 
-            <p>ChiptuneTracker includes four synthesized drum sounds that emulate classic 8-bit percussion.
-            Unlike melodic sounds, drums don't follow the ADSR envelope - they have their own specialized
-            envelopes built in.</p>
+            <p>ChiptuneTracker includes a comprehensive drum kit with <strong>21 synthesized sounds</strong>
+            that emulate classic 8-bit and electronic percussion. Unlike melodic sounds, drums don't follow
+            the ADSR envelope - they have their own specialized envelopes built in. Drums also automatically
+            adjust their duration based on BPM!</p>
 
+            <h3>Kick Drums</h3>
             <div class="param-grid">
                 <div class="param-card">
-                    <h4>KICK (Bass Drum)</h4>
-                    <p>The foundation of most beats. Creates a deep "boom" sound using a sine wave with
-                    a rapidly dropping pitch (150Hz → 50Hz). The pitch sweep is what gives it that punchy,
-                    impactful feel.</p>
-                    <p><strong>Use on:</strong> Beats 1 and 3 for basic patterns</p>
+                    <h4>KICK</h4>
+                    <p>Standard kick - deep "boom" with pitch sweep (150Hz → 50Hz). The foundation of most beats.</p>
                 </div>
+                <div class="param-card">
+                    <h4>KICK 808</h4>
+                    <p>Classic TR-808 style - deeper sub-bass, longer decay. Perfect for hip-hop and electronic.</p>
+                </div>
+                <div class="param-card">
+                    <h4>KICK HARD</h4>
+                    <p>Punchy, tight kick with more attack click. Great for aggressive tracks.</p>
+                </div>
+                <div class="param-card">
+                    <h4>KICK SOFT</h4>
+                    <p>Warm, mellow kick with gentle attack. Good for chill and ambient music.</p>
+                </div>
+            </div>
+
+            <h3>Snares & Claps</h3>
+            <div class="param-grid">
                 <div class="param-card">
                     <h4>SNARE</h4>
-                    <p>A sharp "tsk" or "crack" sound. Combines a quick tonal "pop" with high-frequency
-                    noise for that distinctive snare character. Uses short-mode noise for a brighter,
-                    more metallic sound.</p>
-                    <p><strong>Use on:</strong> Beats 2 and 4 for basic patterns</p>
+                    <p>Sharp "tsk" - tonal pop with noise burst. Classic backbeat sound.</p>
                 </div>
                 <div class="param-card">
-                    <h4>HI-HAT</h4>
-                    <p>A metallic "tsss" cymbal sound. Created using multiple square waves at inharmonic
-                    (non-musical) frequency ratios plus noise. Very fast decay for a tight, closed hi-hat
-                    sound.</p>
-                    <p><strong>Use on:</strong> Every beat or every half-beat for rhythm</p>
+                    <h4>SNARE 808</h4>
+                    <p>TR-808 snare - more tonal, snappy character with distinct pitch.</p>
                 </div>
                 <div class="param-card">
-                    <h4>TOM</h4>
-                    <p>A pitched drum sound, like a floor tom or bongo. Uses a sine wave with pitch drop
-                    and added harmonics for warmth. Can be placed at different pitches on the piano roll
-                    for melodic fills.</p>
-                    <p><strong>Use for:</strong> Fills, transitions, tribal patterns</p>
+                    <h4>SNARE RIM</h4>
+                    <p>Rimshot - clicky, sharp attack. Good for accents.</p>
+                </div>
+                <div class="param-card">
+                    <h4>CLAP</h4>
+                    <p>Hand clap - multiple layered bursts for that classic clap sound.</p>
+                </div>
+            </div>
+
+            <h3>Hi-Hats & Cymbals</h3>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>HI-HAT (Closed)</h4>
+                    <p>Tight metallic "tss" - fast decay, essential for rhythm.</p>
+                </div>
+                <div class="param-card">
+                    <h4>HI-HAT OPEN</h4>
+                    <p>Open hi-hat - longer, sizzling decay. Use sparingly for accents.</p>
+                </div>
+                <div class="param-card">
+                    <h4>HI-HAT PEDAL</h4>
+                    <p>Very short pedal sound - tightest of all hi-hats.</p>
+                </div>
+                <div class="param-card">
+                    <h4>CRASH</h4>
+                    <p>Crash cymbal - explosive, long decay. Great for transitions.</p>
+                </div>
+                <div class="param-card">
+                    <h4>RIDE</h4>
+                    <p>Ride cymbal - sustained, shimmering. Good for jazz patterns.</p>
+                </div>
+            </div>
+
+            <h3>Toms & Percussion</h3>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>TOM / TOM LOW / TOM HIGH</h4>
+                    <p>Pitched drums for fills. Low tom is deep, high tom is tight.</p>
+                </div>
+                <div class="param-card">
+                    <h4>COWBELL</h4>
+                    <p>Classic 808 cowbell - metallic, melodic. More cowbell!</p>
+                </div>
+                <div class="param-card">
+                    <h4>CLAVE</h4>
+                    <p>Wood block click - tight and percussive. Latin rhythms.</p>
+                </div>
+                <div class="param-card">
+                    <h4>CONGA / MARACAS / TAMBOURINE</h4>
+                    <p>Additional percussion for flavor and texture.</p>
                 </div>
             </div>
 
@@ -1122,6 +1177,60 @@ HiHat:   X - X - X - X -</code></pre>
                 <strong>Tip:</strong> The grid in the piano roll is divided into beats. Place kicks and
                 snares on the main beats first, then add hi-hats to fill in the rhythm. Toms work great
                 for fills at the end of 4 or 8 bar sections!
+            </div>
+        </section>
+
+        <!-- File Operations -->
+        <section id="files">
+            <h2>File Operations & Export</h2>
+
+            <h3>Project Files (.ctp)</h3>
+            <p>ChiptuneTracker uses its own project format (.ctp) to save your work. Project files store:</p>
+            <ul>
+                <li>All patterns and their notes</li>
+                <li>BPM and timing settings</li>
+                <li>Master volume</li>
+                <li>Note properties (oscillator type, velocity, fades)</li>
+            </ul>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>New</h4>
+                    <p>Creates a fresh, empty project. All unsaved work is cleared.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Load</h4>
+                    <p>Opens a .ctp project file. Uses Windows file dialog.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Save</h4>
+                    <p>Saves to current file. If new project, prompts for filename.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Save As</h4>
+                    <p>Always prompts for a new filename. Good for creating backups.</p>
+                </div>
+            </div>
+
+            <h3>WAV Export</h3>
+            <p>Export your music as a high-quality WAV audio file:</p>
+            <ol>
+                <li>Click the <strong>WAV</strong> button in the File menu</li>
+                <li>Set the duration (in beats) - auto-calculated from your notes</li>
+                <li>Click <strong>Export</strong> and choose a filename</li>
+                <li>The entire pattern is rendered to stereo 16-bit 44.1kHz WAV</li>
+            </ol>
+
+            <div class="info-box">
+                <strong>Export Duration:</strong> The default duration is automatically calculated from
+                your last note. Add extra beats if you want the sound to fade out naturally (especially
+                for notes with long release times).
+            </div>
+
+            <div class="tip-box">
+                <strong>Sharing Your Music:</strong> WAV files can be converted to MP3 using free tools
+                like Audacity or online converters. This lets you share your chiptunes on YouTube,
+                SoundCloud, or anywhere else!
             </div>
         </section>
 
@@ -1215,12 +1324,16 @@ HiHat:   X - X - X - X -</code></pre>
                     <td>Redo - undo your undo</td>
                 </tr>
                 <tr>
+                    <td><span class="keyboard-shortcut">Ctrl+A</span></td>
+                    <td>Select all notes in the pattern</td>
+                </tr>
+                <tr>
                     <td><span class="keyboard-shortcut">Ctrl+C</span></td>
                     <td>Copy selected note(s)</td>
                 </tr>
                 <tr>
                     <td><span class="keyboard-shortcut">Ctrl+V</span></td>
-                    <td>Paste at playhead position</td>
+                    <td>Paste preview - ghost notes follow mouse, click to place!</td>
                 </tr>
                 <tr>
                     <td><span class="keyboard-shortcut">Ctrl+X</span></td>
@@ -1232,17 +1345,24 @@ HiHat:   X - X - X - X -</code></pre>
                 </tr>
                 <tr>
                     <td><span class="keyboard-shortcut">Escape</span></td>
-                    <td>Deselect all notes</td>
+                    <td>Deselect all notes / Cancel paste preview</td>
                 </tr>
             </table>
 
-            <h3>Multi-Select Tips</h3>
+            <h3>Multi-Select & Paste Preview</h3>
             <div class="tip-box">
                 <strong>Box Selection:</strong> In Select mode, click and drag on empty space to draw a
                 selection box. All notes inside will be selected. You can then copy, cut, delete, or
                 move them all together!<br><br>
-                <strong>Copy/Paste preserves arrangement:</strong> When you copy multiple notes, their
-                relative positions are preserved. Paste them elsewhere and they'll maintain the same pattern.
+                <strong>Select All:</strong> Press <span class="keyboard-shortcut">Ctrl+A</span> to instantly
+                select every note in the pattern.<br><br>
+                <strong>Paste Preview (Ghost Notes):</strong> When you press Ctrl+V, semi-transparent ghost
+                notes appear following your mouse cursor. This lets you:<br>
+                - See exactly where notes will be placed before committing<br>
+                - <strong>Transpose to different octaves</strong> by moving up/down<br>
+                - Click to place, or press Escape to cancel<br><br>
+                <strong>Dynamic Timeline:</strong> The piano roll grid automatically extends as you add notes
+                beyond the original pattern length. A red line shows the original pattern boundary.
             </div>
         </section>
 
@@ -1322,8 +1442,9 @@ HiHat:   X - X - X - X -</code></pre>
         </section>
 
         <footer>
-            <p>CHIPTUNE TRACKER v1.0</p>
-            <p>Built with C++, ImGui, OpenGL, and miniaudio</p>
+            <p>CHIPTUNE TRACKER v2.0</p>
+            <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
+            <p>21 Drum Sounds | WAV Export | Project Save/Load | Paste Preview</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>

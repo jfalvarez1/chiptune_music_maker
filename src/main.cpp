@@ -344,6 +344,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         // UI Windows
         // ====================================================================
 
+        // File menu (always visible)
+        ChiptuneTracker::DrawFileMenu(project, uiState, sequencer);
+
         // Transport bar (always visible)
         ChiptuneTracker::DrawTransportBar(sequencer, project, playbackState, uiState);
 

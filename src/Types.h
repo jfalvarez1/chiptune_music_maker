@@ -38,11 +38,33 @@ enum class OscillatorType : uint8_t {
     Sine,       // Pure tone
     Noise,      // LFSR white/periodic noise
     Custom,     // Wavetable
-    // Drums
-    Kick,       // Bass drum
-    Snare,      // Snare drum
-    HiHat,      // Hi-hat cymbal
-    Tom         // Tom drum
+    // Kicks
+    Kick,       // Standard kick with pitch sweep
+    Kick808,    // Deep 808 kick, more sub-bass
+    KickHard,   // Punchy tight kick
+    KickSoft,   // Soft warm kick
+    // Snares
+    Snare,      // Standard snare with noise
+    Snare808,   // Classic 808 snare, more tonal
+    SnareRim,   // Rimshot, clicky
+    Clap,       // Hand clap (multiple bursts)
+    // Hi-Hats
+    HiHat,      // Closed hi-hat
+    HiHatOpen,  // Open hi-hat, longer decay
+    HiHatPedal, // Pedal hi-hat, very short
+    // Toms
+    Tom,        // Mid tom
+    TomLow,     // Floor tom
+    TomHigh,    // High tom
+    // Cymbals
+    Crash,      // Crash cymbal
+    Ride,       // Ride cymbal
+    // Percussion
+    Cowbell,    // 808 cowbell
+    Clave,      // Wood block click
+    Conga,      // Conga drum
+    Maracas,    // Shaker
+    Tambourine  // Jingly metallic
 };
 
 // ============================================================================
@@ -251,6 +273,11 @@ struct UIState {
     float boxSelectEndX = 0.0f;     // Box end position (beat)
     float boxSelectEndY = 0.0f;     // Box end position (pitch as float)
 
+    // Paste preview (ghost notes following mouse)
+    bool isPastePreviewing = false; // Currently showing paste preview
+    float pastePreviewBeat = 0.0f;  // Where ghost notes are positioned (time)
+    int pastePreviewPitch = 60;     // Base pitch for ghost notes
+
     // Tracker
     int trackerRowHighlight = 4;    // Highlight every N rows
 
@@ -258,6 +285,9 @@ struct UIState {
     bool hasSelection = false;
     float selectionStart = 0.0f;
     float selectionEnd = 0.0f;
+
+    // File dialog
+    std::string projectFilePath = "";
 };
 
 // ============================================================================

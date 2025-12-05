@@ -74,6 +74,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/Effects.h
     src/Synthesizer.h
     src/Sequencer.h
+    src/FileIO.h
     src/UI.h
 )
 
@@ -92,6 +93,8 @@ if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         dwmapi      # For DWM composition
         imm32       # For IME support
+        comdlg32    # For file dialogs
+        shell32     # For shell functions
     )
 elseif(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)

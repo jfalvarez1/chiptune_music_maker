@@ -15,23 +15,57 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 
 ## Features
 
-- **Oscillators**: PolyBLEP-corrected Square, Triangle, Sawtooth
-- **Noise**: 15-bit LFSR (Linear Feedback Shift Register)
-- **Effects**: Bitcrushing, Tanh Distortion (planned)
-- **UI**: Immediate-mode GUI with tracker-style dark theme
+### Sound Generation
+- **Oscillators**: PolyBLEP-corrected Pulse (variable duty), Triangle, Sawtooth, Sine
+- **Noise**: 15-bit LFSR (Linear Feedback Shift Register) with short/long modes
+- **ADSR Envelopes**: Full Attack, Decay, Sustain, Release control
+- **Per-note sound types**: Each note can use a different oscillator
+
+### Drum Kit (21 sounds!)
+- **Kicks**: Standard, 808, Hard, Soft
+- **Snares**: Standard, 808, Rimshot, Clap
+- **Hi-Hats**: Closed, Open, Pedal
+- **Toms**: High, Mid, Low
+- **Cymbals**: Crash, Ride
+- **Percussion**: Cowbell, Clave, Conga, Maracas, Tambourine
+
+### Editing
+- **Piano Roll Editor**: Visual note editing with zoom and scroll
+- **Three edit modes**: Draw, Select, Erase (hotkeys: D, S, E)
+- **Box selection**: Click and drag to select multiple notes
+- **Dynamic timeline**: Grid automatically extends as you add notes
+- **Paste preview**: Ghost notes follow mouse for precise placement at any octave
+- **Full undo/redo**: 50 levels of history (Ctrl+Z / Ctrl+Y)
+
+### File Operations
+- **Project save/load**: Native .ctp format preserves all notes and settings
+- **WAV export**: Render your music to high-quality audio files
+- **Windows file dialogs**: Native save/open dialogs
+
+### Effects (per channel)
+- Bitcrusher
+- Distortion
+- Filter
+- Delay
 
 ## Project Structure
 
 ```
 chiptune_music_maker/
 ├── build/                 # Build output (git-ignored)
+├── docs/
+│   └── ChiptuneTracker_Guide.html  # Full documentation
 ├── src/
 │   ├── main.cpp           # Application entry, ImGui setup
-│   ├── AudioEngine.cpp    # Real-time audio synthesis
-│   └── AudioEngine.h      # Lock-free audio architecture
+│   ├── Types.h            # Core data structures
+│   ├── Synthesizer.h      # Sound generation & drums
+│   ├── Sequencer.h        # Playback engine
+│   ├── FileIO.h           # Save/load & WAV export
+│   ├── Effects.h          # Audio effects
+│   └── UI.h               # ImGui interface
 ├── vendor/
-│   ├── miniaudio/         # Drop miniaudio.h here
-│   └── imgui/             # Drop imgui source files here
+│   ├── miniaudio/         # miniaudio.h
+│   └── imgui/             # Dear ImGui source
 ├── CMakeLists.txt
 ├── .gitignore
 └── README.md
@@ -93,11 +127,37 @@ Run the executable from `build/bin/`:
 ./ChiptuneTracker
 ```
 
-The application opens a window with:
-- Frequency slider (20Hz - 2kHz, logarithmic)
-- Volume control
-- Waveform selector (Sine, Square, Sawtooth, Triangle, Noise)
-- Quick note buttons (C4-C5)
+### Quick Start
+
+1. **Select a sound** from the Sound Palette (automatically enters Draw mode)
+2. **Click on the piano roll** to place notes
+3. **Press Play** to hear your music
+4. **Add drums** for rhythm - they auto-adjust duration to BPM!
+5. **Save your project** with the Save button or Ctrl+S
+6. **Export to WAV** when you're happy with your creation
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `D` | Draw mode |
+| `S` | Select mode |
+| `E` | Erase mode |
+| `Ctrl+A` | Select all notes |
+| `Ctrl+C` | Copy selected |
+| `Ctrl+V` | Paste (shows preview - click to place) |
+| `Ctrl+X` | Cut selected |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` | Redo |
+| `Delete` | Delete selected |
+| `Escape` | Deselect / Cancel paste preview |
+
+### Paste Preview Feature
+
+When you press Ctrl+V, ghost notes appear following your mouse. This lets you:
+- Place notes at **any position** on the timeline
+- **Transpose** copied notes to different octaves
+- Click to confirm placement, Escape to cancel
 
 ## Architecture
 
@@ -153,14 +213,20 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 
 ## Roadmap
 
-- [ ] Pattern sequencer (tracker-style)
-- [ ] Piano roll editor
-- [ ] Multiple channels/voices
-- [ ] Envelope generators (ADSR)
-- [ ] Bitcrushing effect
-- [ ] Tanh distortion
-- [ ] WAV export
-- [ ] Project save/load
+- [x] Pattern sequencer (tracker-style)
+- [x] Piano roll editor
+- [x] Multiple channels/voices
+- [x] Envelope generators (ADSR)
+- [x] WAV export
+- [x] Project save/load
+- [x] Undo/Redo (50 levels)
+- [x] Copy/Paste with preview
+- [x] Box selection
+- [x] 21 drum sounds
+- [ ] FLAC/MP3 export (requires external libs)
+- [ ] VST plugin version
+- [ ] Pattern arrangement view
+- [ ] MIDI import/export
 
 ## Contributing
 
