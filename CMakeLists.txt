@@ -22,6 +22,10 @@ if(MSVC)
     add_compile_options(/W4 /permissive-)
     # Fast floating point for audio performance
     add_compile_options(/fp:fast)
+
+    # Static runtime linking - eliminates need for VC++ Redistributable
+    # Users can run the .exe without installing anything else
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
     add_compile_options(-ffast-math)

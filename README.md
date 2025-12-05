@@ -243,6 +243,18 @@ chiptune_music_maker/
      - `backends/imgui_impl_opengl3.h`, `backends/imgui_impl_opengl3.cpp`
      - `backends/imgui_impl_win32.h`, `backends/imgui_impl_win32.cpp`
 
+## System Requirements
+
+### For End Users (Running the .exe)
+- **Windows 10/11** (64-bit)
+- **OpenGL 3.3+** compatible GPU
+- **No VC++ Redistributable required** - The executable is statically linked and fully standalone
+
+Just download and run `ChiptuneTracker.exe` - no installation needed!
+
+### Optional
+- **LAME or FFmpeg** in PATH for MP3 export
+
 ## Building
 
 ### Windows (Visual Studio)
