@@ -38,6 +38,17 @@ enum class OscillatorType : uint8_t {
     Sine,       // Pure tone
     Noise,      // LFSR white/periodic noise
     Custom,     // Wavetable
+    // Synth Presets
+    SynthLead,      // Bright cutting lead (detuned saws)
+    SynthPad,       // Soft atmospheric pad (slow attack)
+    SynthBass,      // Deep punchy bass (sub + harmonics)
+    SynthPluck,     // Short plucky sound (fast decay)
+    SynthArp,       // Crisp arpeggio sound (pulse + fast env)
+    SynthOrgan,     // Classic organ (additive harmonics)
+    SynthStrings,   // String ensemble (detuned + slow attack)
+    SynthBrass,     // Brassy stab (saw + filter sweep feel)
+    SynthChip,      // Classic chiptune lead (pulse 12.5%)
+    SynthBell,      // Bell/chime sound (FM-like)
     // Kicks
     Kick,       // Standard kick with pitch sweep
     Kick808,    // Deep 808 kick, more sub-bass
@@ -239,6 +250,14 @@ enum class ViewMode : uint8_t {
     Mixer
 };
 
+// Visual themes
+enum class Theme : uint8_t {
+    Stock,      // Default dark theme
+    Cyberpunk,  // Neon yellow, hot pink, electric blue
+    Synthwave,  // 80s retro with neon pinks and purples
+    Matrix      // Green on black with falling code
+};
+
 // Piano roll edit modes
 enum class PianoRollMode : uint8_t {
     Draw,       // Click to add notes
@@ -288,6 +307,9 @@ struct UIState {
 
     // File dialog
     std::string projectFilePath = "";
+
+    // Visual theme
+    Theme currentTheme = Theme::Stock;
 };
 
 // ============================================================================

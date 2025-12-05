@@ -21,6 +21,18 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **ADSR Envelopes**: Full Attack, Decay, Sustain, Release control
 - **Per-note sound types**: Each note can use a different oscillator
 
+### Synth Presets (10 types!)
+- **Lead**: Bright cutting lead with detuned saws
+- **Pad**: Soft atmospheric pad with slow attack
+- **Bass**: Deep punchy bass (sub + harmonics)
+- **Pluck**: Short plucky sound with fast decay
+- **Arp**: Crisp arpeggio sound (pulse + fast envelope)
+- **Organ**: Classic organ with additive harmonics
+- **Strings**: String ensemble (detuned + slow attack)
+- **Brass**: Brassy stab (saw + square + harmonics)
+- **Chip**: Classic chiptune lead (NES-style 12.5% pulse)
+- **Bell**: Bell/chime sound (FM-like synthesis)
+
 ### Drum Kit (21 sounds!)
 - **Kicks**: Standard, 808, Hard, Soft
 - **Snares**: Standard, 808, Rimshot, Clap
@@ -28,6 +40,12 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **Toms**: High, Mid, Low
 - **Cymbals**: Crash, Ride
 - **Percussion**: Cowbell, Clave, Conga, Maracas, Tambourine
+
+### Visual Themes
+- **Stock**: Clean dark theme (default)
+- **Cyberpunk**: Neon yellow, hot pink, electric blue with data streams and glitch effects
+- **Synthwave**: 80s retro with neon sunset, perspective grid, and color-cycling chasers
+- **Matrix**: Green on black with falling code animation
 
 ### Editing
 - **Piano Roll Editor**: Visual note editing with zoom and scroll
@@ -40,6 +58,7 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 ### File Operations
 - **Project save/load**: Native .ctp format preserves all notes and settings
 - **WAV export**: Render your music to high-quality audio files
+- **MP3 export**: Render to MP3 (requires LAME or FFmpeg in PATH)
 - **Windows file dialogs**: Native save/open dialogs
 
 ### Effects (per channel)
@@ -223,7 +242,10 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Copy/Paste with preview
 - [x] Box selection
 - [x] 21 drum sounds
-- [ ] FLAC/MP3 export (requires external libs)
+- [x] 10 synth presets
+- [x] MP3 export (via LAME/FFmpeg)
+- [x] Visual themes (Cyberpunk, Synthwave, Matrix)
+- [ ] FLAC export
 - [ ] VST plugin version
 - [ ] Pattern arrangement view
 - [ ] MIDI import/export

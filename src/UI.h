@@ -59,6 +59,803 @@ static int g_SelectedPaletteItem = -1;  // -1 = none selected
 static UndoHistory g_UndoHistory;
 
 // ============================================================================
+// Theme System
+// ============================================================================
+
+// Matrix rain effect state
+struct MatrixColumn {
+    float y = 0.0f;
+    float speed = 0.0f;
+    int length = 0;
+    std::string chars;
+};
+static std::vector<MatrixColumn> g_MatrixColumns;
+static bool g_MatrixInitialized = false;
+
+// Synthwave chaser state
+static float g_ChaserOffset = 0.0f;
+static float g_ChaserColorPhase = 0.0f;  // For color cycling
+static float g_CyberpunkPulse = 0.0f;    // For Cyberpunk pulsing effects
+static float g_DataStreamOffset = 0.0f;  // For Cyberpunk data streams
+
+// Theme-specific colors for piano roll
+struct ThemePianoRollColors {
+    ImU32 keyWhite;
+    ImU32 keyBlack;
+    ImU32 gridLine;
+    ImU32 gridLineMeasure;
+    ImU32 gridLinePattern;
+    ImU32 noteDefault;
+    ImU32 noteSelected;
+    ImU32 playhead;
+    ImU32 background;
+};
+
+static ThemePianoRollColors g_PianoRollColors;
+
+// Apply a theme to ImGui style
+inline void ApplyTheme(Theme theme) {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4* colors = style.Colors;
+
+    // Common style settings
+    style.WindowRounding = 4.0f;
+    style.FrameRounding = 2.0f;
+    style.ScrollbarRounding = 3.0f;
+    style.GrabRounding = 2.0f;
+    style.FrameBorderSize = 1.0f;
+
+    switch (theme) {
+        case Theme::Stock:
+            // Default dark theme
+            colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.15f, 0.18f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.22f, 0.22f, 0.26f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.28f, 0.28f, 0.33f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
+            colors[ImGuiCol_Header] = ImVec4(0.20f, 0.35f, 0.55f, 1.00f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.45f, 0.70f, 1.00f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.30f, 0.52f, 0.80f, 1.00f);
+            colors[ImGuiCol_Button] = ImVec4(0.20f, 0.35f, 0.55f, 1.00f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.26f, 0.45f, 0.70f, 1.00f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.30f, 0.52f, 0.80f, 1.00f);
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.30f, 0.52f, 0.80f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.40f, 0.62f, 0.90f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.40f, 0.70f, 1.00f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.90f, 0.90f, 0.92f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.50f, 0.52f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.25f, 0.40f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.26f, 0.45f, 0.70f, 1.00f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.20f, 0.38f, 0.60f, 1.00f);
+
+            // Piano roll colors
+            g_PianoRollColors.keyWhite = IM_COL32(60, 60, 65, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(40, 40, 45, 255);
+            g_PianoRollColors.gridLine = IM_COL32(50, 50, 55, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(100, 100, 110, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(150, 80, 80, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(80, 140, 200, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(100, 200, 255, 255);
+            g_PianoRollColors.playhead = IM_COL32(255, 100, 100, 255);
+            g_PianoRollColors.background = IM_COL32(30, 30, 35, 255);
+            break;
+
+        case Theme::Cyberpunk:
+            // Cyberpunk 2077 inspired - neon yellow, hot pink, electric blue
+            colors[ImGuiCol_WindowBg] = ImVec4(0.04f, 0.04f, 0.07f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.03f, 0.03f, 0.05f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.06f, 0.06f, 0.10f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.99f, 0.93f, 0.04f, 0.50f);  // Neon yellow
+            colors[ImGuiCol_FrameBg] = ImVec4(0.08f, 0.08f, 0.12f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.15f, 0.08f, 0.20f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.20f, 0.10f, 0.25f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.06f, 0.02f, 0.10f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.50f, 0.05f, 0.30f, 1.00f);  // Hot pink
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.08f, 0.04f, 0.12f, 1.00f);
+            colors[ImGuiCol_Header] = ImVec4(1.00f, 0.16f, 0.43f, 0.60f);  // Hot pink
+            colors[ImGuiCol_HeaderHovered] = ImVec4(1.00f, 0.16f, 0.43f, 0.80f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(1.00f, 0.16f, 0.43f, 1.00f);
+            colors[ImGuiCol_Button] = ImVec4(0.02f, 0.85f, 0.91f, 0.40f);  // Cyan
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.02f, 0.85f, 0.91f, 0.70f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.99f, 0.93f, 0.04f, 0.90f);  // Yellow on click
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.99f, 0.93f, 0.04f, 1.00f);  // Neon yellow
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.16f, 0.43f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.99f, 0.93f, 0.04f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.00f, 1.00f, 0.98f, 1.00f);  // Cyan text
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.40f, 0.40f, 0.50f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.30f, 0.05f, 0.20f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(1.00f, 0.16f, 0.43f, 0.80f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.50f, 0.10f, 0.35f, 1.00f);
+
+            // Piano roll colors - Cyberpunk
+            g_PianoRollColors.keyWhite = IM_COL32(30, 30, 50, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(15, 15, 30, 255);
+            g_PianoRollColors.gridLine = IM_COL32(60, 20, 80, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(255, 40, 110, 200);  // Hot pink
+            g_PianoRollColors.gridLinePattern = IM_COL32(252, 238, 10, 255);  // Yellow
+            g_PianoRollColors.noteDefault = IM_COL32(5, 217, 232, 255);  // Cyan
+            g_PianoRollColors.noteSelected = IM_COL32(252, 238, 10, 255);  // Yellow
+            g_PianoRollColors.playhead = IM_COL32(255, 42, 109, 255);  // Hot pink
+            g_PianoRollColors.background = IM_COL32(10, 10, 18, 255);
+            break;
+
+        case Theme::Synthwave:
+            // 80s Synthwave - sunset colors, neon pink/purple/cyan
+            colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.05f, 0.15f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.08f, 0.04f, 0.12f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.12f, 0.06f, 0.18f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(1.00f, 0.00f, 1.00f, 0.50f);  // Magenta
+            colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.05f, 0.20f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.10f, 0.35f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.35f, 0.15f, 0.45f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.02f, 0.12f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.40f, 0.00f, 0.50f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.12f, 0.04f, 0.18f, 1.00f);
+            colors[ImGuiCol_Header] = ImVec4(0.60f, 0.00f, 0.80f, 0.60f);  // Purple
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.80f, 0.00f, 1.00f, 0.80f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(1.00f, 0.00f, 1.00f, 1.00f);
+            colors[ImGuiCol_Button] = ImVec4(1.00f, 0.00f, 0.60f, 0.50f);  // Hot pink
+            colors[ImGuiCol_ButtonHovered] = ImVec4(1.00f, 0.20f, 0.80f, 0.70f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.90f);  // Cyan
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);  // Cyan
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.00f, 1.00f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(1.00f, 0.90f, 1.00f, 1.00f);  // Soft pink-white
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.60f, 0.40f, 0.60f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.30f, 0.00f, 0.40f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.80f, 0.00f, 1.00f, 0.80f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.50f, 0.00f, 0.65f, 1.00f);
+
+            // Piano roll colors - Synthwave
+            g_PianoRollColors.keyWhite = IM_COL32(40, 20, 60, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(25, 10, 40, 255);
+            g_PianoRollColors.gridLine = IM_COL32(80, 0, 120, 150);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(255, 0, 255, 200);  // Magenta
+            g_PianoRollColors.gridLinePattern = IM_COL32(0, 255, 255, 255);  // Cyan
+            g_PianoRollColors.noteDefault = IM_COL32(255, 0, 150, 255);  // Hot pink
+            g_PianoRollColors.noteSelected = IM_COL32(0, 255, 255, 255);  // Cyan
+            g_PianoRollColors.playhead = IM_COL32(255, 100, 0, 255);  // Orange
+            g_PianoRollColors.background = IM_COL32(20, 10, 35, 255);
+            break;
+
+        case Theme::Matrix:
+            // The Matrix - green on black
+            colors[ImGuiCol_WindowBg] = ImVec4(0.00f, 0.02f, 0.00f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.01f, 0.00f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.00f, 0.04f, 0.00f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.00f, 0.60f, 0.00f, 0.50f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.00f, 0.08f, 0.00f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.00f, 0.15f, 0.00f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.00f, 0.22f, 0.00f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.00f, 0.04f, 0.00f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 0.20f, 0.00f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.00f, 0.06f, 0.00f, 1.00f);
+            colors[ImGuiCol_Header] = ImVec4(0.00f, 0.40f, 0.00f, 0.60f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.55f, 0.00f, 0.80f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.00f, 0.70f, 0.00f, 1.00f);
+            colors[ImGuiCol_Button] = ImVec4(0.00f, 0.30f, 0.00f, 0.60f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.00f, 0.50f, 0.00f, 0.80f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 0.70f, 0.00f, 1.00f);
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 0.80f, 0.00f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.00f, 1.00f, 0.00f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 1.00f, 0.00f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.00f, 1.00f, 0.25f, 1.00f);  // Matrix green
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.00f, 0.40f, 0.10f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.00f, 0.15f, 0.00f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.00f, 0.40f, 0.00f, 0.80f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.00f, 0.25f, 0.00f, 1.00f);
+
+            // Piano roll colors - Matrix
+            g_PianoRollColors.keyWhite = IM_COL32(0, 30, 0, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(0, 15, 0, 255);
+            g_PianoRollColors.gridLine = IM_COL32(0, 50, 0, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(0, 120, 0, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(0, 200, 0, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(0, 200, 50, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(0, 255, 100, 255);
+            g_PianoRollColors.playhead = IM_COL32(50, 255, 50, 255);
+            g_PianoRollColors.background = IM_COL32(0, 5, 0, 255);
+            break;
+    }
+}
+
+// Initialize Matrix rain effect
+inline void InitMatrixRain(int screenWidth) {
+    if (g_MatrixInitialized) return;
+
+    const char* matrixChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()";
+    int numChars = static_cast<int>(strlen(matrixChars));
+    int columnWidth = 14;
+    int numColumns = screenWidth / columnWidth + 1;
+
+    g_MatrixColumns.resize(numColumns);
+    for (int i = 0; i < numColumns; ++i) {
+        g_MatrixColumns[i].y = static_cast<float>(rand() % 800);
+        g_MatrixColumns[i].speed = 50.0f + static_cast<float>(rand() % 150);
+        g_MatrixColumns[i].length = 5 + rand() % 20;
+        g_MatrixColumns[i].chars.clear();
+        for (int j = 0; j < g_MatrixColumns[i].length; ++j) {
+            g_MatrixColumns[i].chars += matrixChars[rand() % numChars];
+        }
+    }
+    g_MatrixInitialized = true;
+}
+
+// Draw Matrix rain background effect
+inline void DrawMatrixRain(ImDrawList* drawList, ImVec2 screenSize, float deltaTime) {
+    InitMatrixRain(static_cast<int>(screenSize.x));
+
+    int columnWidth = 14;
+    int charHeight = 16;
+
+    for (size_t i = 0; i < g_MatrixColumns.size(); ++i) {
+        MatrixColumn& col = g_MatrixColumns[i];
+
+        // Update position
+        col.y += col.speed * deltaTime;
+        if (col.y > screenSize.y + col.length * charHeight) {
+            col.y = -static_cast<float>(col.length * charHeight);
+            col.speed = 50.0f + static_cast<float>(rand() % 150);
+
+            // Randomize characters
+            const char* matrixChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()";
+            int numChars = static_cast<int>(strlen(matrixChars));
+            for (int j = 0; j < col.length; ++j) {
+                col.chars[j] = matrixChars[rand() % numChars];
+            }
+        }
+
+        // Draw characters with fading trail
+        float x = static_cast<float>(i * columnWidth);
+        for (int j = 0; j < col.length; ++j) {
+            float y = col.y - j * charHeight;
+            if (y < 0 || y > screenSize.y) continue;
+
+            // Brightness fades towards the tail
+            float brightness = 1.0f - static_cast<float>(j) / static_cast<float>(col.length);
+            int green = static_cast<int>(255 * brightness);
+            int alpha = static_cast<int>(200 * brightness);
+
+            // Head of trail is brightest (white-ish)
+            ImU32 color;
+            if (j == 0) {
+                color = IM_COL32(200, 255, 200, 255);
+            } else {
+                color = IM_COL32(0, green, green / 4, alpha);
+            }
+
+            char charStr[2] = {col.chars[j], '\0'};
+            drawList->AddText(ImVec2(x, y), color, charStr);
+        }
+    }
+}
+
+// Draw Synthwave chaser lights effect
+// Helper: Get neon color based on phase (cycles through pink, cyan, green)
+inline ImU32 GetNeonColor(float phase, float brightness) {
+    // 3 colors: Neon Pink (255, 20, 147), Neon Cyan (0, 255, 255), Neon Green (57, 255, 20)
+    float p = std::fmod(phase, 3.0f);
+    int r, g, b;
+
+    if (p < 1.0f) {
+        // Pink to Cyan
+        float t = p;
+        r = static_cast<int>((255 * (1 - t) + 0 * t) * brightness);
+        g = static_cast<int>((20 * (1 - t) + 255 * t) * brightness);
+        b = static_cast<int>((147 * (1 - t) + 255 * t) * brightness);
+    } else if (p < 2.0f) {
+        // Cyan to Green
+        float t = p - 1.0f;
+        r = static_cast<int>((0 * (1 - t) + 57 * t) * brightness);
+        g = static_cast<int>((255 * (1 - t) + 255 * t) * brightness);
+        b = static_cast<int>((255 * (1 - t) + 20 * t) * brightness);
+    } else {
+        // Green to Pink
+        float t = p - 2.0f;
+        r = static_cast<int>((57 * (1 - t) + 255 * t) * brightness);
+        g = static_cast<int>((255 * (1 - t) + 20 * t) * brightness);
+        b = static_cast<int>((20 * (1 - t) + 147 * t) * brightness);
+    }
+
+    return IM_COL32(r, g, b, static_cast<int>(255 * brightness));
+}
+
+inline void DrawSynthwaveChasers(ImDrawList* drawList, ImVec2 screenSize, float deltaTime) {
+    // Slower chaser animation
+    g_ChaserOffset += deltaTime * 40.0f;  // Much slower (was 200)
+    if (g_ChaserOffset > 1000.0f) g_ChaserOffset -= 1000.0f;
+
+    // Color cycling (very slow)
+    g_ChaserColorPhase += deltaTime * 0.3f;
+    if (g_ChaserColorPhase > 3.0f) g_ChaserColorPhase -= 3.0f;
+
+    // ========================================================================
+    // Large Sunset Background (covers bottom half of screen)
+    // ========================================================================
+    float sunRadius = screenSize.x * 0.4f;  // Much larger sun
+    float sunY = screenSize.y + sunRadius * 0.15f;  // Peek more above horizon
+    float sunX = screenSize.x * 0.5f;
+    float horizonY = screenSize.y * 0.6f;
+
+    // Sky gradient (dark purple to orange near horizon)
+    for (int i = 0; i < 40; ++i) {
+        float t = static_cast<float>(i) / 40.0f;
+        float y1 = horizonY * t;
+        float y2 = horizonY * (t + 1.0f / 40.0f);
+
+        // Purple at top, transitioning to orange/pink at horizon
+        int r = static_cast<int>(20 + 80 * t);
+        int g = static_cast<int>(10 + 20 * t);
+        int b = static_cast<int>(40 + 60 * (1.0f - t * 0.5f));
+
+        drawList->AddRectFilledMultiColor(
+            ImVec2(0, y1), ImVec2(screenSize.x, y2),
+            IM_COL32(r, g, b, 40), IM_COL32(r, g, b, 40),
+            IM_COL32(r + 20, g + 10, b - 10, 50), IM_COL32(r + 20, g + 10, b - 10, 50));
+    }
+
+    // Sun glow (large gradient behind sun)
+    for (int layer = 30; layer >= 0; --layer) {
+        float t = static_cast<float>(layer) / 30.0f;
+        float glowRadius = sunRadius * (1.0f + t * 0.8f);
+
+        // Glow color: yellow/orange fading to pink/purple
+        int r = 255;
+        int g = static_cast<int>(200 * (1.0f - t * 0.7f));
+        int b = static_cast<int>(50 + 150 * t);
+        int alpha = static_cast<int>(15 * (1.0f - t));
+
+        // Draw glow as filled segments
+        for (float angle = 3.14159f; angle <= 2.0f * 3.14159f; angle += 0.02f) {
+            float x1 = sunX + cosf(angle) * glowRadius;
+            float y1 = sunY + sinf(angle) * glowRadius;
+            float x2 = sunX + cosf(angle + 0.02f) * glowRadius;
+            float y2 = sunY + sinf(angle + 0.02f) * glowRadius;
+
+            if (y1 < screenSize.y && y2 < screenSize.y) {
+                drawList->AddTriangleFilled(
+                    ImVec2(sunX, sunY),
+                    ImVec2(x1, y1),
+                    ImVec2(x2, y2),
+                    IM_COL32(r, g, b, alpha));
+            }
+        }
+    }
+
+    // Main sun disc (solid with horizontal stripes)
+    for (float angle = 3.14159f; angle <= 2.0f * 3.14159f; angle += 0.01f) {
+        float x1 = sunX + cosf(angle) * sunRadius;
+        float y1 = sunY + sinf(angle) * sunRadius;
+        float x2 = sunX + cosf(angle + 0.01f) * sunRadius;
+        float y2 = sunY + sinf(angle + 0.01f) * sunRadius;
+
+        if (y1 < screenSize.y && y2 < screenSize.y) {
+            // Gradient from yellow at top to magenta at bottom
+            float heightRatio = 1.0f - (sunY - y1) / sunRadius;
+            int r = 255;
+            int g = static_cast<int>(255 * (1.0f - heightRatio * 0.9f));
+            int b = static_cast<int>(50 + 200 * heightRatio);
+
+            drawList->AddTriangleFilled(
+                ImVec2(sunX, sunY),
+                ImVec2(x1, y1),
+                ImVec2(x2, y2),
+                IM_COL32(r, g, b, 200));
+        }
+    }
+
+    // Horizontal stripe gaps in sun (classic synthwave look)
+    float stripeSpacing = sunRadius / 8.0f;
+    for (float y = sunY - sunRadius; y < screenSize.y; y += stripeSpacing) {
+        if (y < horizonY) continue;
+
+        // Calculate width at this height
+        float dy = sunY - y;
+        if (dy < 0 || dy > sunRadius) continue;
+        float halfWidth = sqrtf(sunRadius * sunRadius - dy * dy);
+
+        // Stripe gets thicker toward bottom
+        float stripeHeight = 2.0f + (y - horizonY) / (screenSize.y - horizonY) * 8.0f;
+
+        drawList->AddRectFilled(
+            ImVec2(sunX - halfWidth, y),
+            ImVec2(sunX + halfWidth, y + stripeHeight),
+            IM_COL32(20, 10, 30, 255));  // Dark purple background color
+    }
+
+    // Horizon line
+    drawList->AddLine(
+        ImVec2(0, horizonY),
+        ImVec2(screenSize.x, horizonY),
+        IM_COL32(255, 100, 200, 150), 2.0f);
+
+    // Grid floor (perspective lines going to vanishing point)
+    float vanishY = horizonY;
+    float vanishX = sunX;
+    int numVerticalLines = 30;
+    for (int i = -numVerticalLines / 2; i <= numVerticalLines / 2; ++i) {
+        float x = vanishX + i * (screenSize.x / numVerticalLines) * 2.0f;
+        float alpha = 1.0f - std::abs(static_cast<float>(i)) / (numVerticalLines / 2.0f);
+        drawList->AddLine(
+            ImVec2(vanishX, vanishY),
+            ImVec2(x, screenSize.y),
+            IM_COL32(255, 50, 200, static_cast<int>(80 * alpha)), 1.0f);
+    }
+
+    // Horizontal grid lines (closer together near horizon)
+    for (int i = 1; i <= 15; ++i) {
+        float t = static_cast<float>(i) / 15.0f;
+        float y = horizonY + (screenSize.y - horizonY) * t * t;  // Quadratic spacing
+        float alpha = t;
+        drawList->AddLine(
+            ImVec2(0, y),
+            ImVec2(screenSize.x, y),
+            IM_COL32(255, 50, 200, static_cast<int>(60 * alpha)), 1.0f);
+    }
+
+    // ========================================================================
+    // Smooth Gradient Chasers (top and bottom)
+    // ========================================================================
+    float chaserHeight = 8.0f;
+    float glowHeight = 20.0f;
+
+    // Top chaser - smooth gradient wave
+    for (float x = 0; x < screenSize.x; x += 2.0f) {
+        float phase = x * 0.01f - g_ChaserOffset * 0.05f;
+        float brightness = (sinf(phase) + 1.0f) * 0.5f;
+        brightness = brightness * brightness;  // Sharper peaks
+
+        float colorPhase = g_ChaserColorPhase + x * 0.002f;
+        ImU32 color = GetNeonColor(colorPhase, brightness);
+
+        // Main chaser bar
+        drawList->AddRectFilled(
+            ImVec2(x, 0),
+            ImVec2(x + 3.0f, chaserHeight * brightness + 2.0f),
+            color);
+
+        // Glow below
+        if (brightness > 0.3f) {
+            ImU32 glowColor = GetNeonColor(colorPhase, brightness * 0.3f);
+            drawList->AddRectFilledMultiColor(
+                ImVec2(x, chaserHeight),
+                ImVec2(x + 3.0f, chaserHeight + glowHeight * brightness),
+                glowColor, glowColor,
+                IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
+        }
+    }
+
+    // Bottom chaser - smooth gradient wave (reversed direction, different color offset)
+    for (float x = 0; x < screenSize.x; x += 2.0f) {
+        float phase = (screenSize.x - x) * 0.01f - g_ChaserOffset * 0.05f;
+        float brightness = (sinf(phase) + 1.0f) * 0.5f;
+        brightness = brightness * brightness;
+
+        float colorPhase = g_ChaserColorPhase + 1.5f + x * 0.002f;  // Offset color
+        ImU32 color = GetNeonColor(colorPhase, brightness);
+
+        // Main chaser bar
+        drawList->AddRectFilled(
+            ImVec2(x, screenSize.y - chaserHeight * brightness - 2.0f),
+            ImVec2(x + 3.0f, screenSize.y),
+            color);
+
+        // Glow above
+        if (brightness > 0.3f) {
+            ImU32 glowColor = GetNeonColor(colorPhase, brightness * 0.3f);
+            drawList->AddRectFilledMultiColor(
+                ImVec2(x, screenSize.y - chaserHeight - glowHeight * brightness),
+                ImVec2(x + 3.0f, screenSize.y - chaserHeight),
+                IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0),
+                glowColor, glowColor);
+        }
+    }
+
+    // Side chasers (left and right edges)
+    for (float y = 0; y < screenSize.y; y += 2.0f) {
+        float phase = y * 0.015f + g_ChaserOffset * 0.03f;
+        float brightness = (sinf(phase) + 1.0f) * 0.5f;
+        brightness = brightness * brightness;
+
+        float colorPhase = g_ChaserColorPhase + 0.5f + y * 0.001f;
+        ImU32 color = GetNeonColor(colorPhase, brightness * 0.7f);
+
+        // Left edge
+        drawList->AddRectFilled(
+            ImVec2(0, y),
+            ImVec2(4.0f + 4.0f * brightness, y + 3.0f),
+            color);
+
+        // Right edge
+        drawList->AddRectFilled(
+            ImVec2(screenSize.x - 4.0f - 4.0f * brightness, y),
+            ImVec2(screenSize.x, y + 3.0f),
+            color);
+    }
+}
+
+// Draw Cyberpunk glitch lines effect with enhanced animations
+inline void DrawCyberpunkGlitch(ImDrawList* drawList, ImVec2 screenSize, float deltaTime) {
+    static float glitchTimer = 0.0f;
+    static float nextGlitchTime = 0.5f;
+    static std::vector<std::pair<float, float>> glitchLines;  // y position and width
+    static float hexTimer = 0.0f;
+    static float flickerTimer = 0.0f;
+    static bool flickerState = true;
+
+    glitchTimer += deltaTime;
+    hexTimer += deltaTime;
+    flickerTimer += deltaTime;
+
+    // Update global animation states
+    g_CyberpunkPulse += deltaTime * 2.0f;
+    if (g_CyberpunkPulse > 6.28318f) g_CyberpunkPulse -= 6.28318f;
+
+    g_DataStreamOffset += deltaTime * 150.0f;
+    if (g_DataStreamOffset > 500.0f) g_DataStreamOffset -= 500.0f;
+
+    // Flicker state (random)
+    if (flickerTimer > 0.05f + static_cast<float>(rand() % 10) / 100.0f) {
+        flickerTimer = 0.0f;
+        flickerState = (rand() % 10) > 1;  // 90% on, 10% flicker
+    }
+
+    // ========================================================================
+    // Background circuit pattern (scales with screen width)
+    // ========================================================================
+    // Faint circuit board lines - scale count with screen width
+    int numCircuitLines = static_cast<int>(screenSize.x / 80.0f) + 5;
+    float circuitSpacing = screenSize.x / static_cast<float>(numCircuitLines);
+    for (int i = 0; i < numCircuitLines; ++i) {
+        float x = (i * circuitSpacing + hexTimer * 5.0f);
+        x = std::fmod(x, screenSize.x + 200.0f) - 100.0f;
+        float alpha = 0.3f + 0.1f * sinf(hexTimer + i);
+
+        // Vertical lines
+        drawList->AddLine(
+            ImVec2(x, 0),
+            ImVec2(x, screenSize.y),
+            IM_COL32(0, 80, 80, static_cast<int>(20 * alpha)), 1.0f);
+
+        // Horizontal connections at random heights
+        if (i % 3 == 0) {
+            float y = std::fmod(i * 47.0f, screenSize.y);
+            float nextX = x + circuitSpacing;
+            if (nextX < screenSize.x) {
+                drawList->AddLine(
+                    ImVec2(x, y),
+                    ImVec2(nextX, y),
+                    IM_COL32(0, 100, 100, static_cast<int>(15 * alpha)), 1.0f);
+
+                // Node dots
+                drawList->AddCircleFilled(ImVec2(x, y), 3.0f, IM_COL32(0, 150, 150, static_cast<int>(40 * alpha)));
+            }
+        }
+    }
+
+    // ========================================================================
+    // Data streams (falling binary/hex characters on sides)
+    // ========================================================================
+    const char* hexChars = "0123456789ABCDEF";
+    // Scale stream width and column count with screen dimensions
+    float streamWidth = screenSize.x * 0.06f;  // 6% of screen width
+    int numStreamCols = std::max(3, static_cast<int>(streamWidth / 20.0f));
+    float colSpacing = streamWidth / static_cast<float>(numStreamCols);
+    int numStreamRows = static_cast<int>(screenSize.y / 15.0f) + 5;
+
+    // Left data stream
+    for (int col = 0; col < numStreamCols; ++col) {
+        float x = 10.0f + col * colSpacing;
+        float offset = std::fmod(g_DataStreamOffset * (0.5f + col * 0.2f), 400.0f);
+
+        for (int row = 0; row < numStreamRows; ++row) {
+            float y = std::fmod(row * 20.0f + offset, screenSize.y + 40.0f) - 20.0f;
+            int charIndex = (col * 7 + row * 3 + static_cast<int>(hexTimer * 10)) % 16;
+            char str[2] = { hexChars[charIndex], 0 };
+
+            float alpha = 0.3f + 0.2f * sinf(hexTimer * 3.0f + row * 0.3f);
+            ImU32 color = (row % 5 == 0)
+                ? IM_COL32(255, 255, 0, static_cast<int>(200 * alpha))   // Yellow highlight
+                : IM_COL32(0, 255, 255, static_cast<int>(150 * alpha));  // Cyan
+
+            drawList->AddText(ImVec2(x, y), color, str);
+        }
+    }
+
+    // Right data stream
+    for (int col = 0; col < numStreamCols; ++col) {
+        float x = screenSize.x - 10.0f - col * colSpacing - colSpacing;
+        float offset = std::fmod(g_DataStreamOffset * (0.7f + col * 0.15f), 400.0f);
+
+        for (int row = 0; row < numStreamRows; ++row) {
+            float y = std::fmod(row * 20.0f + offset, screenSize.y + 40.0f) - 20.0f;
+            int charIndex = (col * 11 + row * 5 + static_cast<int>(hexTimer * 8)) % 16;
+            char str[2] = { hexChars[charIndex], 0 };
+
+            float alpha = 0.3f + 0.2f * sinf(hexTimer * 2.5f + row * 0.4f);
+            ImU32 color = (row % 4 == 0)
+                ? IM_COL32(255, 0, 128, static_cast<int>(200 * alpha))   // Pink highlight
+                : IM_COL32(0, 255, 255, static_cast<int>(150 * alpha));  // Cyan
+
+            drawList->AddText(ImVec2(x, y), color, str);
+        }
+    }
+
+    // ========================================================================
+    // Pulsing neon border
+    // ========================================================================
+    float pulseVal = (sinf(g_CyberpunkPulse) + 1.0f) * 0.5f;
+    float borderWidth = 3.0f + pulseVal * 2.0f;
+    int borderAlpha = static_cast<int>(100 + 100 * pulseVal);
+
+    if (flickerState) {
+        // Top border - yellow
+        drawList->AddRectFilled(
+            ImVec2(0, 0),
+            ImVec2(screenSize.x, borderWidth),
+            IM_COL32(255, 255, 0, borderAlpha));
+
+        // Bottom border - cyan
+        drawList->AddRectFilled(
+            ImVec2(0, screenSize.y - borderWidth),
+            ImVec2(screenSize.x, screenSize.y),
+            IM_COL32(0, 255, 255, borderAlpha));
+
+        // Left border - pink
+        drawList->AddRectFilled(
+            ImVec2(0, 0),
+            ImVec2(borderWidth, screenSize.y),
+            IM_COL32(255, 0, 128, borderAlpha));
+
+        // Right border - pink
+        drawList->AddRectFilled(
+            ImVec2(screenSize.x - borderWidth, 0),
+            ImVec2(screenSize.x, screenSize.y),
+            IM_COL32(255, 0, 128, borderAlpha));
+
+        // Corner glow effects - scale with screen size
+        float baseCornerSize = std::min(screenSize.x, screenSize.y) * 0.06f;
+        float cornerSize = baseCornerSize + pulseVal * baseCornerSize * 0.4f;
+        // Top-left
+        drawList->AddRectFilledMultiColor(
+            ImVec2(0, 0), ImVec2(cornerSize, cornerSize),
+            IM_COL32(255, 255, 0, 60), IM_COL32(255, 255, 0, 0),
+            IM_COL32(255, 255, 0, 0), IM_COL32(255, 255, 0, 0));
+        // Top-right
+        drawList->AddRectFilledMultiColor(
+            ImVec2(screenSize.x - cornerSize, 0), ImVec2(screenSize.x, cornerSize),
+            IM_COL32(0, 255, 255, 0), IM_COL32(0, 255, 255, 60),
+            IM_COL32(0, 255, 255, 0), IM_COL32(0, 255, 255, 0));
+        // Bottom-left
+        drawList->AddRectFilledMultiColor(
+            ImVec2(0, screenSize.y - cornerSize), ImVec2(cornerSize, screenSize.y),
+            IM_COL32(255, 0, 128, 0), IM_COL32(255, 0, 128, 0),
+            IM_COL32(255, 0, 128, 0), IM_COL32(255, 0, 128, 60));
+        // Bottom-right
+        drawList->AddRectFilledMultiColor(
+            ImVec2(screenSize.x - cornerSize, screenSize.y - cornerSize),
+            ImVec2(screenSize.x, screenSize.y),
+            IM_COL32(0, 255, 255, 0), IM_COL32(0, 255, 255, 0),
+            IM_COL32(0, 255, 255, 60), IM_COL32(0, 255, 255, 0));
+    }
+
+    // ========================================================================
+    // Glitch lines (enhanced)
+    // ========================================================================
+    // Trigger new glitch
+    if (glitchTimer > nextGlitchTime) {
+        glitchTimer = 0.0f;
+        nextGlitchTime = 0.2f + static_cast<float>(rand() % 100) / 100.0f * 0.8f;
+
+        glitchLines.clear();
+        int numLines = 1 + rand() % 6;
+        for (int i = 0; i < numLines; ++i) {
+            float y = static_cast<float>(rand() % static_cast<int>(screenSize.y));
+            float width = 30.0f + static_cast<float>(rand() % 300);
+            glitchLines.push_back({y, width});
+        }
+    }
+
+    // Draw glitch lines with chromatic aberration effect
+    float glitchAlpha = 1.0f - (glitchTimer / nextGlitchTime);
+    glitchAlpha = glitchAlpha * glitchAlpha;  // Faster falloff
+
+    for (const auto& line : glitchLines) {
+        float offset = static_cast<float>(rand() % 30 - 15);
+        float height = 1.0f + static_cast<float>(rand() % 4);
+
+        // Red channel offset
+        drawList->AddRectFilled(
+            ImVec2(offset - 3, line.first),
+            ImVec2(offset + line.second - 3, line.first + height),
+            IM_COL32(255, 0, 0, static_cast<int>(80 * glitchAlpha)));
+
+        // Cyan/green channel
+        drawList->AddRectFilled(
+            ImVec2(offset + 3, line.first),
+            ImVec2(offset + line.second + 3, line.first + height),
+            IM_COL32(0, 255, 255, static_cast<int>(80 * glitchAlpha)));
+
+        // White core
+        drawList->AddRectFilled(
+            ImVec2(offset, line.first),
+            ImVec2(offset + line.second, line.first + height),
+            IM_COL32(255, 255, 255, static_cast<int>(120 * glitchAlpha)));
+
+        // Mirror glitch on other side
+        float mirrorY = screenSize.y - line.first - height;
+        drawList->AddRectFilled(
+            ImVec2(screenSize.x - line.second + offset, mirrorY),
+            ImVec2(screenSize.x + offset, mirrorY + height),
+            IM_COL32(255, 0, 128, static_cast<int>(70 * glitchAlpha)));
+    }
+
+    // ========================================================================
+    // Moving scan line
+    // ========================================================================
+    float scanY = std::fmod(hexTimer * 100.0f, screenSize.y + 100.0f) - 50.0f;
+    drawList->AddRectFilledMultiColor(
+        ImVec2(0, scanY - 30), ImVec2(screenSize.x, scanY),
+        IM_COL32(0, 255, 255, 0), IM_COL32(0, 255, 255, 0),
+        IM_COL32(0, 255, 255, 30), IM_COL32(0, 255, 255, 30));
+    drawList->AddLine(
+        ImVec2(0, scanY),
+        ImVec2(screenSize.x, scanY),
+        IM_COL32(0, 255, 255, 80), 2.0f);
+
+    // ========================================================================
+    // CRT scanlines overlay
+    // ========================================================================
+    for (float y = 0; y < screenSize.y; y += 2.0f) {
+        drawList->AddLine(
+            ImVec2(0, y),
+            ImVec2(screenSize.x, y),
+            IM_COL32(0, 0, 0, 25), 1.0f);
+    }
+
+    // ========================================================================
+    // Random pixel noise (subtle)
+    // ========================================================================
+    if (rand() % 3 == 0) {  // Only sometimes
+        for (int i = 0; i < 20; ++i) {
+            float x = static_cast<float>(rand() % static_cast<int>(screenSize.x));
+            float y = static_cast<float>(rand() % static_cast<int>(screenSize.y));
+            ImU32 color = (rand() % 2 == 0)
+                ? IM_COL32(0, 255, 255, 100)
+                : IM_COL32(255, 255, 0, 100);
+            drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + 2, y + 2), color);
+        }
+    }
+}
+
+// Draw theme background effects
+inline void DrawThemeBackground(Theme theme, float deltaTime) {
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    ImVec2 screenSize = ImGui::GetIO().DisplaySize;
+
+    switch (theme) {
+        case Theme::Matrix:
+            DrawMatrixRain(drawList, screenSize, deltaTime);
+            break;
+        case Theme::Synthwave:
+            DrawSynthwaveChasers(drawList, screenSize, deltaTime);
+            break;
+        case Theme::Cyberpunk:
+            DrawCyberpunkGlitch(drawList, screenSize, deltaTime);
+            break;
+        case Theme::Stock:
+        default:
+            // No background effect for stock theme
+            break;
+    }
+}
+
+// ============================================================================
 // Transport Bar
 // ============================================================================
 inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& state, UIState& ui) {
@@ -200,12 +997,13 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SameLine();
 
     static bool showExportPopup = false;
+    static bool showMp3ExportPopup = false;
     static float exportDuration = 16.0f;
+    static int mp3Bitrate = 192;
     static std::string exportStatus = "";
 
-    if (ImGui::Button("WAV", ImVec2(50, 25))) {
-        showExportPopup = true;
-        // Calculate default duration from pattern
+    // Calculate default duration helper
+    auto calcDefaultDuration = [&]() {
         if (ui.selectedPattern >= 0 && ui.selectedPattern < static_cast<int>(project.patterns.size())) {
             const Pattern& pat = project.patterns[ui.selectedPattern];
             float maxEnd = 0.0f;
@@ -215,10 +1013,26 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
             }
             exportDuration = std::max(4.0f, maxEnd + 1.0f);
         }
+    };
+
+    if (ImGui::Button("WAV", ImVec2(50, 25))) {
+        showExportPopup = true;
+        calcDefaultDuration();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export to WAV audio file");
 
-    // Export popup
+    ImGui::SameLine();
+
+    if (ImGui::Button("MP3", ImVec2(50, 25))) {
+        showMp3ExportPopup = true;
+        calcDefaultDuration();
+    }
+    if (ImGui::IsItemHovered()) {
+        std::string tooltip = "Export to MP3 audio file\n" + getMp3EncoderStatus();
+        ImGui::SetTooltip("%s", tooltip.c_str());
+    }
+
+    // WAV Export popup
     if (showExportPopup) {
         ImGui::OpenPopup("Export WAV");
     }
@@ -267,6 +1081,84 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
         ImGui::EndPopup();
     }
 
+    // MP3 Export popup
+    if (showMp3ExportPopup) {
+        ImGui::OpenPopup("Export MP3");
+    }
+
+    if (ImGui::BeginPopupModal("Export MP3", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Export audio to MP3 file");
+        ImGui::Separator();
+
+        // Show encoder status
+        std::string encoderStatus = getMp3EncoderStatus();
+        bool hasEncoder = isLameAvailable() || isFFmpegAvailable();
+        ImGui::TextColored(
+            hasEncoder ? ImVec4(0.3f, 1, 0.3f, 1) : ImVec4(1, 0.5f, 0.3f, 1),
+            "%s", encoderStatus.c_str());
+
+        ImGui::Separator();
+
+        ImGui::SetNextItemWidth(150);
+        ImGui::DragFloat("Duration (beats)", &exportDuration, 1.0f, 1.0f, 256.0f, "%.0f");
+
+        float durationSec = exportDuration * 60.0f / project.bpm;
+        ImGui::Text("Duration: %.1f seconds at %.0f BPM", durationSec, project.bpm);
+
+        ImGui::Spacing();
+
+        ImGui::SetNextItemWidth(150);
+        ImGui::SliderInt("Bitrate (kbps)", &mp3Bitrate, 128, 320);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Higher = better quality, larger file");
+
+        ImGui::Separator();
+
+        // Disable export button if no encoder
+        if (!hasEncoder) {
+            ImGui::BeginDisabled();
+        }
+
+        if (ImGui::Button("Export", ImVec2(100, 0))) {
+            std::string path = saveFileDialog(
+                "MP3 Audio (*.mp3)\0*.mp3\0",
+                "mp3");
+            if (!path.empty()) {
+                if (exportMp3(project, seq, path, exportDuration, mp3Bitrate)) {
+                    exportStatus = "MP3 export successful!";
+                } else {
+                    exportStatus = "MP3 export failed!";
+                }
+            }
+            showMp3ExportPopup = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (!hasEncoder) {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            showMp3ExportPopup = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (!hasEncoder) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("Install LAME or FFmpeg and add to PATH to enable MP3 export.");
+        }
+
+        if (!exportStatus.empty() && exportStatus.find("MP3") != std::string::npos) {
+            ImGui::TextColored(
+                exportStatus.find("failed") != std::string::npos
+                    ? ImVec4(1, 0.3f, 0.3f, 1) : ImVec4(0.3f, 1, 0.3f, 1),
+                "%s", exportStatus.c_str());
+        }
+
+        ImGui::EndPopup();
+    }
+
     ImGui::SameLine();
 
     // Show current file path
@@ -302,7 +1194,8 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Text("Pattern: %s", pattern.name.c_str());
     ImGui::SameLine();
     ImGui::SetNextItemWidth(60);
-    ImGui::DragInt("Length", &pattern.length, 1, 1, 64);
+    ImGui::DragInt("Length", &pattern.length, 1, 1, 9999);  // Essentially unlimited
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pattern length in beats (auto-extends as you add notes)");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);
     ImGui::SliderFloat("Zoom", &ui.zoomX, 0.5f, 4.0f);
@@ -961,6 +1854,12 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 newNote.velocity = 0.8f;
                 pattern.notes.push_back(newNote);
                 ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
+
+                // Auto-extend pattern length if note goes past current end
+                float noteEnd = newNote.startTime + newNote.duration;
+                if (noteEnd > pattern.length) {
+                    pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                }
             }
         }
         ImGui::EndDragDropTarget();
@@ -1028,6 +1927,12 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
                     pattern.notes.push_back(newNote);
                     ui.selectedNoteIndices.push_back(static_cast<int>(pattern.notes.size()) - 1);
+
+                    // Auto-extend pattern length if note goes past current end
+                    float noteEnd = newNote.startTime + newNote.duration;
+                    if (noteEnd > pattern.length) {
+                        pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                    }
                 }
 
                 // Select the first pasted note as primary
@@ -1104,6 +2009,13 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         newNote.velocity = 0.8f;
                         pattern.notes.push_back(newNote);
                         ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
+
+                        // Auto-extend pattern length if note goes past current end
+                        float noteEnd = newNote.startTime + newNote.duration;
+                        if (noteEnd > pattern.length) {
+                            // Round up to next measure
+                            pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                        }
                     }
                     break;
 
@@ -1881,6 +2793,12 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
         newNote.startTime += note.duration;  // Place after current note
         pattern.notes.push_back(newNote);
         ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
+
+        // Auto-extend pattern length if note goes past current end
+        float noteEnd = newNote.startTime + newNote.duration;
+        if (noteEnd > pattern.length) {
+            pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+        }
     }
 
     ImGui::SameLine();
@@ -1981,6 +2899,102 @@ inline void DrawWaveformIcon(ImDrawList* drawList, ImVec2 pos, ImVec2 size, Osci
             drawList->AddText(ImVec2(pos.x + size.x/2 - 8, pos.y + size.y/2 - 6), color, "~");
             break;
         }
+
+        // ================================================================
+        // SYNTHS
+        // ================================================================
+        case OscillatorType::SynthLead: {
+            // Lead - double saw icon
+            float sw = hw * 0.4f;
+            drawList->AddLine(ImVec2(cx - sw, cy + hh*0.6f), ImVec2(cx, cy - hh*0.6f), color, 2.0f);
+            drawList->AddLine(ImVec2(cx, cy - hh*0.6f), ImVec2(cx, cy + hh*0.6f), color, 2.0f);
+            drawList->AddLine(ImVec2(cx, cy + hh*0.6f), ImVec2(cx + sw, cy - hh*0.6f), color, 2.0f);
+            // Second saw slightly offset
+            drawList->AddLine(ImVec2(cx - sw + 3, cy + hh*0.4f), ImVec2(cx + 3, cy - hh*0.4f), color, 1.5f);
+            break;
+        }
+        case OscillatorType::SynthPad: {
+            // Pad - soft waves
+            ImVec2 prev(pos.x + 4, cy);
+            for (int i = 1; i <= 12; ++i) {
+                float t = static_cast<float>(i) / 12.0f;
+                float x = pos.x + 4 + t * (size.x - 8);
+                float y = cy - std::sin(t * 6.28f * 0.5f) * hh * 0.6f;
+                drawList->AddLine(prev, ImVec2(x, y), color, 2.5f);
+                prev = ImVec2(x, y);
+            }
+            break;
+        }
+        case OscillatorType::SynthBass: {
+            // Bass - thick low wave
+            drawList->AddLine(ImVec2(pos.x + 4, cy), ImVec2(cx - hw*0.3f, cy + hh*0.8f), color, 3.0f);
+            drawList->AddLine(ImVec2(cx - hw*0.3f, cy + hh*0.8f), ImVec2(cx + hw*0.3f, cy - hh*0.4f), color, 3.0f);
+            drawList->AddLine(ImVec2(cx + hw*0.3f, cy - hh*0.4f), ImVec2(pos.x + size.x - 4, cy), color, 3.0f);
+            break;
+        }
+        case OscillatorType::SynthPluck: {
+            // Pluck - sharp attack then decay
+            drawList->AddLine(ImVec2(pos.x + 4, cy), ImVec2(pos.x + 8, cy - hh), color, 2.0f);
+            drawList->AddLine(ImVec2(pos.x + 8, cy - hh), ImVec2(pos.x + size.x - 4, cy + hh*0.3f), color, 2.0f);
+            break;
+        }
+        case OscillatorType::SynthArp: {
+            // Arp - staircase pattern
+            float step = (size.x - 8) / 4.0f;
+            for (int i = 0; i < 4; ++i) {
+                float x = pos.x + 4 + i * step;
+                float y = cy - hh + (i % 2) * hh * 1.5f;
+                drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + step - 2, y + 4), color);
+            }
+            break;
+        }
+        case OscillatorType::SynthOrgan: {
+            // Organ - drawbar-like lines
+            for (int i = 0; i < 5; ++i) {
+                float x = pos.x + 6 + i * (size.x - 12) / 5.0f;
+                float h = hh * (0.5f + (4 - i) * 0.15f);
+                drawList->AddLine(ImVec2(x, cy + h), ImVec2(x, cy - h), color, 2.5f);
+            }
+            break;
+        }
+        case OscillatorType::SynthStrings: {
+            // Strings - wavy lines
+            for (int j = -1; j <= 1; ++j) {
+                ImVec2 prev(pos.x + 4, cy + j * hh * 0.4f);
+                for (int i = 1; i <= 8; ++i) {
+                    float t = static_cast<float>(i) / 8.0f;
+                    float x = pos.x + 4 + t * (size.x - 8);
+                    float y = cy + j * hh * 0.4f - std::sin(t * 6.28f + j) * hh * 0.2f;
+                    drawList->AddLine(prev, ImVec2(x, y), color, 1.5f);
+                    prev = ImVec2(x, y);
+                }
+            }
+            break;
+        }
+        case OscillatorType::SynthBrass: {
+            // Brass - bold angular
+            drawList->AddLine(ImVec2(pos.x + 4, cy + hh*0.5f), ImVec2(cx - hw*0.2f, cy - hh*0.8f), color, 2.5f);
+            drawList->AddLine(ImVec2(cx - hw*0.2f, cy - hh*0.8f), ImVec2(cx + hw*0.2f, cy + hh*0.8f), color, 2.5f);
+            drawList->AddLine(ImVec2(cx + hw*0.2f, cy + hh*0.8f), ImVec2(pos.x + size.x - 4, cy - hh*0.5f), color, 2.5f);
+            break;
+        }
+        case OscillatorType::SynthChip: {
+            // Chip - narrow pulse
+            float pw = hw * 0.2f;
+            drawList->AddLine(ImVec2(pos.x + 4, cy + hh), ImVec2(pos.x + 4, cy - hh), color, 2.0f);
+            drawList->AddLine(ImVec2(pos.x + 4, cy - hh), ImVec2(cx - pw, cy - hh), color, 2.0f);
+            drawList->AddLine(ImVec2(cx - pw, cy - hh), ImVec2(cx - pw, cy + hh), color, 2.0f);
+            drawList->AddLine(ImVec2(cx - pw, cy + hh), ImVec2(pos.x + size.x - 4, cy + hh), color, 2.0f);
+            break;
+        }
+        case OscillatorType::SynthBell: {
+            // Bell - star/sparkle shape
+            drawList->AddCircle(ImVec2(cx, cy), hh * 0.5f, color, 8, 2.0f);
+            drawList->AddLine(ImVec2(cx, cy - hh*0.8f), ImVec2(cx, cy + hh*0.8f), color, 1.5f);
+            drawList->AddLine(ImVec2(cx - hh*0.8f, cy), ImVec2(cx + hh*0.8f, cy), color, 1.5f);
+            break;
+        }
+
         // ================================================================
         // KICKS
         // ================================================================
@@ -2173,17 +3187,20 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     const char* oscNames[] = {
         // Oscillators (0-5)
         "Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Custom",
-        // Kicks (6-9)
+        // Synths (6-15)
+        "Lead", "Pad", "Bass", "Pluck", "Arp",
+        "Organ", "Strings", "Brass", "Chip", "Bell",
+        // Kicks (16-19)
         "Kick", "Kick808", "KickHard", "KickSoft",
-        // Snares (10-13)
+        // Snares (20-23)
         "Snare", "Snare808", "SnareRim", "Clap",
-        // Hi-Hats (14-16)
+        // Hi-Hats (24-26)
         "HiHat", "HiHatOpen", "HiHatPedal",
-        // Toms (17-19)
+        // Toms (27-29)
         "Tom", "TomLow", "TomHigh",
-        // Cymbals (20-21)
+        // Cymbals (30-31)
         "Crash", "Ride",
-        // Percussion (22-26)
+        // Percussion (32-36)
         "Cowbell", "Clave", "Conga", "Maracas", "Tambourine"
     };
     const char* oscDesc[] = {
@@ -2194,6 +3211,17 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         "Sine wave - Pure, clean",
         "Noise - Percussion, hi-hats",
         "Custom - Adjustable shape",
+        // Synths
+        "Lead - Thick detuned sawtooths",
+        "Pad - Soft, atmospheric sound",
+        "Bass - Deep punchy bass",
+        "Pluck - Short, plucky sound",
+        "Arp - Crisp for arpeggios",
+        "Organ - Classic drawbar organ",
+        "Strings - Lush string ensemble",
+        "Brass - Rich, brassy stab",
+        "Chip - Classic 12.5% chiptune",
+        "Bell - FM-like bell/chime",
         // Kicks
         "Standard kick with pitch sweep",
         "Deep 808 kick, more sub-bass",
@@ -2223,7 +3251,8 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         "Jingly metallic"
     };
     constexpr int NUM_OSCILLATORS = 6;
-    constexpr int NUM_DRUMS = 21;  // 27 total - 6 oscillators
+    constexpr int NUM_SYNTHS = 10;
+    constexpr int NUM_DRUMS = 21;
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 iconSize(60, 40);
@@ -2292,6 +3321,79 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         ImGui::PopID();
     }
 
+    // Synths section
+    ImGui::Separator();
+    ImGui::Text("Synths:");
+
+    ImVec2 synthIconSize(55, 35);
+    int synthsPerRow = 5;
+
+    for (int i = NUM_OSCILLATORS; i < NUM_OSCILLATORS + NUM_SYNTHS; ++i) {
+        ImGui::PushID(i);
+
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        bool isChannelOsc = (static_cast<int>(project.channels[ui.selectedChannel].oscillator.type) == i);
+        bool isPaletteSelected = (g_SelectedPaletteItem == i);
+
+        // Synth colors - purple/blue theme
+        ImU32 bgColor = isPaletteSelected ? IM_COL32(100, 80, 140, 255) :
+                        isChannelOsc ? IM_COL32(80, 60, 120, 255) : IM_COL32(45, 40, 55, 255);
+        ImU32 waveColor = isPaletteSelected ? IM_COL32(220, 180, 255, 255) :
+                          isChannelOsc ? IM_COL32(180, 150, 220, 255) : IM_COL32(150, 120, 180, 255);
+        ImU32 borderColor = isPaletteSelected ? IM_COL32(200, 150, 255, 255) :
+                            isChannelOsc ? IM_COL32(150, 100, 200, 255) : IM_COL32(80, 70, 100, 255);
+
+        drawList->AddRectFilled(pos, ImVec2(pos.x + synthIconSize.x, pos.y + synthIconSize.y), bgColor, 4.0f);
+        drawList->AddRect(pos, ImVec2(pos.x + synthIconSize.x, pos.y + synthIconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 3.0f : 1.0f);
+
+        // Draw synth icon
+        DrawWaveformIcon(drawList, pos, synthIconSize, static_cast<OscillatorType>(i), waveColor);
+
+        // Button for click and drag
+        ImGui::InvisibleButton("##synth", synthIconSize);
+
+        // Click to select for placement (toggle)
+        if (ImGui::IsItemClicked()) {
+            if (g_SelectedPaletteItem == i) {
+                g_SelectedPaletteItem = -1;  // Deselect
+            } else {
+                g_SelectedPaletteItem = i;  // Select
+                ui.pianoRollMode = PianoRollMode::Draw;  // Auto-switch to Draw mode
+                project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
+                seq.updateChannelConfigs();
+            }
+        }
+
+        // Drag source
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+            g_DraggedOscillatorType = i;
+            ImGui::SetDragDropPayload("OSC_TYPE", &i, sizeof(int));
+            ImGui::Text("Drag: %s", oscNames[i]);
+            DrawWaveformIcon(ImGui::GetWindowDrawList(),
+                ImGui::GetCursorScreenPos(), ImVec2(40, 25),
+                static_cast<OscillatorType>(i), IM_COL32(220, 180, 255, 255));
+            ImGui::EndDragDropSource();
+        }
+
+        // Tooltip
+        if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("%s", oscNames[i]);
+            ImGui::TextDisabled("%s", oscDesc[i]);
+            if (isPaletteSelected) {
+                ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1.0f), "SELECTED - Click on Piano Roll to place");
+            }
+            ImGui::EndTooltip();
+        }
+
+        // Wrap after every synthsPerRow items
+        int synthIndex = i - NUM_OSCILLATORS;
+        if ((synthIndex + 1) % synthsPerRow != 0 && i < NUM_OSCILLATORS + NUM_SYNTHS - 1) {
+            ImGui::SameLine();
+        }
+        ImGui::PopID();
+    }
+
     // Drums section
     ImGui::Separator();
     ImGui::Text("Drums:");
@@ -2299,8 +3401,9 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     // Smaller icon size for drums to fit more
     ImVec2 drumIconSize(50, 32);
     int drumsPerRow = 5;
+    int drumStartIndex = NUM_OSCILLATORS + NUM_SYNTHS;
 
-    for (int i = NUM_OSCILLATORS; i < NUM_OSCILLATORS + NUM_DRUMS; ++i) {
+    for (int i = drumStartIndex; i < drumStartIndex + NUM_DRUMS; ++i) {
         ImGui::PushID(i);
 
         ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -2359,8 +3462,8 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         }
 
         // Wrap after every drumsPerRow items
-        int drumIndex = i - NUM_OSCILLATORS;
-        if ((drumIndex + 1) % drumsPerRow != 0 && i < NUM_OSCILLATORS + NUM_DRUMS - 1) {
+        int drumIndex = i - drumStartIndex;
+        if ((drumIndex + 1) % drumsPerRow != 0 && i < drumStartIndex + NUM_DRUMS - 1) {
             ImGui::SameLine();
         }
         ImGui::PopID();
@@ -2370,8 +3473,14 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // Show selected item
     if (g_SelectedPaletteItem >= 0) {
-        ImVec4 color = g_SelectedPaletteItem < 6 ?
-            ImVec4(0.5f, 1.0f, 0.5f, 1.0f) : ImVec4(1.0f, 0.6f, 0.6f, 1.0f);
+        ImVec4 color;
+        if (g_SelectedPaletteItem < NUM_OSCILLATORS) {
+            color = ImVec4(0.5f, 1.0f, 0.5f, 1.0f);  // Green for oscillators
+        } else if (g_SelectedPaletteItem < NUM_OSCILLATORS + NUM_SYNTHS) {
+            color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);  // Purple for synths
+        } else {
+            color = ImVec4(1.0f, 0.6f, 0.6f, 1.0f);  // Red for drums
+        }
         ImGui::TextColored(color, "Selected: %s", oscNames[g_SelectedPaletteItem]);
         ImGui::SameLine();
         if (ImGui::SmallButton("Deselect")) {

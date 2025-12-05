@@ -174,37 +174,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // Dark tracker-style theme
+    // Apply default theme
     ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 2.0f;
-    style.GrabRounding = 2.0f;
-    style.ScrollbarRounding = 2.0f;
-    style.WindowPadding = ImVec2(8, 8);
-    style.FramePadding = ImVec2(4, 3);
-    style.ItemSpacing = ImVec2(8, 4);
-
-    // Custom colors
-    ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.08f, 1.0f);
-    colors[ImGuiCol_ChildBg] = ImVec4(0.05f, 0.05f, 0.07f, 1.0f);
-    colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.08f, 0.10f, 0.95f);
-    colors[ImGuiCol_Border] = ImVec4(0.20f, 0.20f, 0.25f, 1.0f);
-    colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.12f, 0.15f, 1.0f);
-    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.18f, 0.22f, 1.0f);
-    colors[ImGuiCol_FrameBgActive] = ImVec4(0.22f, 0.22f, 0.28f, 1.0f);
-    colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.0f);
-    colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.12f, 0.15f, 1.0f);
-    colors[ImGuiCol_Header] = ImVec4(0.20f, 0.35f, 0.20f, 1.0f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.25f, 0.45f, 0.25f, 1.0f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.30f, 0.55f, 0.30f, 1.0f);
-    colors[ImGuiCol_Button] = ImVec4(0.20f, 0.35f, 0.20f, 1.0f);
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.45f, 0.25f, 1.0f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.30f, 0.55f, 0.30f, 1.0f);
-    colors[ImGuiCol_SliderGrab] = ImVec4(0.40f, 0.70f, 0.40f, 1.0f);
-    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.50f, 0.85f, 0.50f, 1.0f);
-    colors[ImGuiCol_CheckMark] = ImVec4(0.50f, 0.90f, 0.50f, 1.0f);
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplOpenGL3_Init("#version 130");
@@ -250,6 +221,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     uiState.selectedPattern = 0;
     uiState.selectedChannel = 0;
 
+    // Apply the current visual theme (Stock by default)
+    ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+
     // Start audio
     if (ma_device_start(&device) != MA_SUCCESS) {
         MessageBoxA(nullptr, "Failed to start audio device", "Error", MB_OK | MB_ICONERROR);
@@ -282,6 +256,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
+
+        // Draw theme background effects (Matrix rain, Synthwave chasers, etc.)
+        ChiptuneTracker::DrawThemeBackground(uiState.currentTheme, io.DeltaTime);
 
         // Get playback state
         playbackState = sequencer.getState();
@@ -328,6 +305,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                 }
                 if (ImGui::MenuItem("Mixer", nullptr, uiState.currentView == ChiptuneTracker::ViewMode::Mixer)) {
                     uiState.currentView = ChiptuneTracker::ViewMode::Mixer;
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Theme")) {
+                    if (ImGui::MenuItem("Stock (Default)", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::Stock)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::Stock;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    if (ImGui::MenuItem("Cyberpunk", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::Cyberpunk)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::Cyberpunk;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    if (ImGui::MenuItem("Synthwave (80s)", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::Synthwave)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::Synthwave;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    if (ImGui::MenuItem("Matrix", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::Matrix)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::Matrix;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    ImGui::EndMenu();
                 }
                 ImGui::EndMenu();
             }

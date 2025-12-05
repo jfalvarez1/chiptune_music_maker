@@ -34,6 +34,18 @@ inline std::string oscillatorTypeToString(OscillatorType type) {
         case OscillatorType::Sine: return "Sine";
         case OscillatorType::Noise: return "Noise";
         case OscillatorType::Custom: return "Custom";
+        // Synths
+        case OscillatorType::SynthLead: return "SynthLead";
+        case OscillatorType::SynthPad: return "SynthPad";
+        case OscillatorType::SynthBass: return "SynthBass";
+        case OscillatorType::SynthPluck: return "SynthPluck";
+        case OscillatorType::SynthArp: return "SynthArp";
+        case OscillatorType::SynthOrgan: return "SynthOrgan";
+        case OscillatorType::SynthStrings: return "SynthStrings";
+        case OscillatorType::SynthBrass: return "SynthBrass";
+        case OscillatorType::SynthChip: return "SynthChip";
+        case OscillatorType::SynthBell: return "SynthBell";
+        // Drums
         case OscillatorType::Kick: return "Kick";
         case OscillatorType::Kick808: return "Kick808";
         case OscillatorType::KickHard: return "KickHard";
@@ -66,6 +78,18 @@ inline OscillatorType stringToOscillatorType(const std::string& str) {
     if (str == "Sine") return OscillatorType::Sine;
     if (str == "Noise") return OscillatorType::Noise;
     if (str == "Custom") return OscillatorType::Custom;
+    // Synths
+    if (str == "SynthLead") return OscillatorType::SynthLead;
+    if (str == "SynthPad") return OscillatorType::SynthPad;
+    if (str == "SynthBass") return OscillatorType::SynthBass;
+    if (str == "SynthPluck") return OscillatorType::SynthPluck;
+    if (str == "SynthArp") return OscillatorType::SynthArp;
+    if (str == "SynthOrgan") return OscillatorType::SynthOrgan;
+    if (str == "SynthStrings") return OscillatorType::SynthStrings;
+    if (str == "SynthBrass") return OscillatorType::SynthBrass;
+    if (str == "SynthChip") return OscillatorType::SynthChip;
+    if (str == "SynthBell") return OscillatorType::SynthBell;
+    // Drums
     if (str == "Kick") return OscillatorType::Kick;
     if (str == "Kick808") return OscillatorType::Kick808;
     if (str == "KickHard") return OscillatorType::KickHard;
@@ -316,6 +340,118 @@ inline bool exportWav(Project& project, Sequencer& seq, const std::string& filep
 
     file.close();
     return true;
+}
+
+// ============================================================================
+// MP3 Export (uses LAME encoder)
+// ============================================================================
+
+// Check if LAME is available on the system
+inline bool isLameAvailable() {
+#ifdef _WIN32
+    // Try to find lame.exe in PATH
+    char buffer[MAX_PATH];
+    DWORD result = SearchPathA(NULL, "lame.exe", NULL, MAX_PATH, buffer, NULL);
+    return result > 0;
+#else
+    // On Linux/Mac, check if lame is in PATH
+    return system("which lame > /dev/null 2>&1") == 0;
+#endif
+}
+
+// Check if FFmpeg is available on the system
+inline bool isFFmpegAvailable() {
+#ifdef _WIN32
+    char buffer[MAX_PATH];
+    DWORD result = SearchPathA(NULL, "ffmpeg.exe", NULL, MAX_PATH, buffer, NULL);
+    return result > 0;
+#else
+    return system("which ffmpeg > /dev/null 2>&1") == 0;
+#endif
+}
+
+// Export to MP3 file (requires LAME or FFmpeg)
+inline bool exportMp3(Project& project, Sequencer& seq, const std::string& filepath,
+                      float durationBeats, int bitrate = 192) {
+    // First, export to a temporary WAV file
+    std::string tempWavPath = filepath + ".temp.wav";
+
+    if (!exportWav(project, seq, tempWavPath, durationBeats)) {
+        return false;
+    }
+
+    bool success = false;
+    std::string command;
+
+#ifdef _WIN32
+    // Windows: Try LAME first, then FFmpeg
+    if (isLameAvailable()) {
+        // LAME command: lame -b <bitrate> input.wav output.mp3
+        command = "lame -b " + std::to_string(bitrate) + " --quiet \"" +
+                  tempWavPath + "\" \"" + filepath + "\"";
+        success = (system(command.c_str()) == 0);
+    }
+    else if (isFFmpegAvailable()) {
+        // FFmpeg command: ffmpeg -i input.wav -b:a <bitrate>k output.mp3
+        command = "ffmpeg -y -i \"" + tempWavPath + "\" -b:a " +
+                  std::to_string(bitrate) + "k \"" + filepath + "\" -loglevel quiet";
+        success = (system(command.c_str()) == 0);
+    }
+    else {
+        // No encoder available - try using Windows PowerShell with .NET
+        // This is a fallback that may work on some Windows systems
+        MessageBoxA(NULL,
+            "MP3 export requires LAME or FFmpeg.\n\n"
+            "Please install one of the following:\n"
+            "- LAME: https://lame.sourceforge.io/\n"
+            "- FFmpeg: https://ffmpeg.org/\n\n"
+            "Add the executable to your system PATH.",
+            "MP3 Encoder Not Found", MB_OK | MB_ICONWARNING);
+
+        // Clean up temp file
+        DeleteFileA(tempWavPath.c_str());
+        return false;
+    }
+#else
+    // Linux/Mac
+    if (isLameAvailable()) {
+        command = "lame -b " + std::to_string(bitrate) + " --quiet \"" +
+                  tempWavPath + "\" \"" + filepath + "\"";
+        success = (system(command.c_str()) == 0);
+    }
+    else if (isFFmpegAvailable()) {
+        command = "ffmpeg -y -i \"" + tempWavPath + "\" -b:a " +
+                  std::to_string(bitrate) + "k \"" + filepath + "\" -loglevel quiet";
+        success = (system(command.c_str()) == 0);
+    }
+    else {
+        // Clean up and return failure
+        remove(tempWavPath.c_str());
+        return false;
+    }
+#endif
+
+    // Clean up temporary WAV file
+#ifdef _WIN32
+    DeleteFileA(tempWavPath.c_str());
+#else
+    remove(tempWavPath.c_str());
+#endif
+
+    return success;
+}
+
+// Get MP3 encoder status message
+inline std::string getMp3EncoderStatus() {
+    if (isLameAvailable()) {
+        return "LAME encoder available";
+    }
+    else if (isFFmpegAvailable()) {
+        return "FFmpeg encoder available";
+    }
+    else {
+        return "No MP3 encoder found (install LAME or FFmpeg)";
+    }
 }
 
 // ============================================================================

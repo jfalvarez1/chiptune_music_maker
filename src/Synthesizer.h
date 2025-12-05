@@ -63,6 +63,27 @@ struct Voice {
 };
 
 // ============================================================================
+// Helper: Check if oscillator type is a synth preset
+// ============================================================================
+inline bool isSynthType(OscillatorType type) {
+    switch (type) {
+        case OscillatorType::SynthLead:
+        case OscillatorType::SynthPad:
+        case OscillatorType::SynthBass:
+        case OscillatorType::SynthPluck:
+        case OscillatorType::SynthArp:
+        case OscillatorType::SynthOrgan:
+        case OscillatorType::SynthStrings:
+        case OscillatorType::SynthBrass:
+        case OscillatorType::SynthChip:
+        case OscillatorType::SynthBell:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// ============================================================================
 // Helper: Check if oscillator type is a drum
 // ============================================================================
 inline bool isDrumType(OscillatorType type) {
@@ -417,6 +438,38 @@ private:
                 break;
             case OscillatorType::Tambourine:
                 sample = generateTambourine(voice);
+                break;
+
+            // Synth Presets
+            case OscillatorType::SynthLead:
+                sample = generateSynthLead(voice);
+                break;
+            case OscillatorType::SynthPad:
+                sample = generateSynthPad(voice);
+                break;
+            case OscillatorType::SynthBass:
+                sample = generateSynthBass(voice);
+                break;
+            case OscillatorType::SynthPluck:
+                sample = generateSynthPluck(voice);
+                break;
+            case OscillatorType::SynthArp:
+                sample = generateSynthArp(voice);
+                break;
+            case OscillatorType::SynthOrgan:
+                sample = generateSynthOrgan(voice);
+                break;
+            case OscillatorType::SynthStrings:
+                sample = generateSynthStrings(voice);
+                break;
+            case OscillatorType::SynthBrass:
+                sample = generateSynthBrass(voice);
+                break;
+            case OscillatorType::SynthChip:
+                sample = generateSynthChip(voice);
+                break;
+            case OscillatorType::SynthBell:
+                sample = generateSynthBell(voice);
                 break;
         }
 
@@ -1014,6 +1067,179 @@ private:
         voice.phaseIncrement = 1200.0f / m_sampleRate;
 
         return (jingle + noise) * envelope;
+    }
+
+    // ========================================================================
+    // Synth Preset Generators
+    // ========================================================================
+
+    // Lead - Detuned sawtooth waves for a thick, cutting lead
+    float generateSynthLead(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Two detuned saws (slight detune for thickness)
+        float detune = 0.003f;  // 3 cents detune
+        float saw1 = 2.0f * t - 1.0f;
+        float saw2 = 2.0f * std::fmod(t + detune, 1.0f) - 1.0f;
+
+        // PolyBLEP correction
+        saw1 -= polyBlep(t, dt);
+        saw2 -= polyBlep(std::fmod(t + detune, 1.0f), dt);
+
+        // Mix with slight sub oscillator
+        float sub = std::sin(t * TWO_PI * 0.5f) * 0.3f;
+
+        return (saw1 + saw2) * 0.4f + sub;
+    }
+
+    // Pad - Soft, atmospheric sound with slow attack feel
+    float generateSynthPad(Voice& voice) {
+        float t = voice.phase;
+
+        // Multiple detuned sine/triangle waves for soft pad
+        float wave1 = std::sin(t * TWO_PI);
+        float wave2 = std::sin(t * TWO_PI * 1.002f);  // Slight detune
+        float wave3 = std::sin(t * TWO_PI * 0.998f);  // Slight detune other way
+        float wave4 = std::sin(t * TWO_PI * 2.0f) * 0.3f;  // Octave up, quieter
+
+        // Gentle triangle for warmth
+        float tri = (t < 0.5f) ? (4.0f * t - 1.0f) : (3.0f - 4.0f * t);
+
+        return (wave1 + wave2 + wave3 + wave4 + tri * 0.2f) * 0.25f;
+    }
+
+    // Bass - Deep punchy bass with sub and harmonics
+    float generateSynthBass(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Sub sine (fundamental)
+        float sub = std::sin(t * TWO_PI) * 0.6f;
+
+        // Saw for harmonics
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        // Square for punch
+        float sq = (t < 0.5f) ? 1.0f : -1.0f;
+        sq += polyBlep(t, dt);
+        sq -= polyBlep(std::fmod(t + 0.5f, 1.0f), dt);
+
+        return sub + saw * 0.25f + sq * 0.15f;
+    }
+
+    // Pluck - Short, plucky sound with fast decay feel
+    float generateSynthPluck(Voice& voice) {
+        float t = voice.phase;
+
+        // Bright triangle with harmonics
+        float tri = (t < 0.5f) ? (4.0f * t - 1.0f) : (3.0f - 4.0f * t);
+
+        // Add some upper harmonics for brightness
+        float harm2 = std::sin(t * TWO_PI * 2.0f) * 0.3f;
+        float harm3 = std::sin(t * TWO_PI * 3.0f) * 0.15f;
+
+        return tri * 0.7f + harm2 + harm3;
+    }
+
+    // Arp - Crisp pulse wave perfect for arpeggios
+    float generateSynthArp(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // 25% duty cycle pulse (bright and crisp)
+        float width = 0.25f;
+        float pulse = (t < width) ? 1.0f : -1.0f;
+        pulse += polyBlep(t, dt);
+        pulse -= polyBlep(std::fmod(t + (1.0f - width), 1.0f), dt);
+
+        return pulse * 0.7f;
+    }
+
+    // Organ - Classic organ with additive harmonics
+    float generateSynthOrgan(Voice& voice) {
+        float t = voice.phase;
+
+        // Drawbar-style additive synthesis
+        float fundamental = std::sin(t * TWO_PI) * 0.8f;         // 8'
+        float octaveUp = std::sin(t * TWO_PI * 2.0f) * 0.6f;     // 4'
+        float twelfth = std::sin(t * TWO_PI * 3.0f) * 0.4f;      // 2 2/3'
+        float twoOctUp = std::sin(t * TWO_PI * 4.0f) * 0.3f;     // 2'
+        float subOctave = std::sin(t * TWO_PI * 0.5f) * 0.4f;    // 16'
+
+        return (fundamental + octaveUp + twelfth + twoOctUp + subOctave) * 0.35f;
+    }
+
+    // Strings - Detuned ensemble with lush character
+    float generateSynthStrings(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Multiple detuned saw waves for string ensemble
+        float detunes[] = { 0.0f, 0.004f, -0.004f, 0.008f, -0.008f };
+        float mix = 0.0f;
+
+        for (float detune : detunes) {
+            float phase = std::fmod(t + detune + 1.0f, 1.0f);
+            float saw = 2.0f * phase - 1.0f;
+            saw -= polyBlep(phase, dt);
+            mix += saw;
+        }
+
+        return mix * 0.15f;  // Scale down because we're adding 5 oscillators
+    }
+
+    // Brass - Brassy stab with rich harmonics
+    float generateSynthBrass(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Saw as base
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+
+        // Square for body
+        float sq = (t < 0.5f) ? 1.0f : -1.0f;
+        sq += polyBlep(t, dt);
+        sq -= polyBlep(std::fmod(t + 0.5f, 1.0f), dt);
+
+        // Add harmonics for brass character
+        float harm3 = std::sin(t * TWO_PI * 3.0f) * 0.2f;
+
+        return (saw * 0.5f + sq * 0.3f + harm3) * 0.8f;
+    }
+
+    // Chip - Classic 12.5% pulse for authentic chiptune
+    float generateSynthChip(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // Classic NES 12.5% duty cycle
+        float width = 0.125f;
+        float pulse = (t < width) ? 1.0f : -1.0f;
+        pulse += polyBlep(t, dt);
+        pulse -= polyBlep(std::fmod(t + (1.0f - width), 1.0f), dt);
+
+        return pulse * 0.8f;
+    }
+
+    // Bell - FM-like bell/chime sound
+    float generateSynthBell(Voice& voice) {
+        float t = voice.phase;
+
+        // Simple FM-like synthesis for bell tones
+        // Carrier with inharmonic modulator
+        float modRatio = 3.5f;  // Inharmonic for bell-like quality
+        float modIndex = 2.0f;
+
+        float modulator = std::sin(t * TWO_PI * modRatio);
+        float carrier = std::sin(t * TWO_PI + modulator * modIndex);
+
+        // Add higher partial for shimmer
+        float shimmer = std::sin(t * TWO_PI * 5.0f) * 0.15f;
+
+        return (carrier * 0.7f + shimmer) * 0.8f;
     }
 
     // ========================================================================

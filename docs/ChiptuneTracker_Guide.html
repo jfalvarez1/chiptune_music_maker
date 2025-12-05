@@ -655,7 +655,9 @@
             <li><a href="#interface" data-section="Interface"></a></li>
             <li><a href="#adsr" data-section="ADSR Envelope"></a></li>
             <li><a href="#oscillators" data-section="Oscillators"></a></li>
+            <li><a href="#synths" data-section="Synths"></a></li>
             <li><a href="#drums" data-section="Drums"></a></li>
+            <li><a href="#themes" data-section="Themes"></a></li>
             <li><a href="#files" data-section="Files"></a></li>
             <li><a href="#workflow" data-section="Workflow"></a></li>
             <li><a href="#shortcuts" data-section="Shortcuts"></a></li>
@@ -1060,6 +1062,74 @@
             </table>
         </section>
 
+        <!-- Synths -->
+        <section id="synths">
+            <h2>Synth Presets (10 Types!)</h2>
+
+            <p>ChiptuneTracker includes <strong>10 synthesizer presets</strong> that go beyond basic oscillators.
+            These are pre-configured sounds with their own synthesis algorithms, perfect for creating rich,
+            complex music without needing to tweak parameters.</p>
+
+            <div class="waveform-container">
+                <div class="waveform-box">
+                    <h4>LEAD</h4>
+                    <p>Bright, cutting lead sound. Uses 3 detuned sawtooth waves for a thick,
+                    powerful tone that cuts through the mix. Great for main melodies.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>PAD</h4>
+                    <p>Soft, atmospheric pad with slow attack. Multiple detuned sine waves create
+                    a warm, ethereal sound. Perfect for chords and ambience.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>BASS</h4>
+                    <p>Deep, punchy bass combining a sub-oscillator with harmonics. Adds weight
+                    and foundation to your tracks. Use in lower octaves (C1-C3).</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>PLUCK</h4>
+                    <p>Short, plucky sound with fast decay. Triangle wave with harmonics creates
+                    a guitar-like or harp-like tone. Good for arpeggios.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>ARP</h4>
+                    <p>Crisp arpeggio sound using a 25% pulse wave. Designed for fast sequences
+                    and rapid note passages. Classic chiptune flavor.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>ORGAN</h4>
+                    <p>Classic organ with drawbar-style additive synthesis. Multiple harmonics
+                    combined for that authentic keyboard sound.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>STRINGS</h4>
+                    <p>String ensemble using 5 detuned sawtooth waves with slow attack.
+                    Creates a lush, orchestral sound for pads and sustained notes.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>BRASS</h4>
+                    <p>Brassy stab combining saw and square waves with extra harmonics.
+                    Punchy and bright - perfect for accents and stabs.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>CHIP</h4>
+                    <p>Classic chiptune lead using a 12.5% pulse wave (NES-style).
+                    Thin, nasal, and instantly nostalgic. The authentic 8-bit sound.</p>
+                </div>
+                <div class="waveform-box">
+                    <h4>BELL</h4>
+                    <p>Bell/chime sound using FM-like synthesis. Inharmonic overtones create
+                    a metallic, crystalline tone. Great for accents and melodies.</p>
+                </div>
+            </div>
+
+            <div class="tip-box">
+                <strong>Quick Start:</strong> Click any synth in the Sound Palette to select it, then
+                click in the piano roll to place notes. Try the <strong>Lead</strong> for melodies,
+                <strong>Bass</strong> for low end, and <strong>Pad</strong> for atmospheric backgrounds!
+            </div>
+        </section>
+
         <!-- Drums -->
         <section id="drums">
             <h2>Drum Sounds (21 Types!)</h2>
@@ -1180,6 +1250,46 @@ HiHat:   X - X - X - X -</code></pre>
             </div>
         </section>
 
+        <!-- Visual Themes -->
+        <section id="themes">
+            <h2>Visual Themes</h2>
+
+            <p>ChiptuneTracker includes <strong>4 visual themes</strong> to customize your music-making
+            experience. Each theme features animated backgrounds and unique color schemes. Select your
+            theme from the Theme dropdown in the interface.</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Stock (Default)</h4>
+                    <p>Clean, dark theme with no background animations. Best for focusing on your music
+                    or if you prefer minimal distractions. Low resource usage.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Cyberpunk</h4>
+                    <p>Neon yellow, hot pink, and electric blue. Features animated data streams on
+                    screen edges, circuit board patterns, pulsing borders, and glitch effects.
+                    High-tech hacker aesthetic.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Synthwave</h4>
+                    <p>80s retro vibes with a large sunset, perspective grid floor, and color-cycling
+                    gradient chasers. Smooth neon transitions between pink, cyan, and green.
+                    The ultimate retrowave experience.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Matrix</h4>
+                    <p>Green on black with falling code animation. Classic digital rain effect
+                    inspired by the iconic movie. Minimal but atmospheric.</p>
+                </div>
+            </div>
+
+            <div class="info-box">
+                <strong>Performance Note:</strong> Animated themes use additional GPU resources.
+                If you experience any slowdown, switch to the Stock theme for best performance.
+                All themes scale properly to widescreen and fullscreen modes.
+            </div>
+        </section>
+
         <!-- File Operations -->
         <section id="files">
             <h2>File Operations & Export</h2>
@@ -1227,10 +1337,33 @@ HiHat:   X - X - X - X -</code></pre>
                 for notes with long release times).
             </div>
 
+            <h3>MP3 Export</h3>
+            <p>Export directly to MP3 format for easy sharing:</p>
+            <ol>
+                <li>Click the <strong>MP3</strong> button in the File menu</li>
+                <li>Set the duration and choose a bitrate (128/192/256/320 kbps)</li>
+                <li>Click <strong>Export</strong> and choose a filename</li>
+                <li>ChiptuneTracker will render and encode your music</li>
+            </ol>
+
+            <div class="warning-box">
+                <strong>Requires External Encoder:</strong> MP3 export needs either LAME or FFmpeg
+                installed on your system and available in your PATH. These are free, open-source tools:
+                <ul style="margin-top: 10px;">
+                    <li><strong>LAME:</strong> Download from <code>lame.sourceforge.io</code></li>
+                    <li><strong>FFmpeg:</strong> Download from <code>ffmpeg.org</code></li>
+                </ul>
+                If neither is found, the export popup will show which encoders are available.
+            </div>
+
             <div class="tip-box">
-                <strong>Sharing Your Music:</strong> WAV files can be converted to MP3 using free tools
-                like Audacity or online converters. This lets you share your chiptunes on YouTube,
-                SoundCloud, or anywhere else!
+                <strong>Bitrate Guide:</strong>
+                <ul style="margin-top: 10px;">
+                    <li><strong>128 kbps:</strong> Smallest file size, good for previews</li>
+                    <li><strong>192 kbps:</strong> Good balance of quality and size</li>
+                    <li><strong>256 kbps:</strong> High quality for most uses</li>
+                    <li><strong>320 kbps:</strong> Maximum quality, near-CD audio</li>
+                </ul>
             </div>
         </section>
 
@@ -1442,9 +1575,9 @@ HiHat:   X - X - X - X -</code></pre>
         </section>
 
         <footer>
-            <p>CHIPTUNE TRACKER v2.0</p>
+            <p>CHIPTUNE TRACKER v2.1</p>
             <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
-            <p>21 Drum Sounds | WAV Export | Project Save/Load | Paste Preview</p>
+            <p>10 Synths | 21 Drums | 4 Themes | WAV/MP3 Export | Project Save/Load</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>
