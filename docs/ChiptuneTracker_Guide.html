@@ -665,6 +665,7 @@
             <li><a href="#synthwave" data-section="Synthwave Guide"></a></li>
             <li><a href="#shortcuts" data-section="Shortcuts"></a></li>
             <li><a href="#advanced" data-section="Advanced"></a></li>
+            <li><a href="#chiptune-guide" data-section="Chiptune Guide"></a></li>
         </ul>
     </nav>
 
@@ -2556,11 +2557,440 @@ envelope = mix(envelope, sourceLevel, attack/release);
             </div>
         </section>
 
+        <!-- Chiptune Music Making Guide -->
+        <section id="chiptune-guide">
+            <h2>Chiptune Music Making Guide - NES Effects</h2>
+
+            <p>This guide covers the <strong>authentic NES/Famicom sound effects</strong> available in ChiptuneTracker v2.8.0.
+            These effects replicate the hardware capabilities of the Nintendo 2A03 sound chip, giving you the tools to
+            create music that sounds like it came straight from an 8-bit cartridge.</p>
+
+            <h3>What Makes Chiptune Sound "Chiptune"?</h3>
+            <p>The distinctive sound of NES music comes from hardware limitations that became artistic features:</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Limited Channels</h4>
+                    <p>The NES had only <strong>5 sound channels</strong>:</p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>2 Pulse waves</strong> - Main melodies and harmonies</li>
+                        <li><strong>1 Triangle wave</strong> - Bass and sub-bass</li>
+                        <li><strong>1 Noise channel</strong> - Drums and percussion</li>
+                        <li><strong>1 DPCM sample</strong> - Sampled sounds (limited)</li>
+                    </ul>
+                    <p style="margin-top: 8px; font-style: italic;">Composers had to be creative with just these 5 channels!</p>
+                </div>
+                <div class="param-card">
+                    <h4>Pulse Wave Magic</h4>
+                    <p>The NES pulse channels could only produce <strong>4 duty cycle settings</strong>, each with a distinct character:</p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>12.5%</strong> - Thin, nasal, "twangy"</li>
+                        <li><strong>25%</strong> - Hollow, woody</li>
+                        <li><strong>50%</strong> - Full, rich square wave</li>
+                        <li><strong>75%</strong> - Same as 25% (inverted)</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>The Sweep Unit</h4>
+                    <p>Each pulse channel had a <strong>hardware sweep unit</strong> that could automatically bend pitch up or down.
+                    This created the iconic laser sounds, power-up effects, and melodic bends heard in classic games.</p>
+                </div>
+            </div>
+
+            <h3>Duty Cycle - The Soul of Chiptune</h3>
+            <p>The <strong>duty cycle</strong> controls how much of each wave cycle is "on" versus "off". This dramatically
+            changes the harmonic content and character of the sound. In ChiptuneTracker, you can set duty cycle per-note!</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>12.5% Duty Cycle</h4>
+                    <p><strong>Character:</strong> Thin, reedy, twangy, nasal</p>
+                    <p><strong>Best for:</strong></p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li>Lead melodies that cut through</li>
+                        <li>Plucky arpeggios</li>
+                        <li>Classic "NES lead" sound</li>
+                        <li>High-pitched chip effects</li>
+                    </ul>
+                    <p style="margin-top: 8px;"><em>Famous uses: Mega Man themes, Castlevania melodies</em></p>
+                </div>
+                <div class="param-card">
+                    <h4>25% Duty Cycle</h4>
+                    <p><strong>Character:</strong> Hollow, woody, slightly nasal</p>
+                    <p><strong>Best for:</strong></p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li>Secondary melodies/harmonies</li>
+                        <li>Woodwind-like sounds</li>
+                        <li>Softer leads</li>
+                        <li>Background arpeggios</li>
+                    </ul>
+                    <p style="margin-top: 8px;"><em>Great for layering with 12.5% leads!</em></p>
+                </div>
+                <div class="param-card">
+                    <h4>50% Duty Cycle</h4>
+                    <p><strong>Character:</strong> Full, rich, classic square wave</p>
+                    <p><strong>Best for:</strong></p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li>Powerful leads</li>
+                        <li>Bass lines (octave below)</li>
+                        <li>Pad-like sustained notes</li>
+                        <li>Classic video game sound</li>
+                    </ul>
+                    <p style="margin-top: 8px;"><em>The "default" chiptune sound</em></p>
+                </div>
+                <div class="param-card">
+                    <h4>75% Duty Cycle</h4>
+                    <p><strong>Character:</strong> Same as 25% (inverted phase)</p>
+                    <p><strong>Best for:</strong></p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li>Layering with 25% for thickness</li>
+                        <li>Phase variation effects</li>
+                        <li>Subtle timbral differences</li>
+                    </ul>
+                    <p style="margin-top: 8px;"><em>Sounds identical to 25%, useful for phase tricks</em></p>
+                </div>
+            </div>
+
+            <div class="tip-box">
+                <strong>Pro Tip - Duty Cycle Modulation:</strong> Classic NES composers would often switch duty cycles
+                <em>during a note</em> for expressive effects. Try starting a note at 12.5% and switching to 50% for
+                the sustain portion - this creates a "wa" attack sound!
+            </div>
+
+            <h3>Pitch Sweep - Lasers, Power-ups, and Expression</h3>
+            <p>The NES <strong>sweep unit</strong> automatically bends pitch up or down over time. This hardware feature
+            created some of the most iconic sounds in gaming history. In ChiptuneTracker, you control sweep direction,
+            speed, and range per-note.</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Sweep Down</h4>
+                    <p><strong>Pitch falls from high to low</strong></p>
+                    <p style="margin-top: 8px;"><strong>Classic Uses:</strong></p>
+                    <ul style="font-size: 0.9em;">
+                        <li><strong>Laser/zap sounds</strong> - Fast sweep, 12+ semitones</li>
+                        <li><strong>Bomb drops</strong> - Slow sweep, full range</li>
+                        <li><strong>Dying enemies</strong> - Medium sweep with noise</li>
+                        <li><strong>Sad melodies</strong> - Subtle 1-2 semitone dips</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Sweep Up</h4>
+                    <p><strong>Pitch rises from low to high</strong></p>
+                    <p style="margin-top: 8px;"><strong>Classic Uses:</strong></p>
+                    <ul style="font-size: 0.9em;">
+                        <li><strong>Power-up collection</strong> - Fast sweep up!</li>
+                        <li><strong>Jump sounds</strong> - Quick 3-5 semitone rise</li>
+                        <li><strong>Question/curiosity</strong> - Gentle upward bend</li>
+                        <li><strong>Victory fanfares</strong> - Dramatic rising notes</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Sweep Parameters</h4>
+                    <p><strong>Speed:</strong> How fast the pitch changes</p>
+                    <ul style="font-size: 0.9em; margin-top: 8px;">
+                        <li><strong>Fast (0.1-0.3)</strong> - Instant zap effects</li>
+                        <li><strong>Medium (0.5-1.0)</strong> - Musical bends</li>
+                        <li><strong>Slow (2.0+)</strong> - Gradual slides</li>
+                    </ul>
+                    <p style="margin-top: 12px;"><strong>Amount:</strong> Total semitones to sweep</p>
+                    <ul style="font-size: 0.9em; margin-top: 8px;">
+                        <li><strong>1-2</strong> - Subtle expression</li>
+                        <li><strong>5-7</strong> - Noticeable bend</li>
+                        <li><strong>12+</strong> - Dramatic effect (full octave)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <h4>Classic Sweep Effect Recipes</h4>
+            <pre><code><span class="comment">// LASER ZAP (Mega Man style)</span>
+Oscillator: Pulse (12.5%)
+Sweep: Down
+Speed: 0.15 (very fast)
+Amount: 24 semitones (2 octaves)
+Duration: 0.1 beats
+<span class="comment">// Result: Classic "pew pew" sound!</span>
+
+<span class="comment">// POWER-UP COLLECT (Mario coin)</span>
+Oscillator: Pulse (50%)
+Sweep: Up
+Speed: 0.2
+Amount: 12 semitones (1 octave)
+Duration: 0.25 beats
+<span class="comment">// Play two notes: C5, then E5 with sweep</span>
+
+<span class="comment">// ENEMY DEATH</span>
+Oscillator: Pulse (25%)
+Sweep: Down
+Speed: 0.5
+Amount: 18 semitones
+Duration: 0.5 beats
+<span class="comment">// Add noise hit at same time for impact</span>
+
+<span class="comment">// EXPRESSIVE MELODY BEND</span>
+<span class="comment">// For sad/emotional passages</span>
+Oscillator: Pulse (50%)
+Sweep: Down
+Speed: 2.0 (slow)
+Amount: 2 semitones
+<span class="comment">// Gives notes a "crying" quality</span>
+
+<span class="comment">// RISING TENSION</span>
+Oscillator: Triangle
+Sweep: Up
+Speed: 3.0 (very slow)
+Amount: 5 semitones
+Duration: 4 beats
+<span class="comment">// Great for building anticipation</span></code></pre>
+
+            <h3>Tremolo - Vibrating Volume</h3>
+            <p><strong>Tremolo</strong> modulates volume at a regular rate, creating a wavering, pulsing effect.
+            While not a native NES hardware feature, it was often simulated by composers and adds expressiveness to chiptune.</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Tremolo Depth</h4>
+                    <p>How much the volume varies (0-100%)</p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>10-20%</strong> - Subtle shimmer</li>
+                        <li><strong>30-50%</strong> - Noticeable pulse</li>
+                        <li><strong>60-80%</strong> - Dramatic throb</li>
+                        <li><strong>100%</strong> - Full on/off gating</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Tremolo Speed</h4>
+                    <p>How fast the volume oscillates (Hz)</p>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>2-4 Hz</strong> - Slow, dramatic pulse</li>
+                        <li><strong>5-8 Hz</strong> - Classic tremolo</li>
+                        <li><strong>10-15 Hz</strong> - Fast shimmer</li>
+                        <li><strong>20+ Hz</strong> - Ring modulation feel</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Best Uses for Tremolo</h4>
+                    <ul style="margin-top: 8px; font-size: 0.9em;">
+                        <li><strong>Sustained pads</strong> - Add movement</li>
+                        <li><strong>Danger/tension</strong> - Fast, deep tremolo</li>
+                        <li><strong>Mystical sounds</strong> - Slow, subtle</li>
+                        <li><strong>Alarm effects</strong> - Fast pulse</li>
+                        <li><strong>Boss music</strong> - Dramatic throb</li>
+                    </ul>
+                </div>
+            </div>
+
+            <h3>Classic Chiptune Patterns & Techniques</h3>
+            <p>Learn the patterns that defined 8-bit music:</p>
+
+            <h4>1. The Arpeggio Chord</h4>
+            <p>With limited channels, NES composers couldn't play real chords. Instead, they rapidly cycled through
+            chord notes (arpeggio) to create the <em>illusion</em> of a chord:</p>
+            <pre><code><span class="comment">// C Major Arpeggio (sounds like a chord)</span>
+Beat 1.00: C4
+Beat 1.08: E4
+Beat 1.16: G4
+Beat 1.25: C4
+Beat 1.33: E4
+Beat 1.41: G4
+<span class="comment">// etc... cycles through C-E-G rapidly</span>
+
+<span class="comment">// Use the Arpeggio effect in Note Editor!</span>
+Speed: 8-12 (fast enough to blur into chord)
+Pattern: Major (root, +4, +7 semitones)</code></pre>
+
+            <h4>2. Echo/Delay Technique</h4>
+            <p>Create fake echo by duplicating notes on another channel at lower velocity:</p>
+            <pre><code><span class="comment">// Channel 1 (Main melody, full velocity)</span>
+Beat 1.0: C5 (vel 100%)
+Beat 2.0: E5 (vel 100%)
+Beat 3.0: G5 (vel 100%)
+
+<span class="comment">// Channel 2 (Echo, softer, delayed)</span>
+Beat 1.25: C5 (vel 40%)
+Beat 2.25: E5 (vel 40%)
+Beat 3.25: G5 (vel 40%)
+
+<span class="comment">// Tip: Use different duty cycles for depth!</span>
+<span class="comment">// Main = 12.5%, Echo = 50%</span></code></pre>
+
+            <h4>3. The Triangle Bass</h4>
+            <p>Triangle waves were THE bass sound on NES. They have no harmonics (pure tone) and provide solid low end:</p>
+            <pre><code><span class="comment">// Classic Triangle Bass Pattern</span>
+Oscillator: Triangle
+Octave: 2-3 (C2-C3 range)
+
+<span class="comment">// Root-Fifth pattern (very common)</span>
+Beat 1.0: C2
+Beat 1.5: G2
+Beat 2.0: C2
+Beat 2.5: G2
+
+<span class="comment">// Octave jump bass (adds energy)</span>
+Beat 1.0: C2
+Beat 1.5: C3
+Beat 2.0: C2
+Beat 2.5: C3</code></pre>
+
+            <h4>4. Noise Drums</h4>
+            <p>All NES drums came from the noise channel. Here are the classic patterns:</p>
+            <pre><code><span class="comment">// Basic Rock Beat</span>
+Beat 1.0: Kick
+Beat 1.5: HiHat
+Beat 2.0: Snare
+Beat 2.5: HiHat
+Beat 3.0: Kick
+Beat 3.5: HiHat
+Beat 4.0: Snare
+Beat 4.5: HiHat
+
+<span class="comment">// Driving 8-bit (Mega Man style)</span>
+Beat 1.0: Kick + HiHat
+Beat 1.25: HiHat
+Beat 1.5: HiHat
+Beat 1.75: HiHat
+Beat 2.0: Snare + HiHat
+<span class="comment">// ... repeat with constant hi-hats</span>
+
+<span class="comment">// Tip: Short noise = hi-hat, Long noise = snare</span></code></pre>
+
+            <h4>5. Duty Cycle Layering</h4>
+            <p>Use both pulse channels with different duty cycles for a fuller sound:</p>
+            <pre><code><span class="comment">// Thick Lead (two channels)</span>
+Channel 1: Pulse 12.5% - Melody
+Channel 2: Pulse 50% - Same melody, or harmony
+
+<span class="comment">// The 12.5% cuts through while 50% adds body</span>
+<span class="comment">// Try detuning Channel 2 slightly for chorus effect!</span></code></pre>
+
+            <h3>Famous Game Music Techniques</h3>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Mega Man Style</h4>
+                    <ul style="font-size: 0.9em;">
+                        <li>12.5% duty for piercing leads</li>
+                        <li>Fast arpeggios for "chords"</li>
+                        <li>Driving hi-hat on every 8th note</li>
+                        <li>Sweep down for death sounds</li>
+                        <li>High energy, fast tempo (150+ BPM)</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Castlevania Style</h4>
+                    <ul style="font-size: 0.9em;">
+                        <li>Gothic minor keys</li>
+                        <li>Heavy use of vibrato</li>
+                        <li>Dramatic sweep effects</li>
+                        <li>25% duty for mysterious sound</li>
+                        <li>Complex counterpoint melodies</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Mario Style</h4>
+                    <ul style="font-size: 0.9em;">
+                        <li>Bouncy, syncopated rhythms</li>
+                        <li>50% duty for friendly sound</li>
+                        <li>Sweep up for coin/power-up</li>
+                        <li>Triangle bass bouncing octaves</li>
+                        <li>Major keys, upbeat feel</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Zelda Style</h4>
+                    <ul style="font-size: 0.9em;">
+                        <li>Melodic and adventurous</li>
+                        <li>Mix of major/minor modes</li>
+                        <li>Slow tremolo for mystery</li>
+                        <li>Simple but memorable themes</li>
+                        <li>Echo effects for atmosphere</li>
+                    </ul>
+                </div>
+            </div>
+
+            <h3>Quick Reference: Effect Combinations</h3>
+            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                <thead>
+                    <tr style="background: rgba(0,255,65,0.2);">
+                        <th style="padding: 10px; text-align: left; border: 1px solid var(--matrix-green);">Sound</th>
+                        <th style="padding: 10px; text-align: left; border: 1px solid var(--matrix-green);">Duty</th>
+                        <th style="padding: 10px; text-align: left; border: 1px solid var(--matrix-green);">Sweep</th>
+                        <th style="padding: 10px; text-align: left; border: 1px solid var(--matrix-green);">Tremolo</th>
+                        <th style="padding: 10px; text-align: left; border: 1px solid var(--matrix-green);">Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Classic Lead</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">12.5%</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">None</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">None</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Add vibrato for expression</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Laser Zap</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">12.5%</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Down, Fast, 24st</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">None</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Short duration</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Power-Up</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">50%</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Up, Fast, 12st</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">None</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Two quick notes</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Sad Melody</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">25%</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Down, Slow, 2st</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">20%, 4Hz</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Minor key</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Alarm/Danger</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">50%</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">None</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">80%, 8Hz</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">High pitch, repeat</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Boss Theme</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">12.5%</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Down, Med, 5st</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">40%, 6Hz</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Minor key, intense</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Mystery/Cave</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">25%</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">None</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">30%, 3Hz</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Slow tempo, sparse</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Jump Sound</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">50%</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Up, Fast, 5st</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">None</td>
+                        <td style="padding: 8px; border: 1px solid var(--matrix-green);">Very short</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="tip-box">
+                <strong>Remember:</strong> The magic of chiptune isn't about having the most effects - it's about
+                <em>creative constraints</em>. The NES had severe limitations, and composers turned those into art.
+                Start simple, use effects sparingly, and focus on memorable melodies!
+            </div>
+        </section>
+
         <footer>
-            <p>CHIPTUNE TRACKER v2.7</p>
+            <p>CHIPTUNE TRACKER v2.8</p>
             <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
             <p>7 Oscillators (incl. Supersaw) | 18 Synths | 26 Drums (incl. Reggaeton) | 8 Themes | 7 Sample Track Genres | High-DPI Support</p>
-            <p>Swing/Humanize | Hi-Hat Roll Generator | Sidechain Compression | Organized Window Layout</p>
+            <p>Swing/Humanize | Hi-Hat Roll Generator | Sidechain Compression | NES Duty Cycle/Sweep/Tremolo</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>
