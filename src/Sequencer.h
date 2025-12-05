@@ -298,7 +298,10 @@ private:
                     m_synths[clip.channelIndex].noteOn(
                         note.pitch, note.velocity, m_state.currentTime,
                         fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
-                        note.vibrato, note.arpeggio, note.slide);
+                        note.vibrato, note.arpeggio, note.slide,
+                        note.dutyCycle, note.useDutyCycle,
+                        note.sweepDirection, note.sweepSpeed, note.sweepAmount,
+                        note.tremolo, note.tremoloSpeed);
                 }
 
                 // Note off
@@ -350,7 +353,10 @@ private:
                 m_synths[m_previewChannel].noteOn(
                     note.pitch, velocity, startTime,
                     fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
-                    note.vibrato, note.arpeggio, note.slide);
+                    note.vibrato, note.arpeggio, note.slide,
+                    note.dutyCycle, note.useDutyCycle,
+                    note.sweepDirection, note.sweepSpeed, note.sweepAmount,
+                    note.tremolo, note.tremoloSpeed);
             }
 
             // Note off (also swing the end time)

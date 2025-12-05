@@ -13,6 +13,27 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
+### What's New in v2.8.0
+
+**New NES-Authentic Chiptune Effects:**
+- **Duty Cycle Control** (NES-style) - Per-note pulse width for authentic chiptune sounds
+  - 12.5%: Thin, reedy sound (NES classic)
+  - 25%: Hollow, slightly nasal
+  - 50%: Full square wave
+  - 75%: Same as 25%, inverted phase
+- **Pitch Sweep** (NES sweep unit) - Automatic pitch bend for laser sounds and effects
+  - Sweep Up: Pitch rises over time
+  - Sweep Down: Pitch falls (classic laser/zap sound)
+  - Adjustable speed and range (semitones)
+- **Tremolo** - Volume modulation for wavering, pulsing sounds
+  - Adjustable depth (0-100%)
+  - Adjustable speed (Hz)
+
+**Technical Improvements:**
+- Extended Note struct with new effect parameters
+- Effects processed in real-time audio thread
+- Full integration with existing vibrato, arpeggio, and portamento effects
+
 ### What's New in v2.7.0
 
 **Window Layout & Workflow Improvements:**

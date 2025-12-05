@@ -140,6 +140,36 @@ struct Envelope {
 };
 
 // ============================================================================
+// Duty Cycle Presets (NES-style)
+// ============================================================================
+enum class DutyCycle : uint8_t {
+    Duty12_5 = 0,   // 12.5% - Thin, reedy sound (NES default for some channels)
+    Duty25   = 1,   // 25%   - Hollow, slightly nasal
+    Duty50   = 2,   // 50%   - Square wave, full and rich
+    Duty75   = 3    // 75%   - Same as 25% but inverted phase
+};
+
+// Convert DutyCycle to float (0.0-1.0)
+inline float dutyCycleToFloat(DutyCycle dc) {
+    switch (dc) {
+        case DutyCycle::Duty12_5: return 0.125f;
+        case DutyCycle::Duty25:   return 0.25f;
+        case DutyCycle::Duty50:   return 0.5f;
+        case DutyCycle::Duty75:   return 0.75f;
+        default: return 0.5f;
+    }
+}
+
+// ============================================================================
+// Pitch Sweep Direction (NES sweep unit style)
+// ============================================================================
+enum class SweepDirection : uint8_t {
+    None = 0,       // No sweep
+    Up   = 1,       // Pitch rises over time
+    Down = 2        // Pitch falls over time (like laser sound)
+};
+
+// ============================================================================
 // Note Event
 // ============================================================================
 struct Note {
@@ -155,10 +185,37 @@ struct Note {
     float    fadeIn    = 0.0f;      // Fade in duration (beats)
     float    fadeOut   = 0.0f;      // Fade out duration (beats)
 
-    // Per-note effects
+    // Per-note effects (classic tracker effects)
     int      arpeggio  = 0;         // Chord offset pattern (0 = none)
-    float    vibrato   = 0.0f;      // Vibrato depth
-    float    slide     = 0.0f;      // Pitch slide amount
+    float    vibrato   = 0.0f;      // Vibrato depth (semitones)
+    float    vibratoSpeed = 6.0f;   // Vibrato speed (Hz)
+    float    slide     = 0.0f;      // Pitch slide amount (semitones per beat)
+
+    // NES-style Duty Cycle (for pulse waves)
+    DutyCycle dutyCycle = DutyCycle::Duty50;    // 12.5%, 25%, 50%, or 75%
+    bool useDutyCycle = false;                  // Override channel duty cycle
+
+    // Pitch Sweep (NES sweep unit - automatic pitch bend)
+    SweepDirection sweepDirection = SweepDirection::None;
+    float    sweepSpeed = 1.0f;     // How fast pitch changes (semitones per beat)
+    float    sweepAmount = 12.0f;   // Total sweep range (semitones)
+
+    // Echo/Delay (MIDI delay technique)
+    int      echoRepeats = 0;       // Number of echo repeats (0 = off, 1-4)
+    float    echoDelay = 0.25f;     // Delay between echoes (beats)
+    float    echoDecay = 0.5f;      // Volume decay per echo (0.0-1.0)
+
+    // Note Retrigger (rapid retriggering for stutter effects)
+    int      retriggerCount = 0;    // Number of retriggers (0 = off)
+    float    retriggerSpeed = 0.125f; // Time between retriggers (beats)
+
+    // Note Cut/Delay (tracker-style)
+    float    noteCut = 0.0f;        // Cut note after this many beats (0 = no cut)
+    float    noteDelay = 0.0f;      // Delay note start by this many beats
+
+    // Tremolo (volume modulation)
+    float    tremolo = 0.0f;        // Tremolo depth (0.0-1.0)
+    float    tremoloSpeed = 4.0f;   // Tremolo speed (Hz)
 
     bool isValid() const { return pitch >= 0 && pitch < 128; }
 };
@@ -197,6 +254,15 @@ struct ChannelConfig {
     bool distortionEnabled = false;
     bool delayEnabled = false;
     bool filterEnabled = false;
+
+    // Channel-level Echo (applies to all notes on this channel)
+    bool echoEnabled = false;
+    float echoTime = 0.25f;         // Echo delay time (seconds)
+    float echoFeedback = 0.4f;      // Feedback amount (0.0-0.9)
+    float echoMix = 0.3f;           // Wet/dry mix (0.0-1.0)
+
+    // Channel Detune (for stereo widening/richness)
+    float detuneCents = 0.0f;       // Fine detune (-100 to +100 cents)
 };
 
 // ============================================================================

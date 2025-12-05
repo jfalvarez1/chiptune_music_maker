@@ -61,6 +61,21 @@ struct Voice {
     float slideTarget = 0.0f;       // Target frequency for portamento (0 = no slide)
     float slideSpeed = 0.0f;        // Slide speed (semitones per second)
 
+    // NES-style Duty Cycle
+    DutyCycle dutyCycle = DutyCycle::Duty50;  // Pulse wave duty cycle
+    bool useDutyCycle = false;                // Override channel duty cycle
+
+    // Pitch Sweep (NES sweep unit - automatic pitch bend)
+    SweepDirection sweepDirection = SweepDirection::None;
+    float sweepSpeed = 1.0f;        // How fast pitch changes (semitones per second)
+    float sweepAmount = 12.0f;      // Total sweep range (semitones)
+    float sweepProgress = 0.0f;     // Current sweep progress (0.0 to 1.0)
+
+    // Tremolo (volume modulation)
+    float tremoloDepth = 0.0f;      // 0.0 to 1.0 (volume wobble depth)
+    float tremoloSpeed = 4.0f;      // Hz
+    float tremoloPhase = 0.0f;      // Current tremolo LFO phase
+
     void reset() {
         active = false;
         phase = 0.0f;
@@ -83,6 +98,16 @@ struct Voice {
         slideTarget = 0.0f;
         slideSpeed = 0.0f;
         baseFrequency = 440.0f;
+        // New effect fields
+        dutyCycle = DutyCycle::Duty50;
+        useDutyCycle = false;
+        sweepDirection = SweepDirection::None;
+        sweepSpeed = 1.0f;
+        sweepAmount = 12.0f;
+        sweepProgress = 0.0f;
+        tremoloDepth = 0.0f;
+        tremoloSpeed = 4.0f;
+        tremoloPhase = 0.0f;
     }
 };
 
@@ -230,7 +255,10 @@ public:
     void noteOn(int note, float velocity, float time,
                 float fadeInSec = 0.0f, float fadeOutSec = 0.0f, float durationSec = 0.0f,
                 OscillatorType oscType = OscillatorType::Pulse,
-                float vibrato = 0.0f, int arpeggio = 0, float slide = 0.0f) {
+                float vibrato = 0.0f, int arpeggio = 0, float slide = 0.0f,
+                DutyCycle dutyCycle = DutyCycle::Duty50, bool useDutyCycle = false,
+                SweepDirection sweepDir = SweepDirection::None, float sweepSpd = 1.0f, float sweepAmt = 12.0f,
+                float tremolo = 0.0f, float tremoloSpd = 4.0f) {
         // Find free voice or steal oldest
         int voiceIndex = -1;
         float oldestTime = time;
@@ -302,6 +330,21 @@ public:
                 v.slideTarget = 0.0f;
                 v.slideSpeed = 0.0f;
             }
+
+            // NES-style Duty Cycle (for pulse waves)
+            v.dutyCycle = dutyCycle;
+            v.useDutyCycle = useDutyCycle;
+
+            // Pitch Sweep (NES sweep unit)
+            v.sweepDirection = sweepDir;
+            v.sweepSpeed = sweepSpd;
+            v.sweepAmount = sweepAmt;
+            v.sweepProgress = 0.0f;
+
+            // Tremolo (volume modulation)
+            v.tremoloDepth = tremolo;
+            v.tremoloSpeed = tremoloSpd;
+            v.tremoloPhase = 0.0f;
         }
     }
 
@@ -398,6 +441,20 @@ public:
                 effectFreq *= std::pow(2.0f, vibratoMod / 12.0f);
             }
 
+            // 4. Apply pitch sweep effect (NES sweep unit - automatic pitch bend)
+            if (voice.sweepDirection != SweepDirection::None && voice.sweepProgress < 1.0f) {
+                // Calculate sweep progress (0 to 1)
+                voice.sweepProgress += voice.sweepSpeed * dt;
+                if (voice.sweepProgress > 1.0f) voice.sweepProgress = 1.0f;
+
+                // Apply sweep as semitone offset
+                float sweepSemitones = voice.sweepAmount * voice.sweepProgress;
+                if (voice.sweepDirection == SweepDirection::Down) {
+                    sweepSemitones = -sweepSemitones;  // Pitch falls (laser sound)
+                }
+                effectFreq *= std::pow(2.0f, sweepSemitones / 12.0f);
+            }
+
             // Update phase increment with modified frequency (skip for drums - they manage their own)
             if (!isDrum) {
                 voice.phaseIncrement = effectFreq / m_sampleRate;
@@ -439,7 +496,20 @@ public:
             // Apply fade in/out
             float fadeGain = calculateFadeGain(voice, time);
 
-            sample *= envGain * voice.velocity * fadeGain;
+            // Apply tremolo effect (volume modulation)
+            float tremoloGain = 1.0f;
+            if (voice.tremoloDepth > 0.0f) {
+                // Update tremolo LFO phase
+                voice.tremoloPhase += voice.tremoloSpeed * dt;
+                if (voice.tremoloPhase >= 1.0f) voice.tremoloPhase -= 1.0f;
+
+                // Calculate tremolo modulation (sine wave, 0 to 1)
+                float tremoloMod = (std::sin(voice.tremoloPhase * 2.0f * PI) + 1.0f) * 0.5f;
+                // Tremolo depth: 0 = no effect, 1 = full modulation (silence at trough)
+                tremoloGain = 1.0f - voice.tremoloDepth * (1.0f - tremoloMod);
+            }
+
+            sample *= envGain * voice.velocity * fadeGain * tremoloGain;
 
             output += sample;
         }
@@ -499,9 +569,14 @@ private:
 
         // Use per-voice oscillator type (allows different sounds per note)
         switch (voice.oscillatorType) {
-            case OscillatorType::Pulse:
-                sample = generatePulse(t, dt, m_oscConfig.pulseWidth);
+            case OscillatorType::Pulse: {
+                // Use voice's duty cycle if enabled, otherwise use channel config
+                float pulseWidth = voice.useDutyCycle
+                    ? dutyCycleToFloat(voice.dutyCycle)
+                    : m_oscConfig.pulseWidth;
+                sample = generatePulse(t, dt, pulseWidth);
                 break;
+            }
 
             case OscillatorType::Triangle:
                 sample = generateTriangle(t, m_oscConfig.triangleSlope);
