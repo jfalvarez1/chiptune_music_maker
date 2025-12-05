@@ -37,7 +37,12 @@ enum class OscillatorType : uint8_t {
     Sawtooth,   // Rising or falling
     Sine,       // Pure tone
     Noise,      // LFSR white/periodic noise
-    Custom      // Wavetable
+    Custom,     // Wavetable
+    // Drums
+    Kick,       // Bass drum
+    Snare,      // Snare drum
+    HiHat,      // Hi-hat cymbal
+    Tom         // Tom drum
 };
 
 // ============================================================================
@@ -78,6 +83,9 @@ struct Note {
     float    velocity  = 1.0f;      // 0.0 to 1.0
     float    startTime = 0.0f;      // Position in beats
     float    duration  = 1.0f;      // Duration in beats
+
+    // Per-note oscillator type (each note can have its own sound)
+    OscillatorType oscillatorType = OscillatorType::Pulse;
 
     // Fade in/out (in beats, 0 = instant)
     float    fadeIn    = 0.0f;      // Fade in duration (beats)
@@ -227,13 +235,21 @@ struct UIState {
 
     // Piano roll
     int pianoRollOctaveOffset = 4;  // Middle C octave
-    PianoRollMode pianoRollMode = PianoRollMode::Select;  // Current edit mode
+    PianoRollMode pianoRollMode = PianoRollMode::Draw;  // Current edit mode (Draw is default)
     int selectedNoteIndex = -1;     // Currently selected note (-1 = none)
+    std::vector<int> selectedNoteIndices;  // Multiple selected notes
     bool isDraggingNote = false;    // Dragging a note to move it
     bool isResizingNote = false;    // Resizing note duration
     float dragStartBeat = 0.0f;     // Where drag started
     int dragStartPitch = 0;         // Original pitch when drag started
     float dragStartDuration = 0.0f; // Original duration when resize started
+
+    // Box selection
+    bool isBoxSelecting = false;    // Currently drawing selection box
+    float boxSelectStartX = 0.0f;   // Box start position (beat)
+    float boxSelectStartY = 0.0f;   // Box start position (pitch as float)
+    float boxSelectEndX = 0.0f;     // Box end position (beat)
+    float boxSelectEndY = 0.0f;     // Box end position (pitch as float)
 
     // Tracker
     int trackerRowHighlight = 4;    // Highlight every N rows
@@ -242,6 +258,70 @@ struct UIState {
     bool hasSelection = false;
     float selectionStart = 0.0f;
     float selectionEnd = 0.0f;
+};
+
+// ============================================================================
+// Undo/Redo History
+// ============================================================================
+struct PatternSnapshot {
+    std::vector<Note> notes;
+    int patternIndex = 0;
+};
+
+struct UndoHistory {
+    static constexpr int MAX_HISTORY = 50;
+    std::vector<PatternSnapshot> undoStack;
+    std::vector<PatternSnapshot> redoStack;
+
+    void saveState(const Pattern& pattern, int patternIndex) {
+        PatternSnapshot snapshot;
+        snapshot.notes = pattern.notes;
+        snapshot.patternIndex = patternIndex;
+        undoStack.push_back(snapshot);
+        if (undoStack.size() > MAX_HISTORY) {
+            undoStack.erase(undoStack.begin());
+        }
+        // Clear redo stack when new action is performed
+        redoStack.clear();
+    }
+
+    bool canUndo() const { return !undoStack.empty(); }
+    bool canRedo() const { return !redoStack.empty(); }
+
+    PatternSnapshot undo(const Pattern& currentPattern, int currentPatternIndex) {
+        if (undoStack.empty()) return { currentPattern.notes, currentPatternIndex };
+
+        // Save current state to redo stack
+        PatternSnapshot currentSnapshot;
+        currentSnapshot.notes = currentPattern.notes;
+        currentSnapshot.patternIndex = currentPatternIndex;
+        redoStack.push_back(currentSnapshot);
+
+        // Pop and return from undo stack
+        PatternSnapshot snapshot = undoStack.back();
+        undoStack.pop_back();
+        return snapshot;
+    }
+
+    PatternSnapshot redo(const Pattern& currentPattern, int currentPatternIndex) {
+        if (redoStack.empty()) return { currentPattern.notes, currentPatternIndex };
+
+        // Save current state to undo stack
+        PatternSnapshot currentSnapshot;
+        currentSnapshot.notes = currentPattern.notes;
+        currentSnapshot.patternIndex = currentPatternIndex;
+        undoStack.push_back(currentSnapshot);
+
+        // Pop and return from redo stack
+        PatternSnapshot snapshot = redoStack.back();
+        redoStack.pop_back();
+        return snapshot;
+    }
+
+    void clear() {
+        undoStack.clear();
+        redoStack.clear();
+    }
 };
 
 } // namespace ChiptuneTracker

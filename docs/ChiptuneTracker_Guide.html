@@ -1,0 +1,1374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChiptuneTracker - Sound Design Guide</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --neon-pink: #ff00ff;
+            --neon-cyan: #00ffff;
+            --neon-green: #00ff00;
+            --matrix-green: #00ff41;
+            --dark-bg: #0a0a0a;
+            --grid-color: rgba(0, 255, 65, 0.1);
+        }
+
+        body {
+            background: var(--dark-bg);
+            color: var(--matrix-green);
+            font-family: 'Share Tech Mono', monospace;
+            line-height: 1.8;
+            overflow-x: hidden;
+            position: relative;
+        }
+
+        /* Matrix Rain Canvas */
+        #matrix-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -2;
+            opacity: 0.15;
+        }
+
+        /* Sine Wave Canvas */
+        #sine-canvas {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 200px;
+            z-index: -1;
+            opacity: 0.3;
+        }
+
+        /* Retro Grid Background */
+        .retro-grid {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                linear-gradient(transparent 0%, rgba(0, 255, 65, 0.03) 50%, transparent 100%),
+                repeating-linear-gradient(
+                    0deg,
+                    transparent,
+                    transparent 50px,
+                    var(--grid-color) 50px,
+                    var(--grid-color) 51px
+                ),
+                repeating-linear-gradient(
+                    90deg,
+                    transparent,
+                    transparent 50px,
+                    var(--grid-color) 50px,
+                    var(--grid-color) 51px
+                );
+            z-index: -3;
+            perspective: 500px;
+            transform: rotateX(60deg) translateY(-50%);
+            transform-origin: center bottom;
+        }
+
+        /* LED Chaser Container */
+        .led-chaser {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            display: flex;
+            z-index: 100;
+        }
+
+        .led {
+            flex: 1;
+            height: 100%;
+            background: var(--matrix-green);
+            opacity: 0.1;
+            animation: ledChase 2s ease-in-out infinite;
+        }
+
+        @keyframes ledChase {
+            0%, 100% { opacity: 0.1; box-shadow: none; }
+            50% { opacity: 1; box-shadow: 0 0 20px var(--neon-cyan), 0 0 40px var(--neon-pink); }
+        }
+
+        /* Stagger LED animations */
+        .led:nth-child(1) { animation-delay: 0s; }
+        .led:nth-child(2) { animation-delay: 0.05s; }
+        .led:nth-child(3) { animation-delay: 0.1s; }
+        .led:nth-child(4) { animation-delay: 0.15s; }
+        .led:nth-child(5) { animation-delay: 0.2s; }
+        .led:nth-child(6) { animation-delay: 0.25s; }
+        .led:nth-child(7) { animation-delay: 0.3s; }
+        .led:nth-child(8) { animation-delay: 0.35s; }
+        .led:nth-child(9) { animation-delay: 0.4s; }
+        .led:nth-child(10) { animation-delay: 0.45s; }
+        .led:nth-child(11) { animation-delay: 0.5s; }
+        .led:nth-child(12) { animation-delay: 0.55s; }
+        .led:nth-child(13) { animation-delay: 0.6s; }
+        .led:nth-child(14) { animation-delay: 0.65s; }
+        .led:nth-child(15) { animation-delay: 0.7s; }
+        .led:nth-child(16) { animation-delay: 0.75s; }
+        .led:nth-child(17) { animation-delay: 0.8s; }
+        .led:nth-child(18) { animation-delay: 0.85s; }
+        .led:nth-child(19) { animation-delay: 0.9s; }
+        .led:nth-child(20) { animation-delay: 0.95s; }
+
+        /* Bottom LED chaser */
+        .led-chaser-bottom {
+            position: fixed;
+            bottom: 0;
+            top: auto;
+        }
+
+        .led-chaser-bottom .led {
+            animation-direction: reverse;
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            padding: 60px 0;
+            position: relative;
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 4rem;
+            font-weight: 900;
+            background: linear-gradient(45deg, var(--neon-cyan), var(--neon-pink), var(--neon-cyan));
+            background-size: 200% 200%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: gradientShift 3s ease infinite;
+            text-shadow: 0 0 30px rgba(0, 255, 255, 0.5);
+            margin-bottom: 20px;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            color: var(--neon-pink);
+            text-transform: uppercase;
+            letter-spacing: 8px;
+            animation: flicker 4s infinite;
+        }
+
+        @keyframes flicker {
+            0%, 100% { opacity: 1; }
+            92% { opacity: 1; }
+            93% { opacity: 0.8; }
+            94% { opacity: 1; }
+            95% { opacity: 0.9; }
+            96% { opacity: 1; }
+        }
+
+        /* Sections */
+        section {
+            background: rgba(0, 20, 0, 0.8);
+            border: 1px solid var(--matrix-green);
+            border-radius: 10px;
+            padding: 40px;
+            margin: 40px 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--neon-cyan), transparent);
+            animation: scanline 3s linear infinite;
+        }
+
+        @keyframes scanline {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+
+        h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2rem;
+            color: var(--neon-cyan);
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid var(--neon-pink);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        h2::before {
+            content: '>';
+            color: var(--neon-pink);
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        h3 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.4rem;
+            color: var(--neon-pink);
+            margin: 30px 0 15px 0;
+            padding-left: 20px;
+            border-left: 3px solid var(--neon-cyan);
+        }
+
+        p {
+            margin: 15px 0;
+            text-align: justify;
+        }
+
+        /* Code Blocks */
+        pre {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid var(--matrix-green);
+            border-radius: 8px;
+            padding: 20px;
+            overflow-x: auto;
+            margin: 20px 0;
+            position: relative;
+        }
+
+        pre::before {
+            content: 'CODE';
+            position: absolute;
+            top: -10px;
+            left: 20px;
+            background: var(--dark-bg);
+            padding: 0 10px;
+            color: var(--neon-cyan);
+            font-size: 0.8rem;
+            letter-spacing: 2px;
+        }
+
+        code {
+            font-family: 'Share Tech Mono', monospace;
+            color: var(--neon-green);
+            font-size: 0.95rem;
+        }
+
+        .keyword { color: var(--neon-pink); }
+        .function { color: var(--neon-cyan); }
+        .number { color: #ffff00; }
+        .comment { color: #666; font-style: italic; }
+        .string { color: #ff9900; }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border: 1px solid var(--matrix-green);
+        }
+
+        th {
+            background: rgba(0, 255, 255, 0.1);
+            color: var(--neon-cyan);
+            font-family: 'Orbitron', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        tr:hover {
+            background: rgba(255, 0, 255, 0.05);
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 15px 0 15px 30px;
+        }
+
+        li {
+            margin: 10px 0;
+            position: relative;
+        }
+
+        ul li::marker {
+            color: var(--neon-pink);
+        }
+
+        /* Waveform Visualizer */
+        .waveform-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .waveform-box {
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid var(--neon-cyan);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .waveform-box:hover {
+            border-color: var(--neon-pink);
+            box-shadow: 0 0 30px rgba(255, 0, 255, 0.3);
+            transform: translateY(-5px);
+        }
+
+        .waveform-box canvas {
+            width: 100%;
+            height: 80px;
+            margin-bottom: 10px;
+        }
+
+        .waveform-box h4 {
+            color: var(--neon-cyan);
+            font-family: 'Orbitron', sans-serif;
+            margin-bottom: 10px;
+        }
+
+        /* Parameter Cards */
+        .param-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .param-card {
+            background: linear-gradient(135deg, rgba(0, 255, 255, 0.1), rgba(255, 0, 255, 0.1));
+            border: 1px solid var(--matrix-green);
+            border-radius: 10px;
+            padding: 25px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .param-card::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(
+                45deg,
+                transparent 40%,
+                rgba(255, 255, 255, 0.03) 50%,
+                transparent 60%
+            );
+            animation: shine 3s infinite;
+        }
+
+        @keyframes shine {
+            0% { transform: translateX(-100%) rotate(45deg); }
+            100% { transform: translateX(100%) rotate(45deg); }
+        }
+
+        .param-card h4 {
+            color: var(--neon-pink);
+            font-family: 'Orbitron', sans-serif;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .param-card .range {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px dashed var(--matrix-green);
+            font-size: 0.9rem;
+        }
+
+        .param-card .range span:first-child { color: var(--neon-cyan); }
+        .param-card .range span:last-child { color: var(--neon-pink); }
+
+        /* Tips Box */
+        .tip-box {
+            background: linear-gradient(90deg, rgba(255, 0, 255, 0.1), transparent);
+            border-left: 4px solid var(--neon-pink);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 10px 10px 0;
+        }
+
+        .tip-box::before {
+            content: 'TIP';
+            display: block;
+            color: var(--neon-pink);
+            font-family: 'Orbitron', sans-serif;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        /* Warning Box */
+        .warning-box {
+            background: linear-gradient(90deg, rgba(255, 255, 0, 0.1), transparent);
+            border-left: 4px solid #ffff00;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 10px 10px 0;
+        }
+
+        .warning-box::before {
+            content: 'WARNING';
+            display: block;
+            color: #ffff00;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 1000;
+        }
+
+        nav ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        nav li {
+            margin: 15px 0;
+        }
+
+        nav a {
+            display: block;
+            width: 12px;
+            height: 12px;
+            background: var(--matrix-green);
+            border-radius: 50%;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        nav a:hover {
+            background: var(--neon-pink);
+            box-shadow: 0 0 20px var(--neon-pink);
+            transform: scale(1.5);
+        }
+
+        nav a::after {
+            content: attr(data-section);
+            position: absolute;
+            right: 25px;
+            top: 50%;
+            transform: translateY(-50%);
+            white-space: nowrap;
+            color: var(--neon-cyan);
+            font-size: 0.8rem;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+
+        nav a:hover::after {
+            opacity: 1;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 40px;
+            border-top: 1px solid var(--matrix-green);
+            margin-top: 60px;
+        }
+
+        footer p {
+            color: var(--neon-cyan);
+            font-size: 0.9rem;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--dark-bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--matrix-green);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--neon-cyan);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            h1 { font-size: 2.5rem; }
+            nav { display: none; }
+            section { padding: 20px; }
+        }
+
+        /* Glitch Effect for Headers */
+        .glitch {
+            position: relative;
+        }
+
+        .glitch::before,
+        .glitch::after {
+            content: attr(data-text);
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .glitch::before {
+            animation: glitch-1 2s infinite linear alternate-reverse;
+            color: var(--neon-cyan);
+            z-index: -1;
+        }
+
+        .glitch::after {
+            animation: glitch-2 3s infinite linear alternate-reverse;
+            color: var(--neon-pink);
+            z-index: -2;
+        }
+
+        @keyframes glitch-1 {
+            0%, 100% { clip-path: inset(0 0 95% 0); transform: translate(-2px, 2px); }
+            20% { clip-path: inset(30% 0 40% 0); transform: translate(2px, -2px); }
+            40% { clip-path: inset(70% 0 10% 0); transform: translate(-2px, 2px); }
+            60% { clip-path: inset(10% 0 60% 0); transform: translate(2px, -2px); }
+            80% { clip-path: inset(50% 0 30% 0); transform: translate(-2px, 2px); }
+        }
+
+        @keyframes glitch-2 {
+            0%, 100% { clip-path: inset(95% 0 0 0); transform: translate(2px, -2px); }
+            20% { clip-path: inset(40% 0 30% 0); transform: translate(-2px, 2px); }
+            40% { clip-path: inset(10% 0 70% 0); transform: translate(2px, -2px); }
+            60% { clip-path: inset(60% 0 10% 0); transform: translate(-2px, 2px); }
+            80% { clip-path: inset(30% 0 50% 0); transform: translate(2px, -2px); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Matrix Rain Background -->
+    <canvas id="matrix-canvas"></canvas>
+
+    <!-- Sine Wave Background -->
+    <canvas id="sine-canvas"></canvas>
+
+    <!-- Retro Grid -->
+    <div class="retro-grid"></div>
+
+    <!-- LED Chasers -->
+    <div class="led-chaser">
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+    </div>
+    <div class="led-chaser led-chaser-bottom">
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+        <div class="led"></div><div class="led"></div><div class="led"></div><div class="led"></div>
+    </div>
+
+    <!-- Navigation -->
+    <nav>
+        <ul>
+            <li><a href="#intro" data-section="Introduction"></a></li>
+            <li><a href="#interface" data-section="Interface"></a></li>
+            <li><a href="#oscillators" data-section="Oscillators"></a></li>
+            <li><a href="#drums" data-section="Drums"></a></li>
+            <li><a href="#envelope" data-section="Envelope"></a></li>
+            <li><a href="#effects" data-section="Effects"></a></li>
+            <li><a href="#advanced" data-section="Advanced"></a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <header>
+            <h1 class="glitch" data-text="CHIPTUNE TRACKER">CHIPTUNE TRACKER</h1>
+            <p class="subtitle">Sound Design & User Guide</p>
+        </header>
+
+        <!-- Introduction -->
+        <section id="intro">
+            <h2>System Initialize</h2>
+            <p>Welcome to ChiptuneTracker, a modern DAW inspired by classic 8-bit sound chips like the NES 2A03,
+            Game Boy DMG, and Commodore 64 SID. This guide will teach you how to craft authentic retro sounds
+            and use every feature of the tracker.</p>
+
+            <div class="tip-box">
+                ChiptuneTracker uses real-time synthesis with PolyBLEP antialiasing for clean, alias-free waveforms
+                even at high frequencies. All processing happens in the audio thread with zero allocations for
+                glitch-free playback.
+            </div>
+
+            <h3>Quick Start</h3>
+            <ol>
+                <li>Select a sound from the <strong>Sound Palette</strong> (Oscillators or Drums)</li>
+                <li>Switch to <strong>Draw Mode</strong> in the Piano Roll</li>
+                <li>Click to place notes on the grid</li>
+                <li>Press <strong>PLAY</strong> to hear your creation</li>
+                <li>Adjust parameters in the <strong>Channel Settings</strong> panel</li>
+            </ol>
+        </section>
+
+        <!-- Interface Overview -->
+        <section id="interface">
+            <h2>Interface Overview</h2>
+
+            <h3>Transport Bar</h3>
+            <table>
+                <tr>
+                    <th>Control</th>
+                    <th>Function</th>
+                    <th>Shortcut</th>
+                </tr>
+                <tr>
+                    <td>PLAY/PAUSE</td>
+                    <td>Start or pause playback</td>
+                    <td>Space</td>
+                </tr>
+                <tr>
+                    <td>STOP</td>
+                    <td>Stop and return to beginning</td>
+                    <td>-</td>
+                </tr>
+                <tr>
+                    <td>Loop</td>
+                    <td>Enable/disable looping</td>
+                    <td>-</td>
+                </tr>
+                <tr>
+                    <td>BPM</td>
+                    <td>Set tempo (30-300)</td>
+                    <td>-</td>
+                </tr>
+                <tr>
+                    <td>Master Volume</td>
+                    <td>Global output level</td>
+                    <td>-</td>
+                </tr>
+            </table>
+
+            <h3>Piano Roll Modes</h3>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>SELECT Mode</h4>
+                    <p>Click notes to select them. Drag to move notes. Drag right edge to resize duration.
+                    Click empty space to start box selection.</p>
+                </div>
+                <div class="param-card">
+                    <h4>DRAW Mode</h4>
+                    <p>Click anywhere to place notes. If a sound is selected in the palette, new notes
+                    will use that oscillator type.</p>
+                </div>
+                <div class="param-card">
+                    <h4>ERASE Mode</h4>
+                    <p>Click on notes to delete them instantly.</p>
+                </div>
+            </div>
+
+            <h3>Sound Palette</h3>
+            <p>The Sound Palette displays all available oscillator types and drum sounds. Click to select
+            a sound - it will be highlighted with a cyan border. When in Draw mode, new notes will use
+            the selected sound type.</p>
+
+            <div class="tip-box">
+                Each note stores its own oscillator type! This means you can have different sounds
+                playing simultaneously in the same pattern - mix pulse waves with drums freely.
+            </div>
+        </section>
+
+        <!-- Oscillators -->
+        <section id="oscillators">
+            <h2>Oscillator Types</h2>
+            <p>ChiptuneTracker provides six classic oscillator types, each with unique characteristics:</p>
+
+            <div class="waveform-container">
+                <div class="waveform-box">
+                    <canvas id="wave-pulse"></canvas>
+                    <h4>PULSE</h4>
+                    <p>Variable duty cycle square wave. Classic NES lead sound.</p>
+                </div>
+                <div class="waveform-box">
+                    <canvas id="wave-triangle"></canvas>
+                    <h4>TRIANGLE</h4>
+                    <p>Soft, mellow tone. Great for bass lines.</p>
+                </div>
+                <div class="waveform-box">
+                    <canvas id="wave-sawtooth"></canvas>
+                    <h4>SAWTOOTH</h4>
+                    <p>Bright, buzzy tone. Rich in harmonics.</p>
+                </div>
+                <div class="waveform-box">
+                    <canvas id="wave-sine"></canvas>
+                    <h4>SINE</h4>
+                    <p>Pure tone. No harmonics. Sub-bass and pads.</p>
+                </div>
+                <div class="waveform-box">
+                    <canvas id="wave-noise"></canvas>
+                    <h4>NOISE</h4>
+                    <p>LFSR noise generator. Percussion and effects.</p>
+                </div>
+                <div class="waveform-box">
+                    <canvas id="wave-custom"></canvas>
+                    <h4>CUSTOM</h4>
+                    <p>Wavetable slot for future expansion.</p>
+                </div>
+            </div>
+
+            <h3>Pulse Width</h3>
+            <p>The pulse wave's duty cycle dramatically changes its timbre:</p>
+            <table>
+                <tr>
+                    <th>Duty Cycle</th>
+                    <th>Sound Character</th>
+                    <th>Classic Use</th>
+                </tr>
+                <tr>
+                    <td>12.5%</td>
+                    <td>Thin, nasal, reedy</td>
+                    <td>NES sound effects</td>
+                </tr>
+                <tr>
+                    <td>25%</td>
+                    <td>Hollow, woody</td>
+                    <td>Game Boy leads</td>
+                </tr>
+                <tr>
+                    <td>50%</td>
+                    <td>Full, rich square wave</td>
+                    <td>Classic chiptune leads</td>
+                </tr>
+                <tr>
+                    <td>75%</td>
+                    <td>Same as 25% (inverted)</td>
+                    <td>-</td>
+                </tr>
+            </table>
+
+            <h3>Modifying Oscillators in Code</h3>
+            <p>Oscillator parameters are defined in <code>Types.h</code>:</p>
+            <pre><code><span class="keyword">struct</span> <span class="function">OscillatorConfig</span> {
+    OscillatorType type = OscillatorType::Pulse;
+
+    <span class="comment">// Pulse settings</span>
+    <span class="keyword">float</span> pulseWidth = <span class="number">0.5f</span>;        <span class="comment">// 0.0 to 1.0 (duty cycle)</span>
+
+    <span class="comment">// Triangle settings</span>
+    <span class="keyword">float</span> triangleSlope = <span class="number">0.5f</span>;     <span class="comment">// 0.0 = saw down, 0.5 = triangle, 1.0 = saw up</span>
+
+    <span class="comment">// Noise settings</span>
+    <span class="keyword">bool</span> noiseShortMode = <span class="keyword">false</span>;    <span class="comment">// NES short mode (metallic)</span>
+
+    <span class="comment">// General</span>
+    <span class="keyword">float</span> detune = <span class="number">0.0f</span>;            <span class="comment">// Cents (-100 to +100)</span>
+    <span class="keyword">float</span> phase = <span class="number">0.0f</span>;             <span class="comment">// Starting phase (0.0 to 1.0)</span>
+};</code></pre>
+        </section>
+
+        <!-- Drums -->
+        <section id="drums">
+            <h2>Drum Synthesis</h2>
+            <p>ChiptuneTracker features four synthesized drum sounds, crafted to emulate classic 8-bit percussion:</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>KICK</h4>
+                    <p>Deep "boom" with pitch sweep. 808/NES style bass drum with dramatic frequency drop
+                    from 150Hz to 50Hz.</p>
+                    <div class="range">
+                        <span>Start: 150Hz</span>
+                        <span>End: 50Hz</span>
+                    </div>
+                </div>
+                <div class="param-card">
+                    <h4>SNARE</h4>
+                    <p>Sharp "tsk" sound. High-frequency noise with short-mode LFSR for bright,
+                    metallic character.</p>
+                    <div class="range">
+                        <span>Decay: 35x</span>
+                        <span>Mode: Short LFSR</span>
+                    </div>
+                </div>
+                <div class="param-card">
+                    <h4>HI-HAT</h4>
+                    <p>Metallic "tsss" with ring. Inharmonic square waves create the classic cymbal sound.</p>
+                    <div class="range">
+                        <span>Decay: 50x</span>
+                        <span>Freq: 800Hz base</span>
+                    </div>
+                </div>
+                <div class="param-card">
+                    <h4>TOM</h4>
+                    <p>Pitched "bom" with resonance. Dramatic pitch drop with second harmonic for body.</p>
+                    <div class="range">
+                        <span>Pitch Drop: 1.2x</span>
+                        <span>Decay: 8x</span>
+                    </div>
+                </div>
+            </div>
+
+            <h3>Drum Synthesis Deep Dive</h3>
+            <p>Each drum is synthesized in real-time using these techniques:</p>
+
+            <h3>Kick Drum Algorithm</h3>
+            <pre><code><span class="keyword">float</span> <span class="function">generateKick</span>(Voice& voice) {
+    <span class="keyword">float</span> noteTime = voice.envTime;
+
+    <span class="comment">// Two-stage envelope: punchy attack + longer body</span>
+    <span class="keyword">float</span> attackEnv = std::<span class="function">exp</span>(-noteTime * <span class="number">25.0f</span>);
+    <span class="keyword">float</span> bodyEnv = std::<span class="function">exp</span>(-noteTime * <span class="number">5.0f</span>);
+    <span class="keyword">float</span> envelope = attackEnv * <span class="number">0.3f</span> + bodyEnv * <span class="number">0.7f</span>;
+
+    <span class="comment">// Pitch sweep from 150Hz down to 50Hz</span>
+    <span class="keyword">float</span> pitchEnv = std::<span class="function">exp</span>(-noteTime * <span class="number">30.0f</span>);
+    <span class="keyword">float</span> freq = <span class="number">50.0f</span> + <span class="number">100.0f</span> * pitchEnv;
+
+    <span class="comment">// Sine oscillator with saturation</span>
+    <span class="keyword">float</span> sample = std::<span class="function">sin</span>(voice.phase * TWO_PI);
+    sample = std::<span class="function">tanh</span>(sample * <span class="number">1.5f</span>);  <span class="comment">// Soft clip</span>
+
+    <span class="comment">// Click transient at start</span>
+    <span class="keyword">float</span> click = noteTime < <span class="number">0.002f</span> ?
+        (<span class="number">1.0f</span> - noteTime / <span class="number">0.002f</span>) * <span class="number">0.6f</span> : <span class="number">0.0f</span>;
+
+    <span class="keyword">return</span> (sample * <span class="number">0.9f</span> + click) * envelope;
+}</code></pre>
+
+            <h3>Key Synthesis Concepts</h3>
+            <table>
+                <tr>
+                    <th>Technique</th>
+                    <th>Effect</th>
+                    <th>Used In</th>
+                </tr>
+                <tr>
+                    <td>Pitch Envelope</td>
+                    <td>Frequency drops over time</td>
+                    <td>Kick, Tom</td>
+                </tr>
+                <tr>
+                    <td>LFSR Noise</td>
+                    <td>Pseudo-random noise generation</td>
+                    <td>Snare, Hi-Hat</td>
+                </tr>
+                <tr>
+                    <td>Short Mode LFSR</td>
+                    <td>Metallic, ringy noise</td>
+                    <td>Snare, Hi-Hat</td>
+                </tr>
+                <tr>
+                    <td>Inharmonic Ratios</td>
+                    <td>Non-integer frequency ratios</td>
+                    <td>Hi-Hat (metallic ring)</td>
+                </tr>
+                <tr>
+                    <td>Soft Saturation</td>
+                    <td>Warm distortion via tanh()</td>
+                    <td>Kick, Tom</td>
+                </tr>
+                <tr>
+                    <td>Click Transient</td>
+                    <td>Sharp attack spike</td>
+                    <td>All drums</td>
+                </tr>
+            </table>
+
+            <div class="tip-box">
+                To modify drum sounds, edit the <code>generateKick()</code>, <code>generateSnare()</code>,
+                <code>generateHiHat()</code>, and <code>generateTom()</code> functions in
+                <code>Synthesizer.h</code>. Key parameters to adjust:
+                <ul>
+                    <li><strong>Decay rate</strong>: Higher = shorter sound (e.g., 50.0f for tight, 5.0f for boomy)</li>
+                    <li><strong>Pitch envelope</strong>: Controls how fast frequency drops</li>
+                    <li><strong>Click duration</strong>: 0.002f = 2ms transient</li>
+                    <li><strong>LFSR mode</strong>: bits 0,1 = metallic; bits 0,6 = white noise</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- Envelope -->
+        <section id="envelope">
+            <h2>ADSR Envelope</h2>
+            <p>Every channel has an ADSR (Attack, Decay, Sustain, Release) envelope that shapes the
+            amplitude over time:</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Attack</h4>
+                    <p>Time to reach full volume after note-on. Short = percussive, Long = swelling pads.</p>
+                    <div class="range">
+                        <span>Min: 0.001s</span>
+                        <span>Max: 2.0s</span>
+                    </div>
+                </div>
+                <div class="param-card">
+                    <h4>Decay</h4>
+                    <p>Time to fall from peak to sustain level.</p>
+                    <div class="range">
+                        <span>Min: 0.001s</span>
+                        <span>Max: 2.0s</span>
+                    </div>
+                </div>
+                <div class="param-card">
+                    <h4>Sustain</h4>
+                    <p>Level held while note is pressed. 0.0 = silent, 1.0 = full volume.</p>
+                    <div class="range">
+                        <span>Min: 0.0</span>
+                        <span>Max: 1.0</span>
+                    </div>
+                </div>
+                <div class="param-card">
+                    <h4>Release</h4>
+                    <p>Time to fade out after note-off.</p>
+                    <div class="range">
+                        <span>Min: 0.001s</span>
+                        <span>Max: 5.0s</span>
+                    </div>
+                </div>
+            </div>
+
+            <h3>Envelope Code Structure</h3>
+            <pre><code><span class="keyword">struct</span> <span class="function">Envelope</span> {
+    <span class="keyword">float</span> attack  = <span class="number">0.01f</span>;   <span class="comment">// Seconds</span>
+    <span class="keyword">float</span> decay   = <span class="number">0.1f</span>;    <span class="comment">// Seconds</span>
+    <span class="keyword">float</span> sustain = <span class="number">0.7f</span>;    <span class="comment">// Level (0.0 to 1.0)</span>
+    <span class="keyword">float</span> release = <span class="number">0.2f</span>;    <span class="comment">// Seconds</span>
+};</code></pre>
+
+            <h3>Classic Envelope Presets</h3>
+            <table>
+                <tr>
+                    <th>Sound Type</th>
+                    <th>Attack</th>
+                    <th>Decay</th>
+                    <th>Sustain</th>
+                    <th>Release</th>
+                </tr>
+                <tr>
+                    <td>Plucky Lead</td>
+                    <td>0.001</td>
+                    <td>0.1</td>
+                    <td>0.3</td>
+                    <td>0.1</td>
+                </tr>
+                <tr>
+                    <td>Organ</td>
+                    <td>0.001</td>
+                    <td>0.01</td>
+                    <td>1.0</td>
+                    <td>0.05</td>
+                </tr>
+                <tr>
+                    <td>Pad</td>
+                    <td>0.5</td>
+                    <td>0.3</td>
+                    <td>0.8</td>
+                    <td>1.0</td>
+                </tr>
+                <tr>
+                    <td>Bass</td>
+                    <td>0.01</td>
+                    <td>0.2</td>
+                    <td>0.6</td>
+                    <td>0.15</td>
+                </tr>
+                <tr>
+                    <td>Staccato</td>
+                    <td>0.001</td>
+                    <td>0.05</td>
+                    <td>0.0</td>
+                    <td>0.05</td>
+                </tr>
+            </table>
+        </section>
+
+        <!-- Effects -->
+        <section id="effects">
+            <h2>Effects Chain</h2>
+            <p>Each channel can enable various effects processed in the following order:</p>
+
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Bitcrusher</h4>
+                    <p>Reduces bit depth for lo-fi crunch. Classic 8-bit degradation.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Distortion</h4>
+                    <p>Soft clipping saturation for warmth and edge.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Filter</h4>
+                    <p>Low-pass filter for tonal shaping.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Delay</h4>
+                    <p>Echo effect with feedback control.</p>
+                </div>
+            </div>
+
+            <h3>Per-Note Effects</h3>
+            <p>Notes can also have individual effect parameters:</p>
+            <pre><code><span class="keyword">struct</span> <span class="function">Note</span> {
+    <span class="keyword">int</span>   pitch     = <span class="number">60</span>;        <span class="comment">// MIDI note (60 = C4)</span>
+    <span class="keyword">float</span> velocity  = <span class="number">1.0f</span>;      <span class="comment">// Volume (0.0 to 1.0)</span>
+    <span class="keyword">float</span> startTime = <span class="number">0.0f</span>;      <span class="comment">// Position in beats</span>
+    <span class="keyword">float</span> duration  = <span class="number">1.0f</span>;      <span class="comment">// Length in beats</span>
+
+    <span class="comment">// Per-note sound type</span>
+    OscillatorType oscillatorType = OscillatorType::Pulse;
+
+    <span class="comment">// Fade in/out (in beats)</span>
+    <span class="keyword">float</span> fadeIn  = <span class="number">0.0f</span>;
+    <span class="keyword">float</span> fadeOut = <span class="number">0.0f</span>;
+
+    <span class="comment">// Per-note effects</span>
+    <span class="keyword">int</span>   arpeggio = <span class="number">0</span>;          <span class="comment">// Chord pattern</span>
+    <span class="keyword">float</span> vibrato  = <span class="number">0.0f</span>;       <span class="comment">// Pitch wobble</span>
+    <span class="keyword">float</span> slide    = <span class="number">0.0f</span>;       <span class="comment">// Portamento</span>
+};</code></pre>
+        </section>
+
+        <!-- Advanced -->
+        <section id="advanced">
+            <h2>Advanced Sound Design</h2>
+
+            <h3>Creating Custom Oscillators</h3>
+            <p>To add a new oscillator type:</p>
+            <ol>
+                <li>Add to the <code>OscillatorType</code> enum in <code>Types.h</code></li>
+                <li>Create a generator function in <code>Synthesizer.h</code></li>
+                <li>Add the case to the switch in <code>generateOscillator()</code></li>
+                <li>Add a visual icon in <code>DrawWaveformIcon()</code> in <code>UI.h</code></li>
+                <li>Add to the Sound Palette in <code>DrawSoundPalette()</code></li>
+            </ol>
+
+            <h3>PolyBLEP Antialiasing</h3>
+            <p>ChiptuneTracker uses PolyBLEP (Polynomial Bandlimited Step) to prevent aliasing
+            in pulse and sawtooth waves:</p>
+            <pre><code><span class="keyword">float</span> <span class="function">polyBlep</span>(<span class="keyword">float</span> t, <span class="keyword">float</span> dt) {
+    <span class="keyword">if</span> (t < dt) {
+        t /= dt;
+        <span class="keyword">return</span> t + t - t * t - <span class="number">1.0f</span>;
+    } <span class="keyword">else if</span> (t > <span class="number">1.0f</span> - dt) {
+        t = (t - <span class="number">1.0f</span>) / dt;
+        <span class="keyword">return</span> t * t + t + t + <span class="number">1.0f</span>;
+    }
+    <span class="keyword">return</span> <span class="number">0.0f</span>;
+}</code></pre>
+
+            <h3>LFSR Noise Generation</h3>
+            <p>The noise generator uses a Linear Feedback Shift Register, emulating the NES noise channel:</p>
+            <pre><code><span class="comment">// Long mode (bits 0 and 6) - white noise</span>
+feedback = ((lfsr >> <span class="number">0</span>) ^ (lfsr >> <span class="number">6</span>)) & <span class="number">1</span>;
+
+<span class="comment">// Short mode (bits 0 and 1) - metallic/periodic</span>
+feedback = ((lfsr >> <span class="number">0</span>) ^ (lfsr >> <span class="number">1</span>)) & <span class="number">1</span>;
+
+lfsr = (lfsr >> <span class="number">1</span>) | (feedback << <span class="number">14</span>);</code></pre>
+
+            <div class="warning-box">
+                Audio processing runs in a separate thread. Avoid allocations (new, malloc, vector resize)
+                in the audio callback to prevent glitches. All synthesis uses fixed-size arrays.
+            </div>
+
+            <h3>File Structure</h3>
+            <table>
+                <tr>
+                    <th>File</th>
+                    <th>Purpose</th>
+                </tr>
+                <tr>
+                    <td><code>Types.h</code></td>
+                    <td>Core data structures (Note, Pattern, Project, Enums)</td>
+                </tr>
+                <tr>
+                    <td><code>Synthesizer.h</code></td>
+                    <td>Oscillator generation, envelope processing, drum synthesis</td>
+                </tr>
+                <tr>
+                    <td><code>Sequencer.h</code></td>
+                    <td>Playback engine, note scheduling, transport control</td>
+                </tr>
+                <tr>
+                    <td><code>Effects.h</code></td>
+                    <td>Audio effects (bitcrusher, filter, delay, etc.)</td>
+                </tr>
+                <tr>
+                    <td><code>UI.h</code></td>
+                    <td>ImGui interface (piano roll, mixer, palette)</td>
+                </tr>
+                <tr>
+                    <td><code>main.cpp</code></td>
+                    <td>Win32 window, OpenGL context, audio device setup</td>
+                </tr>
+            </table>
+        </section>
+
+        <footer>
+            <p>CHIPTUNE TRACKER v1.0 | Built with C++, ImGui, OpenGL, miniaudio</p>
+            <p style="color: var(--neon-pink); margin-top: 10px;">[ SYSTEM ONLINE ]</p>
+        </footer>
+    </div>
+
+    <script>
+        // Matrix Rain Effect
+        const matrixCanvas = document.getElementById('matrix-canvas');
+        const matrixCtx = matrixCanvas.getContext('2d');
+
+        function resizeMatrix() {
+            matrixCanvas.width = window.innerWidth;
+            matrixCanvas.height = window.innerHeight;
+        }
+        resizeMatrix();
+        window.addEventListener('resize', resizeMatrix);
+
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()チップチューン';
+        const fontSize = 14;
+        let columns = Math.floor(matrixCanvas.width / fontSize);
+        let drops = Array(columns).fill(1);
+
+        function drawMatrix() {
+            matrixCtx.fillStyle = 'rgba(10, 10, 10, 0.05)';
+            matrixCtx.fillRect(0, 0, matrixCanvas.width, matrixCanvas.height);
+
+            matrixCtx.fillStyle = '#00ff41';
+            matrixCtx.font = fontSize + 'px monospace';
+
+            for (let i = 0; i < drops.length; i++) {
+                const char = chars[Math.floor(Math.random() * chars.length)];
+                matrixCtx.fillText(char, i * fontSize, drops[i] * fontSize);
+
+                if (drops[i] * fontSize > matrixCanvas.height && Math.random() > 0.975) {
+                    drops[i] = 0;
+                }
+                drops[i]++;
+            }
+        }
+
+        setInterval(drawMatrix, 50);
+
+        // Sine Wave Animation
+        const sineCanvas = document.getElementById('sine-canvas');
+        const sineCtx = sineCanvas.getContext('2d');
+
+        function resizeSine() {
+            sineCanvas.width = window.innerWidth;
+            sineCanvas.height = 200;
+        }
+        resizeSine();
+        window.addEventListener('resize', resizeSine);
+
+        let sineOffset = 0;
+
+        function drawSineWaves() {
+            sineCtx.clearRect(0, 0, sineCanvas.width, sineCanvas.height);
+
+            // Draw multiple sine waves with different properties
+            const waves = [
+                { amplitude: 30, frequency: 0.02, speed: 0.05, color: 'rgba(0, 255, 255, 0.5)' },
+                { amplitude: 20, frequency: 0.03, speed: 0.03, color: 'rgba(255, 0, 255, 0.5)' },
+                { amplitude: 40, frequency: 0.015, speed: 0.07, color: 'rgba(0, 255, 65, 0.3)' },
+                { amplitude: 15, frequency: 0.04, speed: 0.04, color: 'rgba(255, 255, 0, 0.3)' }
+            ];
+
+            waves.forEach((wave, index) => {
+                sineCtx.beginPath();
+                sineCtx.strokeStyle = wave.color;
+                sineCtx.lineWidth = 2;
+
+                for (let x = 0; x < sineCanvas.width; x++) {
+                    const y = sineCanvas.height / 2 +
+                              Math.sin((x * wave.frequency) + (sineOffset * wave.speed) + index) * wave.amplitude;
+
+                    if (x === 0) {
+                        sineCtx.moveTo(x, y);
+                    } else {
+                        sineCtx.lineTo(x, y);
+                    }
+                }
+                sineCtx.stroke();
+            });
+
+            sineOffset++;
+            requestAnimationFrame(drawSineWaves);
+        }
+
+        drawSineWaves();
+
+        // Draw Waveform Icons
+        function drawWaveformIcons() {
+            // Pulse Wave
+            const pulseCanvas = document.getElementById('wave-pulse');
+            if (pulseCanvas) {
+                const ctx = pulseCanvas.getContext('2d');
+                pulseCanvas.width = 200;
+                pulseCanvas.height = 80;
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(10, 60);
+                ctx.lineTo(10, 20);
+                ctx.lineTo(60, 20);
+                ctx.lineTo(60, 60);
+                ctx.lineTo(110, 60);
+                ctx.lineTo(110, 20);
+                ctx.lineTo(160, 20);
+                ctx.lineTo(160, 60);
+                ctx.lineTo(190, 60);
+                ctx.stroke();
+            }
+
+            // Triangle Wave
+            const triCanvas = document.getElementById('wave-triangle');
+            if (triCanvas) {
+                const ctx = triCanvas.getContext('2d');
+                triCanvas.width = 200;
+                triCanvas.height = 80;
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(10, 40);
+                ctx.lineTo(50, 15);
+                ctx.lineTo(100, 65);
+                ctx.lineTo(150, 15);
+                ctx.lineTo(190, 40);
+                ctx.stroke();
+            }
+
+            // Sawtooth Wave
+            const sawCanvas = document.getElementById('wave-sawtooth');
+            if (sawCanvas) {
+                const ctx = sawCanvas.getContext('2d');
+                sawCanvas.width = 200;
+                sawCanvas.height = 80;
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(10, 60);
+                ctx.lineTo(70, 20);
+                ctx.lineTo(70, 60);
+                ctx.lineTo(130, 20);
+                ctx.lineTo(130, 60);
+                ctx.lineTo(190, 20);
+                ctx.stroke();
+            }
+
+            // Sine Wave
+            const sineWaveCanvas = document.getElementById('wave-sine');
+            if (sineWaveCanvas) {
+                const ctx = sineWaveCanvas.getContext('2d');
+                sineWaveCanvas.width = 200;
+                sineWaveCanvas.height = 80;
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                for (let x = 0; x < 200; x++) {
+                    const y = 40 + Math.sin((x / 200) * Math.PI * 4) * 20;
+                    if (x === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            // Noise
+            const noiseCanvas = document.getElementById('wave-noise');
+            if (noiseCanvas) {
+                const ctx = noiseCanvas.getContext('2d');
+                noiseCanvas.width = 200;
+                noiseCanvas.height = 80;
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(10, 40);
+                for (let x = 10; x < 190; x += 3) {
+                    ctx.lineTo(x, 20 + Math.random() * 40);
+                }
+                ctx.stroke();
+            }
+
+            // Custom
+            const customCanvas = document.getElementById('wave-custom');
+            if (customCanvas) {
+                const ctx = customCanvas.getContext('2d');
+                customCanvas.width = 200;
+                customCanvas.height = 80;
+                ctx.strokeStyle = '#00ffff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(10, 40);
+                ctx.lineTo(40, 20);
+                ctx.lineTo(70, 50);
+                ctx.lineTo(100, 25);
+                ctx.lineTo(130, 55);
+                ctx.lineTo(160, 30);
+                ctx.lineTo(190, 40);
+                ctx.stroke();
+            }
+        }
+
+        // Run after page loads
+        window.addEventListener('load', drawWaveformIcons);
+
+        // Smooth scrolling for navigation
+        document.querySelectorAll('nav a').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                target.scrollIntoView({ behavior: 'smooth' });
+            });
+        });
+    </script>
+</body>
+</html>

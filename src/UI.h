@@ -16,6 +16,7 @@
 #include "Sequencer.h"
 #include <algorithm>
 #include <cstdio>
+#include <limits>
 
 namespace ChiptuneTracker {
 
@@ -42,12 +43,19 @@ const ImU32 CHANNEL_COLORS[] = {
     IM_COL32(180, 100, 255, 255),  // Custom - Purple
 };
 
-// Global clipboard for copy/paste notes
+// Global clipboard for copy/paste notes (stores relative positions)
 static std::vector<Note> g_NoteClipboard;
 static float g_ClipboardBaseTime = 0.0f;
+static int g_ClipboardBasePitch = 60;
 
 // Global drag state for oscillator type
 static int g_DraggedOscillatorType = -1;
+
+// Global state for selected palette item (for click-to-place)
+static int g_SelectedPaletteItem = -1;  // -1 = none selected
+
+// Global undo/redo history
+static UndoHistory g_UndoHistory;
 
 // ============================================================================
 // Transport Bar
@@ -67,7 +75,10 @@ inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& st
     }
     ImGui::SameLine();
 
-    ImGui::Checkbox("Loop", &state.loop);
+    bool loopEnabled = state.loop;
+    if (ImGui::Checkbox("Loop", &loopEnabled)) {
+        seq.setLoopEnabled(loopEnabled);
+    }
     ImGui::SameLine();
 
     ImGui::SetNextItemWidth(80);
@@ -261,8 +272,8 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     const float keyWidth = 60.0f;
     const float noteHeight = 16.0f * ui.zoomY;
     const float beatWidth = 40.0f * ui.zoomX;
-    const int visibleOctaves = 4;
-    const int lowestNote = 36;  // C2
+    const int visibleOctaves = 6;
+    const int lowestNote = 24;  // C1 (lower bass range)
     const int highestNote = lowestNote + visibleOctaves * 12;
     const float resizeHandleWidth = 8.0f;  // Width of resize handle at note edge
 
@@ -332,6 +343,15 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         if (y + noteHeight < canvasPos.y || y > canvasPos.y + canvasSize.y) continue;
 
         bool isSelected = (static_cast<int>(i) == ui.selectedNoteIndex);
+        // Also check multi-selection
+        if (!isSelected) {
+            for (int selIdx : ui.selectedNoteIndices) {
+                if (selIdx == static_cast<int>(i)) {
+                    isSelected = true;
+                    break;
+                }
+            }
+        }
         ImU32 noteColor = CHANNEL_COLORS[ui.selectedChannel % 8];
 
         // Darken/lighten based on selection
@@ -392,6 +412,31 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             IM_COL32(255, 255, 255, 120));
     }
 
+    // Draw box selection rectangle
+    if (ui.isBoxSelecting) {
+        float minBeat = std::min(ui.boxSelectStartX, ui.boxSelectEndX);
+        float maxBeat = std::max(ui.boxSelectStartX, ui.boxSelectEndX);
+        int minPitch = static_cast<int>(std::min(ui.boxSelectStartY, ui.boxSelectEndY));
+        int maxPitch = static_cast<int>(std::max(ui.boxSelectStartY, ui.boxSelectEndY));
+
+        float boxX1 = canvasPos.x + keyWidth + minBeat * beatWidth - ui.scrollX;
+        float boxX2 = canvasPos.x + keyWidth + maxBeat * beatWidth - ui.scrollX;
+        float boxY1 = canvasPos.y + (highestNote - maxPitch - 1) * noteHeight - ui.scrollY;
+        float boxY2 = canvasPos.y + (highestNote - minPitch) * noteHeight - ui.scrollY;
+
+        // Selection box fill
+        drawList->AddRectFilled(
+            ImVec2(boxX1, boxY1),
+            ImVec2(boxX2, boxY2),
+            IM_COL32(100, 150, 255, 50));
+
+        // Selection box border
+        drawList->AddRect(
+            ImVec2(boxX1, boxY1),
+            ImVec2(boxX2, boxY2),
+            IM_COL32(100, 150, 255, 200), 0.0f, 0, 2.0f);
+    }
+
     // Playhead
     float playheadX = canvasPos.x + keyWidth +
         std::fmod(seq.getCurrentBeat(), static_cast<float>(pattern.length)) * beatWidth - ui.scrollX;
@@ -416,38 +461,113 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_D)) ui.pianoRollMode = PianoRollMode::Draw;
         if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_E)) ui.pianoRollMode = PianoRollMode::Erase;
 
+        // Delete selected notes
         if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
-            if (ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size())) {
-                pattern.notes.erase(pattern.notes.begin() + ui.selectedNoteIndex);
-                ui.selectedNoteIndex = -1;
+            bool hasNotesToDelete = !ui.selectedNoteIndices.empty() ||
+                (ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size()));
+
+            if (hasNotesToDelete) {
+                // Save state for undo before deleting
+                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+
+                if (!ui.selectedNoteIndices.empty()) {
+                    // Sort indices in descending order to delete from end first
+                    std::sort(ui.selectedNoteIndices.begin(), ui.selectedNoteIndices.end(), std::greater<int>());
+                    for (int idx : ui.selectedNoteIndices) {
+                        if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                            pattern.notes.erase(pattern.notes.begin() + idx);
+                        }
+                    }
+                    ui.selectedNoteIndices.clear();
+                    ui.selectedNoteIndex = -1;
+                } else if (ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size())) {
+                    pattern.notes.erase(pattern.notes.begin() + ui.selectedNoteIndex);
+                    ui.selectedNoteIndex = -1;
+                }
             }
         }
 
         // Escape to deselect
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             ui.selectedNoteIndex = -1;
+            ui.selectedNoteIndices.clear();
         }
 
-        // Copy (Ctrl+C)
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C)) {
-            if (ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size())) {
-                g_NoteClipboard.clear();
-                g_NoteClipboard.push_back(pattern.notes[ui.selectedNoteIndex]);
-                g_ClipboardBaseTime = pattern.notes[ui.selectedNoteIndex].startTime;
+        // Undo (Ctrl+Z)
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
+            if (g_UndoHistory.canUndo()) {
+                PatternSnapshot snapshot = g_UndoHistory.undo(pattern, ui.selectedPattern);
+                pattern.notes = snapshot.notes;
+                ui.selectedNoteIndex = -1;
+                ui.selectedNoteIndices.clear();
             }
         }
 
-        // Paste (Ctrl+V) - paste at playhead position or offset from original
+        // Redo (Ctrl+Y)
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) {
+            if (g_UndoHistory.canRedo()) {
+                PatternSnapshot snapshot = g_UndoHistory.redo(pattern, ui.selectedPattern);
+                pattern.notes = snapshot.notes;
+                ui.selectedNoteIndex = -1;
+                ui.selectedNoteIndices.clear();
+            }
+        }
+
+        // Copy (Ctrl+C) - supports multiple selection
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C)) {
+            g_NoteClipboard.clear();
+
+            // Collect notes to copy
+            std::vector<int> indicesToCopy;
+            if (!ui.selectedNoteIndices.empty()) {
+                indicesToCopy = ui.selectedNoteIndices;
+            } else if (ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size())) {
+                indicesToCopy.push_back(ui.selectedNoteIndex);
+            }
+
+            if (!indicesToCopy.empty()) {
+                // Find the earliest start time and lowest pitch for relative positioning
+                float minTime = std::numeric_limits<float>::max();
+                int minPitch = 127;
+
+                for (int idx : indicesToCopy) {
+                    if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                        const Note& note = pattern.notes[idx];
+                        if (note.startTime < minTime) minTime = note.startTime;
+                        if (note.pitch < minPitch) minPitch = note.pitch;
+                    }
+                }
+
+                g_ClipboardBaseTime = minTime;
+                g_ClipboardBasePitch = minPitch;
+
+                // Copy all selected notes
+                for (int idx : indicesToCopy) {
+                    if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                        g_NoteClipboard.push_back(pattern.notes[idx]);
+                    }
+                }
+            }
+        }
+
+        // Paste (Ctrl+V) - paste at playhead position, preserving relative arrangement
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) {
             if (!g_NoteClipboard.empty()) {
+                // Save state for undo before pasting
+                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+
                 // Get current playhead position in pattern
                 float pasteTime = std::fmod(seq.getCurrentBeat(), static_cast<float>(pattern.length));
+
+                // Clear selection and prepare to select pasted notes
+                ui.selectedNoteIndices.clear();
+                int firstPastedIndex = static_cast<int>(pattern.notes.size());
 
                 for (const Note& clipNote : g_NoteClipboard) {
                     Note newNote = clipNote;
                     // Offset from clipboard base time to paste position
-                    float offset = clipNote.startTime - g_ClipboardBaseTime;
-                    newNote.startTime = pasteTime + offset;
+                    float timeOffset = clipNote.startTime - g_ClipboardBaseTime;
+                    newNote.startTime = pasteTime + timeOffset;
 
                     // Wrap to pattern length
                     while (newNote.startTime >= pattern.length) {
@@ -458,34 +578,67 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                     }
 
                     pattern.notes.push_back(newNote);
+                    ui.selectedNoteIndices.push_back(static_cast<int>(pattern.notes.size()) - 1);
                 }
-                // Select the last pasted note
-                ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
+
+                // Select the first pasted note as primary
+                if (!ui.selectedNoteIndices.empty()) {
+                    ui.selectedNoteIndex = ui.selectedNoteIndices[0];
+                }
             }
         }
 
-        // Cut (Ctrl+X) - copy then delete
+        // Cut (Ctrl+X) - copy then delete, supports multiple selection
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_X)) {
-            if (ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size())) {
-                g_NoteClipboard.clear();
-                g_NoteClipboard.push_back(pattern.notes[ui.selectedNoteIndex]);
-                g_ClipboardBaseTime = pattern.notes[ui.selectedNoteIndex].startTime;
-                pattern.notes.erase(pattern.notes.begin() + ui.selectedNoteIndex);
+            g_NoteClipboard.clear();
+
+            // Collect notes to cut
+            std::vector<int> indicesToCut;
+            if (!ui.selectedNoteIndices.empty()) {
+                indicesToCut = ui.selectedNoteIndices;
+            } else if (ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size())) {
+                indicesToCut.push_back(ui.selectedNoteIndex);
+            }
+
+            if (!indicesToCut.empty()) {
+                // Save state for undo before cutting
+                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+
+                // Find the earliest start time and lowest pitch for relative positioning
+                float minTime = std::numeric_limits<float>::max();
+                int minPitch = 127;
+
+                for (int idx : indicesToCut) {
+                    if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                        const Note& note = pattern.notes[idx];
+                        if (note.startTime < minTime) minTime = note.startTime;
+                        if (note.pitch < minPitch) minPitch = note.pitch;
+                    }
+                }
+
+                g_ClipboardBaseTime = minTime;
+                g_ClipboardBasePitch = minPitch;
+
+                // Copy all selected notes to clipboard
+                for (int idx : indicesToCut) {
+                    if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                        g_NoteClipboard.push_back(pattern.notes[idx]);
+                    }
+                }
+
+                // Delete notes (sort descending to delete from end first)
+                std::sort(indicesToCut.begin(), indicesToCut.end(), std::greater<int>());
+                for (int idx : indicesToCut) {
+                    if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                        pattern.notes.erase(pattern.notes.begin() + idx);
+                    }
+                }
+
                 ui.selectedNoteIndex = -1;
+                ui.selectedNoteIndices.clear();
             }
         }
 
-        // Duplicate in place (Ctrl+D) - quick duplicate right after selected note
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D)) {
-            if (ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size())) {
-                Note newNote = pattern.notes[ui.selectedNoteIndex];
-                newNote.startTime += newNote.duration;  // Place right after
-                if (newNote.startTime < pattern.length) {
-                    pattern.notes.push_back(newNote);
-                    ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
-                }
-            }
-        }
     }
 
     // Handle drag and drop from Sound Palette
@@ -501,14 +654,12 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             float droppedBeat = relX / beatWidth;
 
             if (relX >= 0 && droppedNote >= lowestNote && droppedNote < highestNote) {
-                project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(oscType);
-                seq.updateChannelConfigs();
-
                 Note newNote;
                 newNote.pitch = std::clamp(droppedNote, lowestNote, highestNote - 1);
                 newNote.startTime = std::floor(droppedBeat * 4.0f) / 4.0f;
                 newNote.duration = 0.5f;
                 newNote.velocity = 0.8f;
+                newNote.oscillatorType = static_cast<OscillatorType>(oscType);  // Per-note oscillator
                 pattern.notes.push_back(newNote);
                 ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
             }
@@ -557,28 +708,46 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                     if (noteUnderCursor >= 0) {
                         ui.selectedNoteIndex = noteUnderCursor;
                         if (onResizeHandle) {
+                            // Save state for undo before resizing
+                            g_UndoHistory.saveState(pattern, ui.selectedPattern);
                             // Start resizing
                             ui.isResizingNote = true;
                             ui.dragStartDuration = pattern.notes[noteUnderCursor].duration;
                             ui.dragStartBeat = hoveredBeat;
                         } else {
+                            // Save state for undo before dragging
+                            g_UndoHistory.saveState(pattern, ui.selectedPattern);
                             // Start dragging
                             ui.isDraggingNote = true;
                             ui.dragStartBeat = pattern.notes[noteUnderCursor].startTime;
                             ui.dragStartPitch = pattern.notes[noteUnderCursor].pitch;
                         }
                     } else {
+                        // Start box selection on empty space
+                        ui.isBoxSelecting = true;
+                        ui.boxSelectStartX = hoveredBeat;
+                        ui.boxSelectStartY = static_cast<float>(hoveredNote);
+                        ui.boxSelectEndX = hoveredBeat;
+                        ui.boxSelectEndY = static_cast<float>(hoveredNote);
                         ui.selectedNoteIndex = -1;
+                        ui.selectedNoteIndices.clear();
                     }
                     break;
 
                 case PianoRollMode::Draw:
                     {
+                        // Save state for undo before adding note
+                        g_UndoHistory.saveState(pattern, ui.selectedPattern);
+
                         Note newNote;
                         newNote.pitch = std::clamp(hoveredNote, lowestNote, highestNote - 1);
                         newNote.startTime = std::floor(hoveredBeat * 4.0f) / 4.0f;
                         newNote.duration = 0.25f;
                         newNote.velocity = 0.8f;
+                        // Use selected palette item's oscillator type if one is selected
+                        if (g_SelectedPaletteItem >= 0) {
+                            newNote.oscillatorType = static_cast<OscillatorType>(g_SelectedPaletteItem);
+                        }
                         pattern.notes.push_back(newNote);
                         ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
                     }
@@ -586,6 +755,9 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
                 case PianoRollMode::Erase:
                     if (noteUnderCursor >= 0) {
+                        // Save state for undo before erasing
+                        g_UndoHistory.saveState(pattern, ui.selectedPattern);
+
                         pattern.notes.erase(pattern.notes.begin() + noteUnderCursor);
                         if (ui.selectedNoteIndex == noteUnderCursor) {
                             ui.selectedNoteIndex = -1;
@@ -612,12 +784,44 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 float newDuration = ui.dragStartDuration + deltaBeats;
                 note.duration = std::max(0.0625f, std::floor(newDuration * 4.0f) / 4.0f);
             }
+            // Update box selection end point
+            if (ui.isBoxSelecting) {
+                ui.boxSelectEndX = hoveredBeat;
+                ui.boxSelectEndY = static_cast<float>(hoveredNote);
+            }
         }
 
         // Handle mouse release
         if (ImGui::IsMouseReleased(0)) {
             ui.isDraggingNote = false;
             ui.isResizingNote = false;
+
+            // Complete box selection - find all notes in the box
+            if (ui.isBoxSelecting) {
+                ui.isBoxSelecting = false;
+                ui.selectedNoteIndices.clear();
+
+                float minBeat = std::min(ui.boxSelectStartX, ui.boxSelectEndX);
+                float maxBeat = std::max(ui.boxSelectStartX, ui.boxSelectEndX);
+                int minPitch = static_cast<int>(std::min(ui.boxSelectStartY, ui.boxSelectEndY));
+                int maxPitch = static_cast<int>(std::max(ui.boxSelectStartY, ui.boxSelectEndY));
+
+                for (size_t i = 0; i < pattern.notes.size(); ++i) {
+                    const Note& note = pattern.notes[i];
+                    float noteEnd = note.startTime + note.duration;
+
+                    // Check if note overlaps with selection box
+                    if (note.pitch >= minPitch && note.pitch <= maxPitch &&
+                        noteEnd > minBeat && note.startTime < maxBeat) {
+                        ui.selectedNoteIndices.push_back(static_cast<int>(i));
+                    }
+                }
+
+                // Set single selection to first selected note (for compatibility)
+                if (!ui.selectedNoteIndices.empty()) {
+                    ui.selectedNoteIndex = ui.selectedNoteIndices[0];
+                }
+            }
         }
 
         // Right click always deletes
@@ -1420,41 +1624,77 @@ inline void DrawWaveformIcon(ImDrawList* drawList, ImVec2 pos, ImVec2 size, Osci
             drawList->AddText(ImVec2(pos.x + size.x/2 - 8, pos.y + size.y/2 - 6), color, "~");
             break;
         }
+        case OscillatorType::Kick: {
+            // Kick drum icon - large circle
+            drawList->AddCircleFilled(ImVec2(cx, cy), hh * 0.8f, color);
+            drawList->AddCircle(ImVec2(cx, cy), hh * 0.8f, IM_COL32(255, 255, 255, 100), 12, 2.0f);
+            break;
+        }
+        case OscillatorType::Snare: {
+            // Snare drum icon - circle with lines
+            drawList->AddCircle(ImVec2(cx, cy), hh * 0.7f, color, 12, 2.0f);
+            drawList->AddLine(ImVec2(cx - hh*0.5f, cy - hh*0.5f), ImVec2(cx + hh*0.5f, cy + hh*0.5f), color, 2.0f);
+            drawList->AddLine(ImVec2(cx + hh*0.5f, cy - hh*0.5f), ImVec2(cx - hh*0.5f, cy + hh*0.5f), color, 2.0f);
+            break;
+        }
+        case OscillatorType::HiHat: {
+            // Hi-hat icon - two overlapping circles
+            drawList->AddCircle(ImVec2(cx - 4, cy), hh * 0.5f, color, 8, 2.0f);
+            drawList->AddCircle(ImVec2(cx + 4, cy), hh * 0.5f, color, 8, 2.0f);
+            break;
+        }
+        case OscillatorType::Tom: {
+            // Tom drum icon - oval
+            drawList->AddEllipse(ImVec2(cx, cy), ImVec2(hw * 0.6f, hh * 0.5f), color, 0.0f, 12, 2.0f);
+            drawList->AddLine(ImVec2(cx, cy - hh*0.3f), ImVec2(cx, cy + hh*0.3f), color, 2.0f);
+            break;
+        }
     }
 }
 
 inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Begin("Sound Palette");
 
-    ImGui::Text("Oscillator Types (drag to Piano Roll):");
+    ImGui::Text("Click to select, then click on Piano Roll to place");
     ImGui::Separator();
 
-    const char* oscNames[] = {"Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Custom"};
+    const char* oscNames[] = {"Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Custom",
+                              "Kick", "Snare", "HiHat", "Tom"};
     const char* oscDesc[] = {
         "Square wave - Classic NES sound",
         "Triangle wave - Soft, flute-like",
         "Sawtooth wave - Rich, buzzy",
         "Sine wave - Pure, clean",
         "Noise - Percussion, hi-hats",
-        "Custom - Adjustable shape"
+        "Custom - Adjustable shape",
+        "Kick drum - Deep bass hit",
+        "Snare drum - Snappy crack",
+        "Hi-hat - Metallic cymbal",
+        "Tom drum - Pitched drum"
     };
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 iconSize(60, 40);
 
+    // Oscillators section
+    ImGui::Text("Oscillators:");
     for (int i = 0; i < 6; ++i) {
         ImGui::PushID(i);
 
         ImVec2 pos = ImGui::GetCursorScreenPos();
-        bool isSelected = (static_cast<int>(project.channels[ui.selectedChannel].oscillator.type) == i);
+        bool isChannelOsc = (static_cast<int>(project.channels[ui.selectedChannel].oscillator.type) == i);
+        bool isPaletteSelected = (g_SelectedPaletteItem == i);
 
-        // Background
-        ImU32 bgColor = isSelected ? IM_COL32(60, 100, 60, 255) : IM_COL32(40, 40, 50, 255);
-        ImU32 waveColor = isSelected ? IM_COL32(150, 255, 150, 255) : IM_COL32(100, 180, 100, 255);
+        // Background - highlight if selected for placement
+        ImU32 bgColor = isPaletteSelected ? IM_COL32(80, 120, 80, 255) :
+                        isChannelOsc ? IM_COL32(60, 100, 60, 255) : IM_COL32(40, 40, 50, 255);
+        ImU32 waveColor = isPaletteSelected ? IM_COL32(200, 255, 200, 255) :
+                          isChannelOsc ? IM_COL32(150, 255, 150, 255) : IM_COL32(100, 180, 100, 255);
+        ImU32 borderColor = isPaletteSelected ? IM_COL32(150, 255, 150, 255) :
+                            isChannelOsc ? IM_COL32(100, 200, 100, 255) : IM_COL32(80, 80, 90, 255);
 
         drawList->AddRectFilled(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), bgColor, 4.0f);
-        drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y),
-            isSelected ? IM_COL32(100, 200, 100, 255) : IM_COL32(80, 80, 90, 255), 4.0f);
+        drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 3.0f : 1.0f);
 
         // Draw waveform icon
         DrawWaveformIcon(drawList, pos, iconSize, static_cast<OscillatorType>(i), waveColor);
@@ -1462,23 +1702,25 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         // Button for click and drag
         ImGui::InvisibleButton("##osc", iconSize);
 
-        // Click to set oscillator
+        // Click to select for placement (toggle)
         if (ImGui::IsItemClicked()) {
-            project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
-            seq.updateChannelConfigs();
+            if (g_SelectedPaletteItem == i) {
+                g_SelectedPaletteItem = -1;  // Deselect
+            } else {
+                g_SelectedPaletteItem = i;  // Select
+                project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
+                seq.updateChannelConfigs();
+            }
         }
 
-        // Drag source
+        // Drag source (keep existing drag functionality)
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
             g_DraggedOscillatorType = i;
             ImGui::SetDragDropPayload("OSC_TYPE", &i, sizeof(int));
-
-            // Drag preview
             ImGui::Text("Drag: %s", oscNames[i]);
             DrawWaveformIcon(ImGui::GetWindowDrawList(),
                 ImGui::GetCursorScreenPos(), ImVec2(40, 25),
                 static_cast<OscillatorType>(i), IM_COL32(200, 255, 200, 255));
-
             ImGui::EndDragDropSource();
         }
 
@@ -1487,17 +1729,95 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::BeginTooltip();
             ImGui::Text("%s", oscNames[i]);
             ImGui::TextDisabled("%s", oscDesc[i]);
+            if (isPaletteSelected) {
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "SELECTED - Click on Piano Roll to place");
+            }
             ImGui::EndTooltip();
         }
 
-        ImGui::SameLine();
-        ImGui::Text("%s", oscNames[i]);
+        if (i < 5) ImGui::SameLine();
+        ImGui::PopID();
+    }
 
+    // Drums section
+    ImGui::Separator();
+    ImGui::Text("Drums:");
+    for (int i = 6; i < 10; ++i) {
+        ImGui::PushID(i);
+
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        bool isChannelOsc = (static_cast<int>(project.channels[ui.selectedChannel].oscillator.type) == i);
+        bool isPaletteSelected = (g_SelectedPaletteItem == i);
+
+        // Drum colors - more vibrant
+        ImU32 bgColor = isPaletteSelected ? IM_COL32(120, 80, 80, 255) :
+                        isChannelOsc ? IM_COL32(100, 60, 60, 255) : IM_COL32(50, 40, 40, 255);
+        ImU32 waveColor = isPaletteSelected ? IM_COL32(255, 200, 200, 255) :
+                          isChannelOsc ? IM_COL32(255, 150, 150, 255) : IM_COL32(200, 120, 120, 255);
+        ImU32 borderColor = isPaletteSelected ? IM_COL32(255, 150, 150, 255) :
+                            isChannelOsc ? IM_COL32(200, 100, 100, 255) : IM_COL32(90, 80, 80, 255);
+
+        drawList->AddRectFilled(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), bgColor, 4.0f);
+        drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 3.0f : 1.0f);
+
+        // Draw drum icon
+        DrawWaveformIcon(drawList, pos, iconSize, static_cast<OscillatorType>(i), waveColor);
+
+        // Button for click and drag
+        ImGui::InvisibleButton("##drum", iconSize);
+
+        // Click to select for placement (toggle)
+        if (ImGui::IsItemClicked()) {
+            if (g_SelectedPaletteItem == i) {
+                g_SelectedPaletteItem = -1;  // Deselect
+            } else {
+                g_SelectedPaletteItem = i;  // Select
+                project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
+                seq.updateChannelConfigs();
+            }
+        }
+
+        // Drag source
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+            g_DraggedOscillatorType = i;
+            ImGui::SetDragDropPayload("OSC_TYPE", &i, sizeof(int));
+            ImGui::Text("Drag: %s", oscNames[i]);
+            DrawWaveformIcon(ImGui::GetWindowDrawList(),
+                ImGui::GetCursorScreenPos(), ImVec2(40, 25),
+                static_cast<OscillatorType>(i), IM_COL32(255, 200, 200, 255));
+            ImGui::EndDragDropSource();
+        }
+
+        // Tooltip
+        if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("%s", oscNames[i]);
+            ImGui::TextDisabled("%s", oscDesc[i]);
+            if (isPaletteSelected) {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "SELECTED - Click on Piano Roll to place");
+            }
+            ImGui::EndTooltip();
+        }
+
+        if (i < 9) ImGui::SameLine();
         ImGui::PopID();
     }
 
     ImGui::Separator();
-    ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.6f, 1.0f), "Drag to Piano Roll to add note");
+
+    // Show selected item
+    if (g_SelectedPaletteItem >= 0) {
+        ImVec4 color = g_SelectedPaletteItem < 6 ?
+            ImVec4(0.5f, 1.0f, 0.5f, 1.0f) : ImVec4(1.0f, 0.6f, 0.6f, 1.0f);
+        ImGui::TextColored(color, "Selected: %s", oscNames[g_SelectedPaletteItem]);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Deselect")) {
+            g_SelectedPaletteItem = -1;
+        }
+    } else {
+        ImGui::TextDisabled("No sound selected");
+    }
+
     ImGui::Text("Channel: %s", project.channels[ui.selectedChannel].name.c_str());
 
     ImGui::End();

@@ -242,7 +242,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
 
     sequencer.setSampleRate(44100.0f);
     sequencer.setProject(&project);
-    sequencer.setLoop(true, 0.0f, 16.0f);
+    sequencer.setLoop(false, 0.0f, 16.0f);  // Don't loop by default - stop at end
 
     g_Sequencer = &sequencer;
 

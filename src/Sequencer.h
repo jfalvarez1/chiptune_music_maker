@@ -69,6 +69,10 @@ public:
         m_state.loopEnd = end;
     }
 
+    void setLoopEnabled(bool enabled) {
+        m_state.loop = enabled;
+    }
+
     void setBPM(float bpm) {
         if (m_project) {
             m_project->bpm = bpm;
@@ -104,10 +108,21 @@ public:
                 m_state.currentBeat += beatsPerSample;
                 m_state.currentTime += 1.0f / m_sampleRate;
 
-                // Handle looping
-                if (m_state.loop && m_state.currentBeat >= m_state.loopEnd) {
-                    m_state.currentBeat = m_state.loopStart;
-                    allNotesOff();
+                // Get the actual end time based on notes in the pattern
+                float effectiveEnd = getPatternEndTime();
+
+                // Handle looping or stop at end of last note
+                if (m_state.currentBeat >= effectiveEnd && effectiveEnd > 0.0f) {
+                    if (m_state.loop) {
+                        // Loop back to start
+                        m_state.currentBeat = m_state.loopStart;
+                        allNotesOff();
+                    } else {
+                        // Stop playback when last note ends
+                        m_state.isPlaying = false;
+                        m_state.currentBeat = effectiveEnd;
+                        allNotesOff();
+                    }
                 }
 
                 // Process note events that occurred in this sample
@@ -281,7 +296,7 @@ private:
 
                 m_synths[m_previewChannel].noteOn(
                     note.pitch, note.velocity, m_state.currentTime,
-                    fadeInSec, fadeOutSec, durationSec);
+                    fadeInSec, fadeOutSec, durationSec, note.oscillatorType);
             }
 
             // Note off
@@ -296,6 +311,28 @@ private:
     float beatsToSeconds(float beats) const {
         if (!m_project || m_project->bpm <= 0.0f) return 0.0f;
         return beats * 60.0f / m_project->bpm;
+    }
+
+    // Calculate when the last note in the pattern ends
+    float getPatternEndTime() const {
+        if (!m_project || m_previewPattern < 0 ||
+            m_previewPattern >= static_cast<int>(m_project->patterns.size())) {
+            return m_state.loopEnd;  // Fallback to fixed loop end
+        }
+
+        const Pattern& pattern = m_project->patterns[m_previewPattern];
+        if (pattern.notes.empty()) {
+            return 0.0f;  // No notes, end immediately
+        }
+
+        float maxEndTime = 0.0f;
+        for (const Note& note : pattern.notes) {
+            float noteEnd = note.startTime + note.duration;
+            if (noteEnd > maxEndTime) {
+                maxEndTime = noteEnd;
+            }
+        }
+        return maxEndTime;
     }
 
 public:

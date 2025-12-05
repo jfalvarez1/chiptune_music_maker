@@ -45,6 +45,9 @@ struct Voice {
     float fadeOutDuration = 0.0f;
     float noteDuration = 0.0f;  // Total note duration in seconds (0 = unknown/manual release)
 
+    // Per-voice oscillator type (allows different sounds per note)
+    OscillatorType oscillatorType = OscillatorType::Pulse;
+
     void reset() {
         active = false;
         phase = 0.0f;
@@ -55,6 +58,7 @@ struct Voice {
         fadeInDuration = 0.0f;
         fadeOutDuration = 0.0f;
         noteDuration = 0.0f;
+        oscillatorType = OscillatorType::Pulse;
     }
 };
 
@@ -81,9 +85,10 @@ public:
         m_envelope = env;
     }
 
-    // Trigger a note (with optional fade parameters)
+    // Trigger a note (with optional fade parameters and oscillator type)
     void noteOn(int note, float velocity, float time,
-                float fadeInSec = 0.0f, float fadeOutSec = 0.0f, float durationSec = 0.0f) {
+                float fadeInSec = 0.0f, float fadeOutSec = 0.0f, float durationSec = 0.0f,
+                OscillatorType oscType = OscillatorType::Pulse) {
         // Find free voice or steal oldest
         int voiceIndex = -1;
         float oldestTime = time;
@@ -122,6 +127,9 @@ public:
             v.fadeInDuration = fadeInSec;
             v.fadeOutDuration = fadeOutSec;
             v.noteDuration = durationSec;
+
+            // Per-note oscillator type
+            v.oscillatorType = oscType;
         }
     }
 
@@ -225,7 +233,8 @@ private:
         const float t = voice.phase;
         const float dt = voice.phaseIncrement;
 
-        switch (m_oscConfig.type) {
+        // Use per-voice oscillator type (allows different sounds per note)
+        switch (voice.oscillatorType) {
             case OscillatorType::Pulse:
                 sample = generatePulse(t, dt, m_oscConfig.pulseWidth);
                 break;
@@ -248,6 +257,22 @@ private:
 
             case OscillatorType::Custom:
                 sample = generateTriangle(t, m_oscConfig.triangleSlope);
+                break;
+
+            case OscillatorType::Kick:
+                sample = generateKick(voice);
+                break;
+
+            case OscillatorType::Snare:
+                sample = generateSnare(voice);
+                break;
+
+            case OscillatorType::HiHat:
+                sample = generateHiHat(voice);
+                break;
+
+            case OscillatorType::Tom:
+                sample = generateTom(voice);
                 break;
         }
 
@@ -325,6 +350,127 @@ private:
             return t * t + t + t + 1.0f;
         }
         return 0.0f;
+    }
+
+    // ========================================================================
+    // Drum Synthesis - Classic chiptune/8-bit style
+    // ========================================================================
+
+    // Kick drum - deep "boom" with pitch sweep (808/NES style)
+    float generateKick(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Two-stage envelope: punchy attack, longer body decay
+        float attackEnv = std::exp(-noteTime * 25.0f);  // Fast attack transient
+        float bodyEnv = std::exp(-noteTime * 5.0f);     // Slower body decay
+        float envelope = attackEnv * 0.3f + bodyEnv * 0.7f;
+
+        // Dramatic pitch sweep from ~150Hz down to ~50Hz
+        float startFreq = 150.0f;
+        float endFreq = 50.0f;
+        float pitchEnv = std::exp(-noteTime * 30.0f);
+        float freq = endFreq + (startFreq - endFreq) * pitchEnv;
+
+        // Accumulate phase based on instantaneous frequency
+        float sample = std::sin(voice.phase * TWO_PI);
+
+        // Update phase increment for pitch sweep
+        voice.phaseIncrement = freq / m_sampleRate;
+
+        // Hard click transient at start
+        float click = 0.0f;
+        if (noteTime < 0.002f) {
+            click = (1.0f - noteTime / 0.002f) * 0.6f;
+        }
+
+        // Add slight distortion/saturation for punch
+        sample = std::tanh(sample * 1.5f);
+
+        return (sample * 0.9f + click) * envelope;
+    }
+
+    // Snare drum - sharp "tsk" sound with noise
+    float generateSnare(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Very fast decay for sharp "tsk" sound
+        float envelope = std::exp(-noteTime * 35.0f);
+
+        // Sharp click/transient at the very start
+        float click = 0.0f;
+        if (noteTime < 0.002f) {
+            click = (1.0f - noteTime / 0.002f) * 0.7f;
+        }
+
+        // High-frequency noise - clock LFSR multiple times for brighter sound
+        float noise = 0.0f;
+        for (int i = 0; i < 6; ++i) {
+            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;  // Short mode for brighter sound
+            voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+        }
+        noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
+
+        // Small tonal "pop" for the body
+        float toneEnv = std::exp(-noteTime * 50.0f);
+        float tone = std::sin(voice.phase * TWO_PI * 3.0f) * toneEnv * 0.2f;
+
+        return (click + noise * 0.6f + tone) * envelope;
+    }
+
+    // Hi-hat - metallic "tsss" with ring (short mode LFSR)
+    float generateHiHat(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Very fast decay - classic closed hi-hat
+        float envelope = std::exp(-noteTime * 50.0f);
+
+        // Multiple square waves at inharmonic frequencies for metallic ring
+        float metallic = 0.0f;
+        metallic += (std::fmod(voice.phase * 1.0f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+        metallic += (std::fmod(voice.phase * 1.47f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+        metallic += (std::fmod(voice.phase * 1.83f, 1.0f) < 0.5f ? 1.0f : -1.0f) * 0.2f;
+
+        // Short-mode LFSR noise for that classic metallic hi-hat sound
+        float noise = 0.0f;
+        for (int i = 0; i < 8; ++i) {
+            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;  // Short mode = metallic
+            voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+        }
+        noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
+
+        // High frequency phase for brightness
+        voice.phaseIncrement = 800.0f / m_sampleRate;
+
+        return (noise * 0.6f + metallic * 0.4f) * envelope;
+    }
+
+    // Tom drum - pitched "bom" with resonance
+    float generateTom(Voice& voice) {
+        float noteTime = voice.envTime;
+
+        // Medium decay with slight sustain
+        float envelope = std::exp(-noteTime * 8.0f);
+
+        // Pitch drops for that classic tom sound
+        float pitchEnv = std::exp(-noteTime * 20.0f);
+        float pitchMult = 1.0f + 1.2f * pitchEnv;  // More dramatic pitch drop
+
+        // Main tone
+        float sample = std::sin(voice.phase * pitchMult * TWO_PI);
+
+        // Add second harmonic for body
+        float harmonic = std::sin(voice.phase * pitchMult * TWO_PI * 2.0f) * 0.3f;
+
+        // Soft attack click
+        float click = 0.0f;
+        if (noteTime < 0.004f) {
+            click = (1.0f - noteTime / 0.004f) * 0.3f;
+        }
+
+        // Slight saturation for warmth
+        sample = std::tanh((sample + harmonic) * 1.2f);
+
+        return (sample * 0.8f + click) * envelope;
     }
 
     // ========================================================================
