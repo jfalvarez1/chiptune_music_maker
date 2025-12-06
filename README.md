@@ -13,6 +13,30 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
+### What's New in v2.8.2
+
+**Chord Presets (45 chords across 8 genres!):**
+Place entire chords with a single click - perfect for quickly building progressions.
+- **Pop** (6): C Major, G Major, Am, F Major, Dm7, Cadd9
+- **Jazz** (6): Cmaj7, Dm9, G13, Fm7, Bbmaj7, Am7b5
+- **Rock** (5): E5, A5, D5, G5, B5 (power chords)
+- **EDM** (6): Am, F, C, G, Em7, Dm
+- **Hip Hop** (5): Cm7, Fm9, Bbmaj7, Gm7, Ebmaj9
+- **Reggaeton** (5): Am, F, Dm, E, G
+- **Synthwave** (7): Fm, Cm, Ab, Eb, Bbm7, Fm9, Db - uses authentic synthwave pads/leads
+- **Chiptune** (8): C/Am/G/Em/F Arps, C5, E5, Dm - 8-bit arpeggios and power chords
+
+**How Chords Work:**
+1. Open the Sound Palette and expand the "Chords" section
+2. Click a genre header to expand it
+3. Click a chord to select it (auto-enters Draw mode)
+4. Click in the piano roll to place all chord notes at once
+5. All notes are placed at the same time with genre-appropriate instruments
+
+**Pattern Management:**
+- **Delete patterns** with the Delete button or Delete key
+- Select a pattern and press Delete to remove it (must have at least 1 pattern)
+
 ### What's New in v2.8.1
 
 **Piano Roll Beat Grid Enhancement:**
@@ -164,10 +188,11 @@ Pre-made track templates to get you started:
 - **Full undo/redo**: 50 levels of history (Ctrl+Z / Ctrl+Y)
 
 ### Sound Palette
-- **Expandable categories**: Collapsible sections for Oscillators, Synths, Drums, and Reggaeton
+- **Expandable categories**: Collapsible sections for Oscillators, Synths, Chords, Drums, and Reggaeton
+- **Chord presets**: 45 chords across 8 genres (Pop, Jazz, Rock, EDM, Hip Hop, Reggaeton, Synthwave, Chiptune)
 - **Drum categories**: Kicks, Snares, Hi-Hats, Toms, Cymbals, Percussion, Reggaeton
 - **Duration variants**: Each drum has Short (0.5x), Normal (1x), and Long (2x) options
-- **Click to select**: Choose a sound, then click on piano roll to place
+- **Click to select**: Choose a sound or chord, then click on piano roll to place
 
 ### File Operations
 - **Project save/load**: Native .ctp format preserves all notes and settings
@@ -415,6 +440,8 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Sidechain compression (classic EDM pumping)
 - [x] Pattern arrangement view with drag & drop
 - [x] Proper initial window layout (v2.7.0)
+- [x] Chord presets (45 chords across 8 genres: Pop, Jazz, Rock, EDM, Hip Hop, Reggaeton, Synthwave, Chiptune)
+- [x] Pattern deletion (Delete key + button)
 - [ ] FLAC export
 - [ ] VST plugin version
 - [ ] MIDI import/export

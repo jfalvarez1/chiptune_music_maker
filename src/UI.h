@@ -222,6 +222,100 @@ static int g_PreviewPatternIndex = -1;  // Which pattern is being previewed
 static int g_PatternPreviewBasePitch = 36;  // Base pitch for the pattern (kick note)
 
 // ============================================================================
+// Chord Presets - Organized by Genre
+// ============================================================================
+// Chord intervals are semitones relative to root note (0 = root)
+struct ChordPreset {
+    const char* name;
+    const char* description;
+    const char* genre;
+    int intervals[6];   // Up to 6 notes per chord (0 = unused)
+    int noteCount;      // How many notes in this chord
+    OscillatorType defaultOsc;  // Recommended oscillator for this genre
+};
+
+// Chord presets organized by genre
+static const ChordPreset g_ChordPresets[] = {
+    // ===== POP (5 chords) =====
+    {"C Major", "Bright, happy (I)", "Pop", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthPad},
+    {"G Major", "Uplifting (V)", "Pop", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthPad},
+    {"Am", "Emotional (vi)", "Pop", {0, 3, 7, 0, 0, 0}, 3, OscillatorType::SynthPad},
+    {"F Major", "Warm resolution (IV)", "Pop", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthPad},
+    {"Dm7", "Smooth tension", "Pop", {0, 3, 7, 10, 0, 0}, 4, OscillatorType::SynthPad},
+    {"Cadd9", "Modern pop sound", "Pop", {0, 4, 7, 14, 0, 0}, 4, OscillatorType::SynthPad},
+
+    // ===== JAZZ (6 chords) =====
+    {"Cmaj7", "Smooth jazz (I)", "Jazz", {0, 4, 7, 11, 0, 0}, 4, OscillatorType::SynthOrgan},
+    {"Dm9", "Extended tension (ii)", "Jazz", {0, 3, 7, 10, 14, 0}, 5, OscillatorType::SynthOrgan},
+    {"G13", "Dominant funk", "Jazz", {0, 4, 7, 10, 14, 21}, 6, OscillatorType::SynthOrgan},
+    {"Fm7", "Modal jazz", "Jazz", {0, 3, 7, 10, 0, 0}, 4, OscillatorType::SynthOrgan},
+    {"Bbmaj7", "Warm substitution", "Jazz", {0, 4, 7, 11, 0, 0}, 4, OscillatorType::SynthOrgan},
+    {"Am7b5", "Half-diminished", "Jazz", {0, 3, 6, 10, 0, 0}, 4, OscillatorType::SynthOrgan},
+
+    // ===== ROCK (5 chords) =====
+    {"E5", "Power chord (root)", "Rock", {0, 7, 12, 0, 0, 0}, 3, OscillatorType::Sawtooth},
+    {"A5", "Power chord (IV)", "Rock", {0, 7, 12, 0, 0, 0}, 3, OscillatorType::Sawtooth},
+    {"D5", "Power chord", "Rock", {0, 7, 12, 0, 0, 0}, 3, OscillatorType::Sawtooth},
+    {"G5", "Power chord", "Rock", {0, 7, 12, 0, 0, 0}, 3, OscillatorType::Sawtooth},
+    {"B5", "Power chord (V)", "Rock", {0, 7, 12, 0, 0, 0}, 3, OscillatorType::Sawtooth},
+
+    // ===== EDM / SYNTHWAVE (6 chords) =====
+    {"Am", "Dark minor", "EDM", {0, 3, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+    {"F", "Anthemic major", "EDM", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+    {"C", "Bright drop", "EDM", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+    {"G", "Build up", "EDM", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+    {"Em7", "Chill vibes", "EDM", {0, 3, 7, 10, 0, 0}, 4, OscillatorType::SynthwavePad},
+    {"Dm", "Dark tension", "EDM", {0, 3, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+
+    // ===== HIP HOP (5 chords) =====
+    {"Cm7", "Lo-fi chill", "HipHop", {0, 3, 7, 10, 0, 0}, 4, OscillatorType::LoFiKeys},
+    {"Fm9", "Soulful sample", "HipHop", {0, 3, 7, 10, 14, 0}, 5, OscillatorType::LoFiKeys},
+    {"Bbmaj7", "Smooth keys", "HipHop", {0, 4, 7, 11, 0, 0}, 4, OscillatorType::LoFiKeys},
+    {"Gm7", "Dark trap", "HipHop", {0, 3, 7, 10, 0, 0}, 4, OscillatorType::SubBass808},
+    {"Ebmaj9", "Neo-soul", "HipHop", {0, 4, 7, 11, 14, 0}, 5, OscillatorType::LoFiKeys},
+
+    // ===== REGGAETON (5 chords) =====
+    {"Am", "Dembow minor", "Reggaeton", {0, 3, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+    {"F", "Perreo major", "Reggaeton", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+    {"Dm", "Latin tension", "Reggaeton", {0, 3, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+    {"E", "Flamenco flavor", "Reggaeton", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthBrass},
+    {"G", "Hook resolution", "Reggaeton", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveChord},
+
+    // ===== SYNTHWAVE (6 chords) =====
+    {"Fm", "Outrun minor", "Synthwave", {0, 3, 7, 0, 0, 0}, 3, OscillatorType::SynthwavePad},
+    {"Cm", "Dark retro", "Synthwave", {0, 3, 7, 0, 0, 0}, 3, OscillatorType::SynthwavePad},
+    {"Ab", "Dreamy 80s", "Synthwave", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthwavePad},
+    {"Eb", "Sunset drive", "Synthwave", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthwavePad},
+    {"Bbm7", "Midnight city", "Synthwave", {0, 3, 7, 10, 0, 0}, 4, OscillatorType::SynthwaveChord},
+    {"Fm9", "Neon nights", "Synthwave", {0, 3, 7, 10, 14, 0}, 5, OscillatorType::SynthwaveChord},
+    {"Db", "Blade runner", "Synthwave", {0, 4, 7, 0, 0, 0}, 3, OscillatorType::SynthwaveLead},
+
+    // ===== CHIPTUNE (8 chords) =====
+    {"C Arp", "NES major arp", "Chiptune", {0, 4, 7, 12, 0, 0}, 4, OscillatorType::SynthChip},
+    {"Am Arp", "NES minor arp", "Chiptune", {0, 3, 7, 12, 0, 0}, 4, OscillatorType::SynthChip},
+    {"G Arp", "Dominant 8-bit", "Chiptune", {0, 4, 7, 12, 0, 0}, 4, OscillatorType::SynthChip},
+    {"Em Arp", "Dark 8-bit", "Chiptune", {0, 3, 7, 12, 0, 0}, 4, OscillatorType::SynthChip},
+    {"F Arp", "Warm 8-bit", "Chiptune", {0, 4, 7, 12, 0, 0}, 4, OscillatorType::SynthChip},
+    {"C5", "NES power chord", "Chiptune", {0, 7, 12, 0, 0, 0}, 3, OscillatorType::Pulse},
+    {"E5", "Rock 8-bit", "Chiptune", {0, 7, 12, 0, 0, 0}, 3, OscillatorType::Pulse},
+    {"Dm", "Castlevania minor", "Chiptune", {0, 3, 7, 0, 0, 0}, 3, OscillatorType::Triangle},
+};
+static constexpr int g_NumChordPresets = sizeof(g_ChordPresets) / sizeof(g_ChordPresets[0]);
+
+// Chord selection state
+static int g_SelectedChordIndex = -1;  // -1 = no chord selected
+
+// Chord palette expansion state by genre
+static bool g_PaletteExpanded_Chords_Pop = true;
+static bool g_PaletteExpanded_Chords_Jazz = false;
+static bool g_PaletteExpanded_Chords_Rock = false;
+static bool g_PaletteExpanded_Chords_EDM = false;
+static bool g_PaletteExpanded_Chords_HipHop = false;
+static bool g_PaletteExpanded_Chords_Reggaeton = false;
+static bool g_PaletteExpanded_Chords_Synthwave = false;
+static bool g_PaletteExpanded_Chords_Chiptune = false;
+
+// ============================================================================
 // Sample Tracks - Complete songs with melody, bass, and drums
 // ============================================================================
 struct TrackNote {
@@ -2903,8 +2997,8 @@ inline void DrawThemeBackground(Theme theme, float deltaTime) {
 // ============================================================================
 inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& state, UIState& ui) {
     // Set initial window position on first use (top-left)
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(350, 120), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 35), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(350, 90), ImGuiCond_FirstUseEver);
     ImGui::Begin("Transport", nullptr, ImGuiWindowFlags_NoCollapse);
 
     // Row 1: Playback controls
@@ -3021,8 +3115,8 @@ inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& st
 // ============================================================================
 inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
     // Set initial window position on first use (top, next to Transport)
-    ImGui::SetNextWindowPos(ImVec2(370, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400, 120), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(370, 35), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(400, 90), ImGuiCond_FirstUseEver);
     ImGui::Begin("File", nullptr, ImGuiWindowFlags_NoCollapse);
 
     // New project
@@ -3277,7 +3371,7 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
 // ============================================================================
 inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     // Set initial window position on first use (main center area)
-    ImGui::SetNextWindowPos(ImVec2(220, 140), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(220, 135), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(900, 500), ImGuiCond_FirstUseEver);
     ImGui::Begin("Piano Roll", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
@@ -4495,21 +4589,23 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                             // Save state for undo before resizing (drums can't resize)
                             g_UndoHistory.saveState(pattern, ui.selectedPattern);
                             ui.selectedNoteIndex = noteUnderCursor;
-                            // Start resizing
+                            // Start resizing immediately (no threshold for resize)
                             ui.isResizingNote = true;
                             ui.dragStartDuration = pattern.notes[noteUnderCursor].duration;
                             ui.dragStartBeat = hoveredBeat;
                         } else if (!onResizeHandle) {
-                            // Save state for undo before dragging
-                            g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                            // Store mouse position for drag threshold check
+                            ImVec2 mousePos = ImGui::GetMousePos();
+                            ui.pendingDragStartX = mousePos.x;
+                            ui.pendingDragStartY = mousePos.y;
 
                             if (isPartOfMultiSelection && ui.selectedNoteIndices.size() > 1) {
-                                // Start multi-drag - keep all selected notes and drag them together
-                                ui.isDraggingMultiple = true;
+                                // Set up pending multi-drag (will start after threshold)
+                                ui.isPendingMultiDrag = true;
                                 ui.dragAnchorBeat = hoveredBeat;
                                 ui.dragAnchorPitch = hoveredNote;
 
-                                // Store offsets for each selected note relative to anchor
+                                // Pre-calculate offsets for when drag actually starts
                                 ui.multiDragOffsets.clear();
                                 for (int idx : ui.selectedNoteIndices) {
                                     const Note& note = pattern.notes[idx];
@@ -4518,10 +4614,11 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                                     ui.multiDragOffsets.push_back({beatOffset, pitchOffset});
                                 }
                             } else {
-                                // Single note drag - clear multi-selection and drag just this note
+                                // Set up pending single drag - select note but don't drag yet
                                 ui.selectedNoteIndex = noteUnderCursor;
                                 ui.selectedNoteIndices.clear();
-                                ui.isDraggingNote = true;
+                                ui.isPendingDrag = true;
+                                ui.pendingDragNoteIndex = noteUnderCursor;
                                 ui.dragStartBeat = pattern.notes[noteUnderCursor].startTime;
                                 ui.dragStartPitch = pattern.notes[noteUnderCursor].pitch;
                             }
@@ -4543,36 +4640,72 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         // Save state for undo before adding note
                         g_UndoHistory.saveState(pattern, ui.selectedPattern);
 
-                        Note newNote;
-                        newNote.pitch = std::clamp(hoveredNote, lowestNote, highestNote - 1);
-                        newNote.startTime = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                        // Check if a chord is selected
+                        if (g_SelectedChordIndex >= 0 && g_SelectedChordIndex < g_NumChordPresets) {
+                            // Place chord notes
+                            const ChordPreset& chord = g_ChordPresets[g_SelectedChordIndex];
+                            int rootPitch = std::clamp(hoveredNote, lowestNote, highestNote - chord.intervals[chord.noteCount - 1]);
+                            float startTime = std::floor(hoveredBeat * 4.0f) / 4.0f;
 
-                        // Use selected palette item's oscillator type if one is selected
-                        if (g_SelectedPaletteItem >= 0) {
-                            newNote.oscillatorType = static_cast<OscillatorType>(g_SelectedPaletteItem);
-                        }
+                            ui.selectedNoteIndices.clear();
 
-                        // Set duration based on sound type - drums auto-adjust to BPM
-                        if (isDrumType(newNote.oscillatorType)) {
-                            float decayTime = getDrumDecayTime(newNote.oscillatorType);
-                            // Apply duration multiplier from palette selection
-                            newNote.duration = decayTime * (project.bpm / 60.0f) * g_SelectedDurationMult;
+                            for (int i = 0; i < chord.noteCount; ++i) {
+                                Note newNote;
+                                newNote.pitch = std::clamp(rootPitch + chord.intervals[i], lowestNote, highestNote - 1);
+                                newNote.startTime = startTime;
+                                newNote.oscillatorType = chord.defaultOsc;
+                                newNote.duration = 0.5f;  // Half beat for chords
+                                newNote.velocity = 0.75f;
+
+                                pattern.notes.push_back(newNote);
+                                ui.selectedNoteIndices.push_back(static_cast<int>(pattern.notes.size()) - 1);
+
+                                // Auto-extend pattern length
+                                float noteEnd = newNote.startTime + newNote.duration;
+                                if (noteEnd > pattern.length) {
+                                    pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                                }
+                            }
+
+                            // Select root note and preview chord
+                            if (!ui.selectedNoteIndices.empty()) {
+                                ui.selectedNoteIndex = ui.selectedNoteIndices[0];
+                                // Play preview of root note
+                                seq.previewNote(rootPitch, 0.75f, chord.defaultOsc);
+                            }
                         } else {
-                            newNote.duration = 0.25f;
-                        }
+                            // Single note mode (original behavior)
+                            Note newNote;
+                            newNote.pitch = std::clamp(hoveredNote, lowestNote, highestNote - 1);
+                            newNote.startTime = std::floor(hoveredBeat * 4.0f) / 4.0f;
 
-                        newNote.velocity = 0.8f;
-                        pattern.notes.push_back(newNote);
-                        ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
+                            // Use selected palette item's oscillator type if one is selected
+                            if (g_SelectedPaletteItem >= 0) {
+                                newNote.oscillatorType = static_cast<OscillatorType>(g_SelectedPaletteItem);
+                            }
 
-                        // Play preview sound when note is placed
-                        seq.previewNote(newNote.pitch, newNote.velocity, newNote.oscillatorType);
+                            // Set duration based on sound type - drums auto-adjust to BPM
+                            if (isDrumType(newNote.oscillatorType)) {
+                                float decayTime = getDrumDecayTime(newNote.oscillatorType);
+                                // Apply duration multiplier from palette selection
+                                newNote.duration = decayTime * (project.bpm / 60.0f) * g_SelectedDurationMult;
+                            } else {
+                                newNote.duration = 0.25f;
+                            }
 
-                        // Auto-extend pattern length if note goes past current end
-                        float noteEnd = newNote.startTime + newNote.duration;
-                        if (noteEnd > pattern.length) {
-                            // Round up to next measure
-                            pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                            newNote.velocity = 0.8f;
+                            pattern.notes.push_back(newNote);
+                            ui.selectedNoteIndex = static_cast<int>(pattern.notes.size()) - 1;
+
+                            // Play preview sound when note is placed
+                            seq.previewNote(newNote.pitch, newNote.velocity, newNote.oscillatorType);
+
+                            // Auto-extend pattern length if note goes past current end
+                            float noteEnd = newNote.startTime + newNote.duration;
+                            if (noteEnd > pattern.length) {
+                                // Round up to next measure
+                                pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                            }
                         }
                     }
                     break;
@@ -4595,6 +4728,25 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
         // Handle dragging
         if (ImGui::IsMouseDown(0)) {
+            // Check if pending drag should convert to actual drag (threshold exceeded)
+            ImVec2 mousePos = ImGui::GetMousePos();
+            float dragDistX = mousePos.x - ui.pendingDragStartX;
+            float dragDistY = mousePos.y - ui.pendingDragStartY;
+            float dragDist = std::sqrt(dragDistX * dragDistX + dragDistY * dragDistY);
+
+            if (ui.isPendingDrag && dragDist > UIState::DRAG_THRESHOLD) {
+                // Convert pending drag to actual drag
+                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                ui.isPendingDrag = false;
+                ui.isDraggingNote = true;
+            }
+            if (ui.isPendingMultiDrag && dragDist > UIState::DRAG_THRESHOLD) {
+                // Convert pending multi-drag to actual multi-drag
+                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                ui.isPendingMultiDrag = false;
+                ui.isDraggingMultiple = true;
+            }
+
             if (ui.isDraggingNote && ui.selectedNoteIndex >= 0) {
                 // Single note drag
                 Note& note = pattern.notes[ui.selectedNoteIndex];
@@ -4645,6 +4797,9 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             ui.isDraggingNote = false;
             ui.isDraggingMultiple = false;
             ui.isResizingNote = false;
+            ui.isPendingDrag = false;
+            ui.isPendingMultiDrag = false;
+            ui.pendingDragNoteIndex = -1;
             ui.multiDragOffsets.clear();
 
             // Complete box selection - find all notes in the box
@@ -4729,8 +4884,8 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 // Tracker View
 // ============================================================================
 inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
-    ImGui::SetNextWindowPos(ImVec2(930, 650), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(480, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(930, 645), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(480, 180), ImGuiCond_FirstUseEver);
     ImGui::Begin("Tracker", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
     if (ui.selectedPattern < 0 || ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
@@ -4809,8 +4964,8 @@ inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
 // Arrangement Timeline
 // ============================================================================
 inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
-    ImGui::SetNextWindowPos(ImVec2(220, 860), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(900, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(220, 835), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(900, 150), ImGuiCond_FirstUseEver);
     ImGui::Begin("Arrangement", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
     // ========================================================================
@@ -5128,8 +5283,8 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
 // ============================================================================
 inline void DrawMixer(Project& project, UIState& ui, Sequencer& seq) {
     // Set initial window position on first use (bottom center)
-    ImGui::SetNextWindowPos(ImVec2(220, 650), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(700, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(220, 645), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(700, 180), ImGuiCond_FirstUseEver);
     ImGui::Begin("Mixer", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
     for (int ch = 0; ch < 8; ++ch) {
@@ -5185,8 +5340,8 @@ inline void DrawMixer(Project& project, UIState& ui, Sequencer& seq) {
 // Channel Editor (Oscillator & Effects)
 // ============================================================================
 inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
-    ImGui::SetNextWindowPos(ImVec2(1130, 450), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(280, 300), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(1130, 385), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(280, 250), ImGuiCond_FirstUseEver);
     ImGui::Begin("Channel Editor");
 
     if (ui.selectedChannel < 0 || ui.selectedChannel >= 8) {
@@ -5423,17 +5578,45 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
 // Pattern List
 // ============================================================================
 inline void DrawPatternList(Project& project, UIState& ui) {
-    ImGui::SetNextWindowPos(ImVec2(10, 650), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(200, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 645), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(200, 180), ImGuiCond_FirstUseEver);
     ImGui::Begin("Patterns");
 
-    if (ImGui::Button("+ New Pattern")) {
+    if (ImGui::Button("+ New")) {
         Pattern p;
         p.name = "Pattern " + std::to_string(project.patterns.size() + 1);
         project.patterns.push_back(p);
     }
+    ImGui::SameLine();
+
+    // Delete button - only enabled if pattern is selected and we have more than 1 pattern
+    bool canDelete = ui.selectedPattern >= 0 &&
+                     ui.selectedPattern < static_cast<int>(project.patterns.size()) &&
+                     project.patterns.size() > 1;
+    if (!canDelete) ImGui::BeginDisabled();
+    if (ImGui::Button("Delete") && canDelete) {
+        project.patterns.erase(project.patterns.begin() + ui.selectedPattern);
+        // Adjust selection
+        if (ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
+            ui.selectedPattern = static_cast<int>(project.patterns.size()) - 1;
+        }
+        ui.selectedNoteIndex = -1;
+        ui.selectedNoteIndices.clear();
+    }
+    if (!canDelete) ImGui::EndDisabled();
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (project.patterns.size() <= 1) {
+            ImGui::SetTooltip("Cannot delete last pattern");
+        } else {
+            ImGui::SetTooltip("Delete selected pattern (Del)");
+        }
+    }
 
     ImGui::Separator();
+
+    // Track if this window is focused for keyboard shortcuts
+    bool windowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
     for (size_t i = 0; i < project.patterns.size(); ++i) {
         auto& pattern = project.patterns[i];
@@ -5441,7 +5624,19 @@ inline void DrawPatternList(Project& project, UIState& ui) {
 
         if (ImGui::Selectable(pattern.name.c_str(), isSelected)) {
             ui.selectedPattern = static_cast<int>(i);
+            ui.selectedNoteIndex = -1;
+            ui.selectedNoteIndices.clear();
         }
+    }
+
+    // Handle Delete key when window is focused
+    if (windowFocused && ImGui::IsKeyPressed(ImGuiKey_Delete) && canDelete) {
+        project.patterns.erase(project.patterns.begin() + ui.selectedPattern);
+        if (ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
+            ui.selectedPattern = static_cast<int>(project.patterns.size()) - 1;
+        }
+        ui.selectedNoteIndex = -1;
+        ui.selectedNoteIndices.clear();
     }
 
     ImGui::End();
@@ -5451,8 +5646,8 @@ inline void DrawPatternList(Project& project, UIState& ui) {
 // Note Editor Panel - Edit selected note properties
 // ============================================================================
 inline void DrawNoteEditor(Project& project, UIState& ui) {
-    ImGui::SetNextWindowPos(ImVec2(1130, 140), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(280, 300), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(1130, 135), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(280, 240), ImGuiCond_FirstUseEver);
     ImGui::Begin("Note Editor");
 
     if (ui.selectedPattern < 0 || ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
@@ -5724,8 +5919,8 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
 // ============================================================================
 inline void DrawViewTabs(UIState& ui) {
     // Set initial window position on first use (top right)
-    ImGui::SetNextWindowPos(ImVec2(780, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(500, 60), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(780, 35), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500, 50), ImGuiCond_FirstUseEver);
     ImGui::Begin("Views", nullptr, ImGuiWindowFlags_NoCollapse);
 
     if (ImGui::Button("Piano Roll", ImVec2(100, 30))) {
@@ -6438,9 +6633,9 @@ inline void DrawDrumCategory(const char* categoryName, bool& expanded,
 }
 
 inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
-    // Set initial window position on first use (left side)
-    ImGui::SetNextWindowPos(ImVec2(10, 140), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(200, 500), ImGuiCond_FirstUseEver);
+    // Set initial window position on first use (left column)
+    ImGui::SetNextWindowPos(ImVec2(10, 135), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(200, 400), ImGuiCond_FirstUseEver);
     ImGui::Begin("Sound Palette");
 
     ImGui::Text("Click to select, then draw on Piano Roll");
@@ -6594,6 +6789,84 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         g_PaletteExpanded_Synths = false;
     }
     ImGui::PopStyleColor(3);
+
+    // ========== CHORDS (Organized by Genre) ==========
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "CHORDS (click to select, then draw)");
+
+    // Helper lambda to draw chord buttons for a genre
+    auto DrawChordGenre = [&](const char* genre, bool& expanded, const char* headerLabel) {
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.2f, 0.4f, 0.8f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.4f, 0.3f, 0.5f, 0.9f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.4f, 0.6f, 1.0f));
+
+        if (ImGui::CollapsingHeader(headerLabel, expanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+            expanded = true;
+            ImGui::Indent(5.0f);
+
+            for (int i = 0; i < g_NumChordPresets; ++i) {
+                const ChordPreset& chord = g_ChordPresets[i];
+                if (strcmp(chord.genre, genre) != 0) continue;
+
+                ImGui::PushID(i + 5000);  // Unique ID for chords
+
+                bool isSelected = (g_SelectedChordIndex == i);
+                ImVec2 buttonSize(80, 30);
+                ImVec2 pos = ImGui::GetCursorScreenPos();
+
+                // Button colors
+                ImU32 bgColor = isSelected ? IM_COL32(100, 70, 140, 255) : IM_COL32(50, 40, 70, 255);
+                ImU32 borderColor = isSelected ? IM_COL32(180, 140, 220, 255) : IM_COL32(90, 70, 110, 255);
+                ImU32 textColor = isSelected ? IM_COL32(255, 230, 255, 255) : IM_COL32(180, 160, 200, 255);
+
+                drawList->AddRectFilled(pos, ImVec2(pos.x + buttonSize.x, pos.y + buttonSize.y), bgColor, 4.0f);
+                drawList->AddRect(pos, ImVec2(pos.x + buttonSize.x, pos.y + buttonSize.y), borderColor, 4.0f, 0, isSelected ? 2.0f : 1.0f);
+
+                // Draw chord name centered
+                ImVec2 textSize = ImGui::CalcTextSize(chord.name);
+                float textX = pos.x + (buttonSize.x - textSize.x) * 0.5f;
+                float textY = pos.y + (buttonSize.y - textSize.y) * 0.5f;
+                drawList->AddText(ImVec2(textX, textY), textColor, chord.name);
+
+                ImGui::InvisibleButton("##chord", buttonSize);
+                if (ImGui::IsItemClicked()) {
+                    if (g_SelectedChordIndex == i) {
+                        g_SelectedChordIndex = -1;
+                        g_SelectedPaletteItem = -1;
+                    } else {
+                        g_SelectedChordIndex = i;
+                        g_SelectedPaletteItem = -1;  // Deselect individual sounds
+                        ui.pianoRollMode = PianoRollMode::Draw;
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("%s", chord.name);
+                    ImGui::TextDisabled("%s", chord.description);
+                    ImGui::Text("Notes: %d", chord.noteCount);
+                    ImGui::EndTooltip();
+                }
+
+                ImGui::SameLine();
+                ImGui::PopID();
+            }
+            ImGui::NewLine();
+            ImGui::Unindent(5.0f);
+        } else {
+            expanded = false;
+        }
+        ImGui::PopStyleColor(3);
+    };
+
+    // Draw all chord genres
+    DrawChordGenre("Pop", g_PaletteExpanded_Chords_Pop, "Pop Chords");
+    DrawChordGenre("Jazz", g_PaletteExpanded_Chords_Jazz, "Jazz Chords");
+    DrawChordGenre("Rock", g_PaletteExpanded_Chords_Rock, "Rock Power Chords");
+    DrawChordGenre("EDM", g_PaletteExpanded_Chords_EDM, "EDM Chords");
+    DrawChordGenre("HipHop", g_PaletteExpanded_Chords_HipHop, "Hip Hop");
+    DrawChordGenre("Reggaeton", g_PaletteExpanded_Chords_Reggaeton, "Reggaeton");
+    DrawChordGenre("Synthwave", g_PaletteExpanded_Chords_Synthwave, "Synthwave/Outrun");
+    DrawChordGenre("Chiptune", g_PaletteExpanded_Chords_Chiptune, "Chiptune 8-bit");
 
     // ========== DRUMS (Expandable Categories) ==========
     ImGui::Separator();
@@ -7237,7 +7510,8 @@ inline void DrawPadController(Project& project, UIState& ui, Sequencer& sequence
         }
     }
 
-    ImGui::SetNextWindowPos(ImVec2(10, 860), ImGuiCond_FirstUseEver);
+    // Set initial window position on first use (bottom left)
+    ImGui::SetNextWindowPos(ImVec2(10, 545), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(200, 200), ImGuiCond_FirstUseEver);
     ImGui::Begin("Pad Controller", nullptr, ImGuiWindowFlags_NoCollapse);
 
