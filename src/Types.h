@@ -255,6 +255,22 @@ struct ChannelConfig {
     bool delayEnabled = false;
     bool filterEnabled = false;
 
+    // Reverb settings (genre effects)
+    bool reverbEnabled = false;
+    float reverbMix = 0.35f;
+    float reverbRoomSize = 0.7f;
+    float reverbDamping = 0.4f;
+
+    // Chorus settings (genre effects)
+    bool chorusEnabled = false;
+    float chorusMix = 0.3f;
+    float chorusRate = 0.5f;
+
+    // Extended delay settings (genre effects)
+    float delayMix = 0.2f;
+    float delayTime = 0.25f;
+    float delayFeedback = 0.3f;
+
     // Channel-level Echo (applies to all notes on this channel)
     bool echoEnabled = false;
     float echoTime = 0.25f;         // Echo delay time (seconds)

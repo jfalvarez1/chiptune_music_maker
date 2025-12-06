@@ -247,6 +247,23 @@ public:
             fx.distortionEnabled = config.distortionEnabled;
             fx.filterEnabled = config.filterEnabled;
             fx.delayEnabled = config.delayEnabled;
+
+            // Sync genre effects (reverb, chorus, delay settings)
+            fx.reverbEnabled = config.reverbEnabled;
+            fx.reverb.mix = config.reverbMix;
+            fx.reverb.roomSize = config.reverbRoomSize;
+            fx.reverb.damping = config.reverbDamping;
+
+            fx.chorusEnabled = config.chorusEnabled;
+            fx.chorus.mix = config.chorusMix;
+            fx.chorus.rate = config.chorusRate;
+
+            // Extended delay settings
+            if (config.delayEnabled) {
+                fx.delay.mix = config.delayMix;
+                fx.delay.delayTime = config.delayTime;
+                fx.delay.feedback = config.delayFeedback;
+            }
         }
     }
 

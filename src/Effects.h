@@ -407,6 +407,166 @@ private:
 };
 
 // ============================================================================
+// Reverb - Schroeder-style algorithmic reverb for spacious sound
+// ============================================================================
+class Reverb {
+public:
+    static constexpr int MAX_COMB_SIZE = 4410;    // 100ms at 44.1kHz
+    static constexpr int MAX_ALLPASS_SIZE = 1764; // 40ms at 44.1kHz
+    static constexpr int NUM_COMBS = 8;
+    static constexpr int NUM_ALLPASS = 4;
+
+    float roomSize = 0.7f;      // 0.0 to 1.0 (small to large room)
+    float damping = 0.4f;       // 0.0 to 1.0 (bright to dark)
+    float mix = 0.35f;          // Dry/wet (0.0 = dry, 1.0 = full wet)
+    float width = 1.0f;         // Stereo width (0.0 = mono, 1.0 = full stereo)
+    float predelay = 0.02f;     // Pre-delay in seconds (room size simulation)
+
+    Reverb() {
+        // Initialize comb filters with prime-number-based delays for richness
+        // These values create a dense, natural-sounding reverb
+        m_combDelays = {1557, 1617, 1491, 1422, 1277, 1356, 1188, 1116};
+        m_allpassDelays = {225, 556, 441, 341};
+
+        for (int i = 0; i < NUM_COMBS; ++i) {
+            m_combBuffers[i].resize(MAX_COMB_SIZE, 0.0f);
+            m_combFilters[i] = 0.0f;
+        }
+        for (int i = 0; i < NUM_ALLPASS; ++i) {
+            m_allpassBuffers[i].resize(MAX_ALLPASS_SIZE, 0.0f);
+        }
+        m_predelayBuffer.resize(static_cast<int>(0.1f * 44100.0f), 0.0f);
+    }
+
+    void setSampleRate(float sr) {
+        m_sampleRate = sr;
+        // Rescale delays for sample rate
+        float ratio = sr / 44100.0f;
+        m_scaledCombDelays = {
+            static_cast<int>(1557 * ratio), static_cast<int>(1617 * ratio),
+            static_cast<int>(1491 * ratio), static_cast<int>(1422 * ratio),
+            static_cast<int>(1277 * ratio), static_cast<int>(1356 * ratio),
+            static_cast<int>(1188 * ratio), static_cast<int>(1116 * ratio)
+        };
+        m_scaledAllpassDelays = {
+            static_cast<int>(225 * ratio), static_cast<int>(556 * ratio),
+            static_cast<int>(441 * ratio), static_cast<int>(341 * ratio)
+        };
+        m_predelayBuffer.resize(static_cast<int>(0.1f * sr), 0.0f);
+    }
+
+    // Process mono input, returns stereo pair
+    std::pair<float, float> processStereo(float input) {
+        // Pre-delay
+        int predelaySamples = static_cast<int>(predelay * m_sampleRate);
+        predelaySamples = std::min(predelaySamples, static_cast<int>(m_predelayBuffer.size()) - 1);
+
+        int predelayReadIdx = (m_predelayWriteIdx - predelaySamples + m_predelayBuffer.size()) % m_predelayBuffer.size();
+        float predelayed = m_predelayBuffer[predelayReadIdx];
+        m_predelayBuffer[m_predelayWriteIdx] = input;
+        m_predelayWriteIdx = (m_predelayWriteIdx + 1) % m_predelayBuffer.size();
+
+        // Process through parallel comb filters
+        float combOutL = 0.0f;
+        float combOutR = 0.0f;
+        float feedback = roomSize * 0.85f + 0.1f;  // Scale to useful range
+
+        for (int i = 0; i < NUM_COMBS; ++i) {
+            int delay = m_scaledCombDelays[i];
+            delay = std::min(delay, MAX_COMB_SIZE - 1);
+
+            int readIdx = (m_combWriteIdx[i] - delay + MAX_COMB_SIZE) % MAX_COMB_SIZE;
+            float delayed = m_combBuffers[i][readIdx];
+
+            // Lowpass filter in feedback path for damping (darker = more damping)
+            m_combFilters[i] = delayed * (1.0f - damping) + m_combFilters[i] * damping;
+
+            // Write with feedback
+            m_combBuffers[i][m_combWriteIdx[i]] = predelayed + m_combFilters[i] * feedback;
+            m_combWriteIdx[i] = (m_combWriteIdx[i] + 1) % MAX_COMB_SIZE;
+
+            // Distribute to stereo (alternating L/R with some mixing)
+            if (i % 2 == 0) {
+                combOutL += delayed;
+                combOutR += delayed * 0.6f;
+            } else {
+                combOutR += delayed;
+                combOutL += delayed * 0.6f;
+            }
+        }
+
+        combOutL /= NUM_COMBS;
+        combOutR /= NUM_COMBS;
+
+        // Process through series allpass filters for diffusion
+        float allpassOut = (combOutL + combOutR) * 0.5f;
+        for (int i = 0; i < NUM_ALLPASS; ++i) {
+            int delay = m_scaledAllpassDelays[i];
+            delay = std::min(delay, MAX_ALLPASS_SIZE - 1);
+
+            int readIdx = (m_allpassWriteIdx[i] - delay + MAX_ALLPASS_SIZE) % MAX_ALLPASS_SIZE;
+            float delayed = m_allpassBuffers[i][readIdx];
+
+            float temp = -allpassOut * 0.5f + delayed;
+            m_allpassBuffers[i][m_allpassWriteIdx[i]] = allpassOut + delayed * 0.5f;
+            m_allpassWriteIdx[i] = (m_allpassWriteIdx[i] + 1) % MAX_ALLPASS_SIZE;
+
+            allpassOut = temp;
+        }
+
+        // Apply stereo width
+        float wetL = combOutL * width + allpassOut * (1.0f - width * 0.5f);
+        float wetR = combOutR * width + allpassOut * (1.0f - width * 0.5f);
+
+        // Mix dry and wet
+        float outL = input * (1.0f - mix) + wetL * mix;
+        float outR = input * (1.0f - mix) + wetR * mix;
+
+        return {outL, outR};
+    }
+
+    // Simple mono process (averages stereo output)
+    float process(float input) {
+        auto [left, right] = processStereo(input);
+        return (left + right) * 0.5f;
+    }
+
+    void reset() {
+        for (int i = 0; i < NUM_COMBS; ++i) {
+            std::fill(m_combBuffers[i].begin(), m_combBuffers[i].end(), 0.0f);
+            m_combFilters[i] = 0.0f;
+            m_combWriteIdx[i] = 0;
+        }
+        for (int i = 0; i < NUM_ALLPASS; ++i) {
+            std::fill(m_allpassBuffers[i].begin(), m_allpassBuffers[i].end(), 0.0f);
+            m_allpassWriteIdx[i] = 0;
+        }
+        std::fill(m_predelayBuffer.begin(), m_predelayBuffer.end(), 0.0f);
+        m_predelayWriteIdx = 0;
+    }
+
+private:
+    float m_sampleRate = 44100.0f;
+
+    // Comb filters (parallel)
+    std::array<std::vector<float>, NUM_COMBS> m_combBuffers;
+    std::array<float, NUM_COMBS> m_combFilters = {};
+    std::array<int, NUM_COMBS> m_combWriteIdx = {};
+    std::array<int, NUM_COMBS> m_combDelays;
+    std::array<int, NUM_COMBS> m_scaledCombDelays;
+
+    // Allpass filters (series)
+    std::array<std::vector<float>, NUM_ALLPASS> m_allpassBuffers;
+    std::array<int, NUM_ALLPASS> m_allpassWriteIdx = {};
+    std::array<int, NUM_ALLPASS> m_allpassDelays;
+    std::array<int, NUM_ALLPASS> m_scaledAllpassDelays;
+
+    // Pre-delay buffer
+    std::vector<float> m_predelayBuffer;
+    int m_predelayWriteIdx = 0;
+};
+
+// ============================================================================
 // Sidechain Compressor - Duck signal based on another source (e.g., kick)
 // ============================================================================
 class Sidechain {
@@ -481,6 +641,7 @@ struct EffectsChain {
     Phaser phaser;
     RingModulator ringMod;
     Sidechain sidechain;
+    Reverb reverb;
 
     // Enable flags
     bool bitcrusherEnabled = false;
@@ -492,6 +653,7 @@ struct EffectsChain {
     bool phaserEnabled = false;
     bool ringModEnabled = false;
     bool sidechainEnabled = false;
+    bool reverbEnabled = false;
     int sidechainSource = -1;  // Source channel index (-1 = none)
 
     void setSampleRate(float sr) {
@@ -499,12 +661,13 @@ struct EffectsChain {
         delay.setSampleRate(sr);
         chorus.setSampleRate(sr);
         sidechain.setSampleRate(sr);
+        reverb.setSampleRate(sr);
     }
 
     float process(float input, float time) {
         float output = input;
 
-        // Process in order: saturation -> filter -> modulation -> time-based
+        // Process in order: saturation -> filter -> modulation -> time-based -> reverb
         if (bitcrusherEnabled) output = bitcrusher.process(output);
         if (distortionEnabled) output = distortion.process(output);
         if (filterEnabled)     output = filter.process(output);
@@ -513,6 +676,7 @@ struct EffectsChain {
         if (phaserEnabled)     output = phaser.process(output, time);
         if (chorusEnabled)     output = chorus.process(output, time);
         if (delayEnabled)      output = delay.process(output);
+        if (reverbEnabled)     output = reverb.process(output);
 
         return output;
     }
@@ -524,6 +688,7 @@ struct EffectsChain {
         chorus.reset();
         phaser.reset();
         sidechain.reset();
+        reverb.reset();
     }
 };
 

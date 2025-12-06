@@ -13,6 +13,36 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
+### What's New in v2.10.0
+
+**Reverb Effect & Genre Effect Presets:**
+Professional-quality reverb and automatic genre-based effect presets for authentic sound:
+
+- **Algorithmic Reverb** (Schroeder-style)
+  - 8 parallel comb filters + 4 series allpass filters
+  - Adjustable: Room Size, Damping, Mix, Predelay
+  - Creates depth and space for any sound
+
+- **Genre Effect Presets** - Automatic effects when placing sample tracks:
+  - **Synthwave**: Heavy reverb (0.4 mix), chorus, dotted 8th delay, sidechain
+  - **Chiptune**: Minimal effects for authentic 8-bit (subtle delay only)
+  - **Techno**: Room reverb, heavy delay feedback, sidechain compression
+  - **Hip Hop/Trap**: Lo-fi vibes, subtle reverb, vintage delay
+  - **House**: Big room reverb, chorus, sidechain pumping
+  - **Reggaeton**: Tight room reverb, short delay for punch
+
+- **Per-Note Dynamics** - Sample tracks now include:
+  - Velocity variation for expressive dynamics
+  - Vibrato on sustained notes for warmth
+  - Genre-appropriate effect settings
+
+**How to Use:**
+1. Open **Mixer** window (View > Mixer or keyboard shortcut)
+2. Click on a channel to select it
+3. Effects are in the **Channel Editor** panel
+4. Adjust Reverb, Chorus, and Delay settings
+5. Sample tracks auto-apply genre effects when placed
+
 ### What's New in v2.9.0
 
 **Tools Panel - 9 Synthwave Production Tools:**
@@ -293,6 +323,10 @@ Pre-made track templates to get you started:
 - Phaser
 - Tremolo
 - Ring Modulator
+- **Reverb** (Schroeder-style algorithmic)
+  - 8 parallel comb filters + 4 series allpass filters
+  - Room Size, Damping, Mix controls
+  - Presets: Small Room, Hall, Cathedral, Plate
 - **Sidechain Compression**: Classic EDM pumping effect
   - Duck any channel based on another (e.g., duck bass when kick plays)
   - Presets: Subtle, Normal, Heavy, Pumping
@@ -504,6 +538,8 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Chord presets (45 chords across 8 genres: Pop, Jazz, Rock, EDM, Hip Hop, Reggaeton, Synthwave, Chiptune)
 - [x] Pattern deletion (Delete key + button)
 - [x] Tools Panel with 9 production tools (Drum Pattern Generator, Arpeggiator, Bass Pattern Generator, Scale Lock, Velocity Curve, Fill Generator, Pattern Variation, Quick Layer, Humanize)
+- [x] Reverb effect (Schroeder-style algorithmic with presets)
+- [x] Genre effect presets (auto-apply effects for sample tracks)
 - [ ] FLAC export
 - [ ] VST plugin version
 - [ ] MIDI import/export
