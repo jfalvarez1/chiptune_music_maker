@@ -626,6 +626,97 @@
             font-family: 'Share Tech Mono', monospace;
             font-size: 0.9em;
         }
+
+        /* Table of Contents Styles */
+        .toc-section {
+            background: rgba(0, 20, 0, 0.9);
+            border: 2px solid var(--neon-cyan);
+            border-radius: 15px;
+            padding: 30px 40px;
+            margin: 20px 0 40px 0;
+            position: relative;
+        }
+
+        .toc-section::before {
+            content: 'NAVIGATION';
+            position: absolute;
+            top: -12px;
+            left: 30px;
+            background: var(--dark-bg);
+            padding: 0 15px;
+            color: var(--neon-pink);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.9rem;
+            letter-spacing: 3px;
+        }
+
+        .toc-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.5rem;
+            color: var(--neon-cyan);
+            margin-bottom: 25px;
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+        }
+
+        .toc-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px 20px;
+        }
+
+        .toc-grid a {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 15px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid transparent;
+            border-radius: 8px;
+            text-decoration: none;
+            color: var(--matrix-green);
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .toc-grid a::before {
+            content: '>';
+            color: var(--neon-pink);
+            font-weight: bold;
+            transition: transform 0.3s ease;
+        }
+
+        .toc-grid a:hover {
+            background: rgba(0, 255, 255, 0.1);
+            border-color: var(--neon-cyan);
+            color: var(--neon-cyan);
+            transform: translateX(5px);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+        }
+
+        .toc-grid a:hover::before {
+            transform: translateX(3px);
+            color: var(--neon-cyan);
+        }
+
+        .toc-grid a .toc-number {
+            background: var(--neon-pink);
+            color: var(--dark-bg);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.7rem;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 4px;
+            min-width: 24px;
+            text-align: center;
+        }
+
+        .toc-grid a:hover .toc-number {
+            background: var(--neon-cyan);
+        }
     </style>
 </head>
 <body>
@@ -676,6 +767,31 @@
             <h1 class="glitch" data-text="CHIPTUNE TRACKER">CHIPTUNE TRACKER</h1>
             <p class="subtitle">Complete Music Making Guide</p>
         </header>
+
+        <!-- Table of Contents -->
+        <div class="toc-section">
+            <div class="toc-title">Table of Contents</div>
+            <div class="toc-grid">
+                <a href="#intro"><span class="toc-number">01</span> Introduction</a>
+                <a href="#basics"><span class="toc-number">02</span> Music Basics</a>
+                <a href="#interface"><span class="toc-number">03</span> Interface Overview</a>
+                <a href="#adsr"><span class="toc-number">04</span> ADSR Envelope</a>
+                <a href="#oscillators"><span class="toc-number">05</span> Oscillators</a>
+                <a href="#synths"><span class="toc-number">06</span> Synth Presets</a>
+                <a href="#chords"><span class="toc-number">07</span> Chord Presets</a>
+                <a href="#drums"><span class="toc-number">08</span> Drum Kit</a>
+                <a href="#themes"><span class="toc-number">09</span> Visual Themes</a>
+                <a href="#files"><span class="toc-number">10</span> File Operations</a>
+                <a href="#views"><span class="toc-number">11</span> Views & Editors</a>
+                <a href="#padcontroller"><span class="toc-number">12</span> Pad Controller</a>
+                <a href="#workflow"><span class="toc-number">13</span> Workflow Guide</a>
+                <a href="#synthwave"><span class="toc-number">14</span> Synthwave Guide</a>
+                <a href="#shortcuts"><span class="toc-number">15</span> Keyboard Shortcuts</a>
+                <a href="#advanced"><span class="toc-number">16</span> Advanced Features</a>
+                <a href="#chiptune-guide"><span class="toc-number">17</span> Chiptune Guide</a>
+                <a href="#tools"><span class="toc-number">18</span> Tools Panel</a>
+            </div>
+        </div>
 
         <!-- Introduction -->
         <section id="intro">
