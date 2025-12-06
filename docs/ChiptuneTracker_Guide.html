@@ -759,6 +759,7 @@
             <li><a href="#advanced" data-section="Advanced"></a></li>
             <li><a href="#chiptune-guide" data-section="Chiptune Guide"></a></li>
             <li><a href="#tools" data-section="Tools Panel"></a></li>
+            <li><a href="#production-fundamentals" data-section="Production Guide"></a></li>
         </ul>
     </nav>
 
@@ -790,6 +791,7 @@
                 <a href="#advanced"><span class="toc-number">16</span> Advanced Features</a>
                 <a href="#chiptune-guide"><span class="toc-number">17</span> Chiptune Guide</a>
                 <a href="#tools"><span class="toc-number">18</span> Tools Panel</a>
+                <a href="#production-fundamentals"><span class="toc-number">19</span> Production Fundamentals</a>
             </div>
         </div>
 
@@ -3599,6 +3601,403 @@ Channel 2: Pulse 50% - Same melody, or harmony
                 <strong>Selection-Based Tools:</strong> Arpeggiator, Velocity Curve, Quick Layer, and Humanize
                 all require you to select notes first (use Select mode, then drag to select).
                 Without a selection, these tools won't do anything!
+            </div>
+        </section>
+
+        <!-- Music Production Fundamentals -->
+        <section id="production-fundamentals">
+            <h2>Music Production Fundamentals</h2>
+            <p>This section teaches you essential music production concepts and how to apply them using
+            ChiptuneTracker's tools. Even if you've never made music before, these fundamentals will
+            help you create complete, professional-sounding tracks.</p>
+
+            <h3>Understanding Song Structure</h3>
+            <div class="info-box">
+                <strong>What is Song Structure?</strong><br>
+                A song isn't just random sounds - it follows a blueprint that guides the listener through
+                a journey. Think of it like a story with a beginning, middle, and end. Most songs follow
+                predictable patterns because our brains enjoy the balance of familiarity and surprise.
+            </div>
+            <p>Here are the common sections you'll find in most songs:</p>
+            <table>
+                <tr>
+                    <th>Section</th>
+                    <th>Purpose</th>
+                    <th>Typical Length</th>
+                    <th>In ChiptuneTracker</th>
+                </tr>
+                <tr>
+                    <td><strong>Intro</strong></td>
+                    <td>Sets the mood, introduces key elements gradually</td>
+                    <td>4-8 bars</td>
+                    <td>Start with drums + bass, add melody later</td>
+                </tr>
+                <tr>
+                    <td><strong>Verse</strong></td>
+                    <td>Tells the story, usually calmer than chorus</td>
+                    <td>8-16 bars</td>
+                    <td>Simpler melody, fewer layers</td>
+                </tr>
+                <tr>
+                    <td><strong>Chorus</strong></td>
+                    <td>The "hook" - most memorable, energetic part</td>
+                    <td>8-16 bars</td>
+                    <td>Full arrangement, catchiest melody</td>
+                </tr>
+                <tr>
+                    <td><strong>Bridge</strong></td>
+                    <td>Contrast, breaks up repetition, builds tension</td>
+                    <td>4-8 bars</td>
+                    <td>Different chords, stripped-back or build-up</td>
+                </tr>
+                <tr>
+                    <td><strong>Outro</strong></td>
+                    <td>Winds down, brings closure</td>
+                    <td>4-8 bars</td>
+                    <td>Fade out or strip away elements</td>
+                </tr>
+            </table>
+            <div class="tip-box">
+                <strong>Common Structure:</strong> Intro → Verse → Chorus → Verse → Chorus → Bridge → Chorus → Outro<br>
+                <strong>Pro Tip:</strong> Use the Patterns window to create separate patterns for each section,
+                then arrange them in the Arrangement view!
+            </div>
+
+            <h3>Building Drum Patterns</h3>
+            <div class="info-box">
+                <strong>What are Layered Drums?</strong><br>
+                In professional music production, drum sounds are often "layered" - meaning multiple drum
+                sounds play at the same time to create a fuller, more impactful hit. For example, a kick
+                drum might be layered with a sub-bass hit to add low-end weight, or a snare might be
+                layered with a clap to add brightness.<br><br>
+                <strong>Why is this important?</strong>
+                <ul style="margin: 0.5em 0 0 1em;">
+                    <li>Single drum samples can sound thin or weak on their own</li>
+                    <li>Layering adds depth, punch, and character</li>
+                    <li>Each layer can fill a different frequency range</li>
+                    <li>It's the secret behind "big" sounding drums in pro tracks</li>
+                </ul>
+            </div>
+            <p><strong>How to Layer Drums in ChiptuneTracker:</strong></p>
+            <ol>
+                <li>Place your main kick drum (e.g., Kick or Kick808)</li>
+                <li>On the same beat, add a second kick with different character (e.g., KickHard for attack)</li>
+                <li>Adjust velocity - main kick at 100%, layer at 60-80%</li>
+                <li>For snares: layer Snare + Clap, or Snare + SnareRim for extra crack</li>
+            </ol>
+
+            <h4>The Basic Beat (4/4 Time)</h4>
+            <div class="info-box">
+                <strong>What is 4/4 Time?</strong><br>
+                Most popular music uses "4/4 time" - meaning there are 4 beats per measure (or "bar").
+                When you count "1, 2, 3, 4, 1, 2, 3, 4..." you're counting in 4/4 time. The kick usually
+                lands on beats 1 and 3, while the snare lands on beats 2 and 4 (the "backbeat").
+            </div>
+            <pre><code>Beat:    1   2   3   4   1   2   3   4
+Kick:    X   -   X   -   X   -   X   -
+Snare:   -   X   -   X   -   X   -   X
+Hi-Hat:  X X X X X X X X X X X X X X X X</code></pre>
+            <p>This is the foundation of rock, pop, electronic, and most other genres!</p>
+
+            <h4>Genre-Specific Drum Patterns</h4>
+            <table>
+                <tr>
+                    <th>Genre</th>
+                    <th>BPM Range</th>
+                    <th>Key Characteristics</th>
+                </tr>
+                <tr>
+                    <td><strong>Synthwave</strong></td>
+                    <td>100-120</td>
+                    <td>Gated reverb snare, steady 8th hi-hats, punchy 808 kick</td>
+                </tr>
+                <tr>
+                    <td><strong>Chiptune</strong></td>
+                    <td>120-160</td>
+                    <td>Noise snare, quick arpeggios, triangle bass</td>
+                </tr>
+                <tr>
+                    <td><strong>Reggaeton</strong></td>
+                    <td>90-100</td>
+                    <td>"Dembow" rhythm: kick on 1, snare on 2.5, hi-hat pattern</td>
+                </tr>
+                <tr>
+                    <td><strong>House/EDM</strong></td>
+                    <td>120-130</td>
+                    <td>Four-on-floor kick, offbeat hi-hats, clap on 2 and 4</td>
+                </tr>
+            </table>
+
+            <h3>Creating Melodies</h3>
+            <div class="info-box">
+                <strong>What Makes a Melody "Catchy"?</strong><br>
+                A catchy melody is memorable, singable, and emotionally engaging. The best melodies
+                balance repetition (so you remember it) with variation (so you don't get bored).
+                Here are the key principles:
+                <ul style="margin: 0.5em 0 0 1em;">
+                    <li><strong>Stepwise Motion:</strong> Move mostly by small intervals (one or two notes apart)</li>
+                    <li><strong>Occasional Leaps:</strong> Larger jumps (3+ notes) create excitement</li>
+                    <li><strong>Repetition:</strong> Repeat phrases, but vary them slightly</li>
+                    <li><strong>Resolution:</strong> End phrases on stable notes (the root of the chord)</li>
+                    <li><strong>Rhythm:</strong> Use a mix of long and short notes</li>
+                </ul>
+            </div>
+            <p><strong>How to Write a Melody in ChiptuneTracker:</strong></p>
+            <ol>
+                <li><strong>Enable Scale Lock</strong> (Tools Panel) - this ensures every note sounds good</li>
+                <li><strong>Start simple</strong> - just 4-8 notes that feel right</li>
+                <li><strong>Use repetition</strong> - repeat your phrase, then change the ending</li>
+                <li><strong>Add rhythm</strong> - vary note lengths (use the Note Editor)</li>
+                <li><strong>Layer with harmony</strong> - use Quick Layer to add notes an octave up/down</li>
+            </ol>
+
+            <h4>The "Question and Answer" Technique</h4>
+            <p>One of the most effective melody techniques is "call and response" or "question and answer":</p>
+            <pre><code>Phrase 1 (Question): C - D - E - G  (ends on an "unstable" note)
+Phrase 2 (Answer):   G - E - D - C  (returns to the root - "resolved")</code></pre>
+            <div class="tip-box">
+                <strong>Try This:</strong> Write a 2-bar phrase, then copy it. Change just the last 2-3 notes
+                of the copy. Now you have a question and answer!
+            </div>
+
+            <h3>The Role of Bass</h3>
+            <div class="info-box">
+                <strong>What Does Bass Actually Do?</strong><br>
+                Bass is the bridge between rhythm (drums) and harmony (chords/melody). It:
+                <ul style="margin: 0.5em 0 0 1em;">
+                    <li><strong>Defines the chord:</strong> The bass note tells you what chord is playing</li>
+                    <li><strong>Drives the groove:</strong> Works with the kick drum to create the "pocket"</li>
+                    <li><strong>Adds weight:</strong> Low frequencies make music feel powerful</li>
+                    <li><strong>Creates movement:</strong> Walking bass lines add motion and interest</li>
+                </ul>
+            </div>
+            <p><strong>Bass Pattern Styles (Use the Bass Pattern Generator!):</strong></p>
+            <table>
+                <tr>
+                    <th>Style</th>
+                    <th>Description</th>
+                    <th>Best For</th>
+                </tr>
+                <tr>
+                    <td><strong>Root Notes</strong></td>
+                    <td>Just play the root of each chord</td>
+                    <td>Beginners, simple songs</td>
+                </tr>
+                <tr>
+                    <td><strong>Octave Pulse</strong></td>
+                    <td>Alternate between root and octave</td>
+                    <td>Synthwave, 80s pop</td>
+                </tr>
+                <tr>
+                    <td><strong>Root + Fifth</strong></td>
+                    <td>Play root note, then fifth above it</td>
+                    <td>Rock, punk, energetic music</td>
+                </tr>
+                <tr>
+                    <td><strong>Walking Bass</strong></td>
+                    <td>Move stepwise between chord tones</td>
+                    <td>Jazz, funk, sophisticated feel</td>
+                </tr>
+                <tr>
+                    <td><strong>Arpeggiated</strong></td>
+                    <td>Play chord tones in sequence</td>
+                    <td>EDM, house, driving rhythms</td>
+                </tr>
+            </table>
+
+            <h3>Mixing Basics</h3>
+            <div class="info-box">
+                <strong>What is Mixing?</strong><br>
+                Mixing is the process of balancing all the elements of your song so they work together
+                and sound good. It's like being a chef - you need the right proportions of each ingredient.
+                The three main tools are <strong>Volume</strong>, <strong>Panning</strong>, and <strong>EQ</strong>
+                (frequency control).
+            </div>
+
+            <h4>Volume Balance</h4>
+            <p>The key to a good mix is getting the volume relationships right:</p>
+            <ul>
+                <li><strong>Kick and Snare:</strong> Usually loudest - they're the backbone</li>
+                <li><strong>Bass:</strong> Slightly below kick - felt as much as heard</li>
+                <li><strong>Lead Melody:</strong> Prominent but not overpowering</li>
+                <li><strong>Chords/Pads:</strong> Background support - quieter than lead</li>
+                <li><strong>Hi-hats/Percussion:</strong> Add texture without dominating</li>
+            </ul>
+
+            <h4>Panning</h4>
+            <div class="info-box">
+                <strong>What is Panning?</strong><br>
+                Panning places sounds in the stereo field - left, right, or center. It creates space
+                and width in your mix. Without panning, everything stacks in the center and sounds cluttered.
+            </div>
+            <table>
+                <tr>
+                    <th>Element</th>
+                    <th>Typical Pan Position</th>
+                    <th>Why</th>
+                </tr>
+                <tr>
+                    <td>Kick, Snare, Bass</td>
+                    <td>Center (0)</td>
+                    <td>Low frequencies should be centered for power</td>
+                </tr>
+                <tr>
+                    <td>Hi-Hats</td>
+                    <td>Slightly left or right (±20%)</td>
+                    <td>Creates width, mimics real drummer</td>
+                </tr>
+                <tr>
+                    <td>Lead Melody</td>
+                    <td>Center or slight offset</td>
+                    <td>Keeps it prominent and focused</td>
+                </tr>
+                <tr>
+                    <td>Chords/Pads</td>
+                    <td>Spread wide (±50-80%)</td>
+                    <td>Creates stereo width and atmosphere</td>
+                </tr>
+                <tr>
+                    <td>Arpeggios</td>
+                    <td>Opposite side from hi-hats</td>
+                    <td>Balances the stereo image</td>
+                </tr>
+            </table>
+
+            <h3>Building Energy and Dynamics</h3>
+            <div class="info-box">
+                <strong>What are Dynamics?</strong><br>
+                Dynamics refers to the changes in energy and intensity throughout a song. A song that
+                stays at the same energy level the whole time is boring. Great songs have quiet moments
+                and loud moments, tension and release. This contrast is what makes music emotional.
+            </div>
+            <p><strong>Techniques for Building Energy:</strong></p>
+            <ul>
+                <li><strong>Add layers gradually:</strong> Start with drums, add bass, then melody, then chords</li>
+                <li><strong>Use fills:</strong> Drum fills (snare rolls, tom cascades) signal section changes</li>
+                <li><strong>Velocity crescendo:</strong> Gradually increase note velocities toward a climax</li>
+                <li><strong>Remove elements:</strong> Sometimes dropping everything except one instrument creates more impact than adding more</li>
+                <li><strong>The "build-up":</strong> Use rising pitch, faster hi-hats, snare rolls before a drop</li>
+            </ul>
+
+            <h4>The Drop</h4>
+            <div class="info-box">
+                <strong>What is a Drop?</strong><br>
+                In electronic music, a "drop" is the moment when the build-up releases into the main
+                groove. It's the most energetic, impactful part of the song. Everything builds up
+                (rising synths, faster drums, increasing tension) then suddenly... BOOM - the full
+                beat and bass hit at once. This contrast is what makes drops feel so powerful.
+            </div>
+            <p><strong>How to Create a Drop in ChiptuneTracker:</strong></p>
+            <ol>
+                <li>Create a "build-up" pattern: rising melody, snare roll (use Fill Generator)</li>
+                <li>At the last beat before the drop, remove everything (silence creates anticipation)</li>
+                <li>The next pattern should have your biggest kick, fullest bass, catchiest melody</li>
+                <li>Use sidechain compression to make the kick punch through</li>
+            </ol>
+
+            <h3>Using Effects Creatively</h3>
+            <div class="info-box">
+                <strong>What are Audio Effects?</strong><br>
+                Effects modify the sound after it's generated. They can make sounds bigger, add space,
+                create textures, or completely transform a sound. ChiptuneTracker includes several
+                effects in the Channel Editor.
+            </div>
+            <table>
+                <tr>
+                    <th>Effect</th>
+                    <th>What It Does</th>
+                    <th>When to Use</th>
+                </tr>
+                <tr>
+                    <td><strong>Delay</strong></td>
+                    <td>Creates echoes of the sound</td>
+                    <td>Leads, vocals, adding space</td>
+                </tr>
+                <tr>
+                    <td><strong>Filter</strong></td>
+                    <td>Removes certain frequencies</td>
+                    <td>Sweeps, build-ups, tonal shaping</td>
+                </tr>
+                <tr>
+                    <td><strong>Distortion</strong></td>
+                    <td>Adds grit and harmonics</td>
+                    <td>Aggressive bass, crunchy leads</td>
+                </tr>
+                <tr>
+                    <td><strong>Bitcrusher</strong></td>
+                    <td>Reduces audio quality (in a good way)</td>
+                    <td>Retro/lo-fi sounds, drums</td>
+                </tr>
+                <tr>
+                    <td><strong>Sidechain</strong></td>
+                    <td>Ducks volume when another sound plays</td>
+                    <td>Pumping bass, EDM groove</td>
+                </tr>
+            </table>
+
+            <h3>Quick Start: Your First Complete Song</h3>
+            <p>Here's a step-by-step guide to creating your first complete track:</p>
+            <ol>
+                <li><strong>Set your BPM</strong> (start with 120 - it's versatile)</li>
+                <li><strong>Create a drum pattern</strong>
+                    <ul>
+                        <li>Use the Drum Pattern Generator with a Synthwave or House preset</li>
+                        <li>This gives you a solid foundation to build on</li>
+                    </ul>
+                </li>
+                <li><strong>Add a bass line</strong>
+                    <ul>
+                        <li>Pick a bass sound (Bass synth or Triangle)</li>
+                        <li>Use Bass Pattern Generator with "Octave Pulse"</li>
+                        <li>Start with just C notes, 2 per bar</li>
+                    </ul>
+                </li>
+                <li><strong>Write a simple melody</strong>
+                    <ul>
+                        <li>Enable Scale Lock (C Minor is great for beginners)</li>
+                        <li>Choose a Lead or Arp synth</li>
+                        <li>Write 4-8 notes that sound good to you</li>
+                    </ul>
+                </li>
+                <li><strong>Add chords</strong>
+                    <ul>
+                        <li>Open the Chords section in Tools</li>
+                        <li>Try the Am → F → C → G progression (very common!)</li>
+                        <li>Use a Pad synth for smooth sustained chords</li>
+                    </ul>
+                </li>
+                <li><strong>Create variations</strong>
+                    <ul>
+                        <li>Duplicate your pattern</li>
+                        <li>Make small changes (add/remove notes, change velocities)</li>
+                        <li>Create patterns for Intro (less elements) and Chorus (full energy)</li>
+                    </ul>
+                </li>
+                <li><strong>Arrange your song</strong>
+                    <ul>
+                        <li>Use the Arrangement view to order your patterns</li>
+                        <li>Follow the Intro → Verse → Chorus → Verse → Chorus → Outro structure</li>
+                    </ul>
+                </li>
+                <li><strong>Mix and polish</strong>
+                    <ul>
+                        <li>Balance volumes in the Mixer</li>
+                        <li>Add panning for width</li>
+                        <li>Use Humanize on drums for natural feel</li>
+                    </ul>
+                </li>
+                <li><strong>Export!</strong>
+                    <ul>
+                        <li>File → Export WAV (or MP3 if you have LAME/FFmpeg)</li>
+                        <li>Share your creation!</li>
+                    </ul>
+                </li>
+            </ol>
+
+            <div class="tip-box">
+                <strong>Remember:</strong> Your first songs won't be perfect - and that's okay!
+                Every professional producer started exactly where you are now. The key is to finish
+                songs, learn from each one, and keep making more. Have fun!
             </div>
         </section>
 
