@@ -6126,6 +6126,79 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::Unindent();
         }
 
+        // Stereo Widener (for lush synthwave pads - classic 80s wide sound)
+        ImGui::Checkbox("Stereo Widener", &fx.stereoWidenerEnabled);
+        if (fx.stereoWidenerEnabled) {
+            ImGui::Indent();
+            ImGui::SliderFloat("Width##sw", &fx.stereoWidener.width, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stereo width (0 = mono, 1 = ultra wide)");
+            ImGui::SliderFloat("Haas Delay##sw", &fx.stereoWidener.haasDelay, 0.005f, 0.035f, "%.3f sec");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Haas effect delay (10-30ms creates stereo perception)");
+            ImGui::SliderFloat("Mix##sw", &fx.stereoWidener.mix, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wet/dry mix");
+
+            // Quick presets for stereo widener
+            ImGui::Text("Presets:");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Subtle##sw")) {
+                fx.stereoWidener.width = 0.3f;
+                fx.stereoWidener.haasDelay = 0.010f;
+                fx.stereoWidener.mix = 0.4f;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Wide Pad##sw")) {
+                fx.stereoWidener.width = 0.7f;
+                fx.stereoWidener.haasDelay = 0.020f;
+                fx.stereoWidener.mix = 0.6f;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Ultra Wide##sw")) {
+                fx.stereoWidener.width = 1.0f;
+                fx.stereoWidener.haasDelay = 0.030f;
+                fx.stereoWidener.mix = 0.8f;
+            }
+            ImGui::Unindent();
+        }
+
+        // Tape Saturation (warm analog character - classic 80s tape sound)
+        ImGui::Checkbox("Tape Saturation", &fx.tapeSaturationEnabled);
+        if (fx.tapeSaturationEnabled) {
+            ImGui::Indent();
+            ImGui::SliderFloat("Drive##tape", &fx.tapeSaturation.drive, 1.0f, 3.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Saturation amount (1 = clean, 3 = heavily saturated)");
+            ImGui::SliderFloat("Warmth##tape", &fx.tapeSaturation.warmth, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("High frequency roll-off (higher = darker, warmer)");
+            ImGui::SliderFloat("Compression##tape", &fx.tapeSaturation.compression, 0.0f, 0.8f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Soft compression (tape limiting characteristic)");
+            ImGui::SliderFloat("Mix##tape", &fx.tapeSaturation.mix, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wet/dry mix");
+
+            // Quick presets for tape saturation
+            ImGui::Text("Presets:");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Subtle Warmth##tape")) {
+                fx.tapeSaturation.drive = 1.3f;
+                fx.tapeSaturation.warmth = 0.3f;
+                fx.tapeSaturation.compression = 0.2f;
+                fx.tapeSaturation.mix = 0.4f;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Cassette##tape")) {
+                fx.tapeSaturation.drive = 1.8f;
+                fx.tapeSaturation.warmth = 0.5f;
+                fx.tapeSaturation.compression = 0.4f;
+                fx.tapeSaturation.mix = 0.6f;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Hot Tape##tape")) {
+                fx.tapeSaturation.drive = 2.5f;
+                fx.tapeSaturation.warmth = 0.7f;
+                fx.tapeSaturation.compression = 0.6f;
+                fx.tapeSaturation.mix = 0.8f;
+            }
+            ImGui::Unindent();
+        }
+
         // Sidechain Compression (for that classic EDM pumping effect)
         ImGui::Separator();
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Sidechain Compression");

@@ -567,6 +567,178 @@ private:
 };
 
 // ============================================================================
+// Stereo Widener - Creates wide stereo image for lush synthwave pads
+// Uses Haas effect and mid/side processing
+// ============================================================================
+class StereoWidener {
+public:
+    static constexpr int MAX_DELAY_SAMPLES = 2205;  // 50ms at 44.1kHz
+
+    float width = 0.5f;              // 0.0 = mono, 1.0 = ultra wide
+    float haasDelay = 0.015f;        // Haas effect delay in seconds (10-30ms)
+    float mix = 0.5f;                // Dry/wet
+
+    StereoWidener() : m_buffer(MAX_DELAY_SAMPLES, 0.0f) {}
+
+    void setSampleRate(float sr) {
+        m_sampleRate = sr;
+    }
+
+    // Process mono input to stereo output
+    std::pair<float, float> process(float input) {
+        // Haas delay for one channel
+        int delaySamples = static_cast<int>(haasDelay * m_sampleRate);
+        delaySamples = std::min(delaySamples, MAX_DELAY_SAMPLES - 1);
+
+        int readIdx = (m_writeIdx - delaySamples + MAX_DELAY_SAMPLES) % MAX_DELAY_SAMPLES;
+        float delayed = m_buffer[readIdx];
+
+        m_buffer[m_writeIdx] = input;
+        m_writeIdx = (m_writeIdx + 1) % MAX_DELAY_SAMPLES;
+
+        // Mid/Side processing
+        float mid = input;
+        float side = (input - delayed) * width;
+
+        // Convert back to L/R
+        float left = mid + side;
+        float right = mid - side;
+
+        // Apply mix
+        float dryL = input;
+        float dryR = input;
+
+        return {
+            dryL * (1.0f - mix) + left * mix,
+            dryR * (1.0f - mix) + right * mix
+        };
+    }
+
+    void reset() {
+        std::fill(m_buffer.begin(), m_buffer.end(), 0.0f);
+        m_writeIdx = 0;
+    }
+
+private:
+    std::vector<float> m_buffer;
+    int m_writeIdx = 0;
+    float m_sampleRate = 44100.0f;
+};
+
+// ============================================================================
+// Tape Saturation - Warm analog character (classic 80s tape sound)
+// Models tape compression and harmonic saturation
+// ============================================================================
+class TapeSaturation {
+public:
+    float drive = 1.5f;              // 1.0 = clean, 3.0 = heavily saturated
+    float warmth = 0.5f;             // High frequency roll-off (0.0-1.0)
+    float compression = 0.3f;        // Soft compression amount
+    float mix = 0.5f;                // Dry/wet
+
+    void setSampleRate(float sr) {
+        m_sampleRate = sr;
+        // Update filter coefficient for warmth
+        float freq = 8000.0f - warmth * 5000.0f;  // 8kHz to 3kHz rolloff
+        m_filterCoef = 1.0f - std::exp(-TWO_PI * freq / sr);
+    }
+
+    float process(float input) {
+        // Tape compression (soft knee)
+        float compressed = input;
+        float threshold = 0.5f;
+        if (std::abs(compressed) > threshold) {
+            float over = std::abs(compressed) - threshold;
+            float reduction = over * compression;
+            compressed = (compressed > 0 ? 1 : -1) * (threshold + over - reduction);
+        }
+
+        // Apply drive
+        float driven = compressed * drive;
+
+        // Tape saturation curve (asymmetric for even harmonics)
+        float saturated;
+        if (driven >= 0) {
+            // Positive half: gentler saturation
+            saturated = std::tanh(driven * 0.9f);
+        } else {
+            // Negative half: slightly harder (adds even harmonics)
+            saturated = std::tanh(driven * 1.1f) * 0.95f;
+        }
+
+        // Add subtle 2nd harmonic (tape characteristic)
+        saturated += std::sin(input * PI) * 0.05f * drive;
+
+        // Warmth filter (lowpass)
+        m_filterState = m_filterState + m_filterCoef * (saturated - m_filterState);
+        float warm = m_filterState * warmth + saturated * (1.0f - warmth);
+
+        // Normalize output level
+        warm *= 0.7f / std::max(0.5f, drive * 0.5f);
+
+        return input * (1.0f - mix) + warm * mix;
+    }
+
+    void reset() {
+        m_filterState = 0.0f;
+    }
+
+private:
+    float m_sampleRate = 44100.0f;
+    float m_filterCoef = 0.1f;
+    float m_filterState = 0.0f;
+};
+
+// ============================================================================
+// Unison - Multiple detuned voices for thick synthwave sound
+// ============================================================================
+class Unison {
+public:
+    int voices = 5;                  // Number of unison voices (1-7)
+    float detune = 0.15f;            // Detune amount in semitones (0.0-0.5)
+    float stereoSpread = 0.7f;       // How wide to spread voices (0.0-1.0)
+
+    // Calculate detune multiplier for each voice
+    // Returns array of {leftGain, rightGain, pitchMultiplier} for each voice
+    struct VoiceParams {
+        float leftGain;
+        float rightGain;
+        float pitchMult;
+    };
+
+    std::array<VoiceParams, 7> getVoiceParams() const {
+        std::array<VoiceParams, 7> params = {};
+        int numVoices = std::min(7, std::max(1, voices));
+
+        for (int i = 0; i < numVoices; ++i) {
+            // Spread voices evenly from -detune to +detune
+            float detuneOffset;
+            float panPos;
+
+            if (numVoices == 1) {
+                detuneOffset = 0.0f;
+                panPos = 0.0f;
+            } else {
+                // Voice position from -1 to 1
+                float pos = (static_cast<float>(i) / (numVoices - 1)) * 2.0f - 1.0f;
+                detuneOffset = pos * detune;
+                panPos = pos * stereoSpread;
+            }
+
+            // Convert semitone detune to pitch multiplier
+            params[i].pitchMult = std::pow(2.0f, detuneOffset / 12.0f);
+
+            // Convert pan position to left/right gains (constant power)
+            float pan01 = (panPos + 1.0f) * 0.5f;  // Convert -1..1 to 0..1
+            params[i].leftGain = std::cos(pan01 * PI * 0.5f);
+            params[i].rightGain = std::sin(pan01 * PI * 0.5f);
+        }
+
+        return params;
+    }
+};
+
+// ============================================================================
 // Sidechain Compressor - Duck signal based on another source (e.g., kick)
 // ============================================================================
 class Sidechain {
@@ -642,6 +814,9 @@ struct EffectsChain {
     RingModulator ringMod;
     Sidechain sidechain;
     Reverb reverb;
+    StereoWidener stereoWidener;    // NEW: For wide synthwave pads
+    TapeSaturation tapeSaturation;  // NEW: For warm analog character
+    Unison unison;                  // NEW: For thick synthwave sounds
 
     // Enable flags
     bool bitcrusherEnabled = false;
@@ -654,6 +829,8 @@ struct EffectsChain {
     bool ringModEnabled = false;
     bool sidechainEnabled = false;
     bool reverbEnabled = false;
+    bool stereoWidenerEnabled = false;   // NEW
+    bool tapeSaturationEnabled = false;  // NEW
     int sidechainSource = -1;  // Source channel index (-1 = none)
 
     void setSampleRate(float sr) {
@@ -662,12 +839,15 @@ struct EffectsChain {
         chorus.setSampleRate(sr);
         sidechain.setSampleRate(sr);
         reverb.setSampleRate(sr);
+        stereoWidener.setSampleRate(sr);    // NEW
+        tapeSaturation.setSampleRate(sr);   // NEW
     }
 
     float process(float input, float time) {
         float output = input;
 
         // Process in order: saturation -> filter -> modulation -> time-based -> reverb
+        if (tapeSaturationEnabled) output = tapeSaturation.process(output);  // NEW: Tape before other effects
         if (bitcrusherEnabled) output = bitcrusher.process(output);
         if (distortionEnabled) output = distortion.process(output);
         if (filterEnabled)     output = filter.process(output);
@@ -677,14 +857,28 @@ struct EffectsChain {
         if (chorusEnabled)     output = chorus.process(output, time);
         if (delayEnabled)      output = delay.process(output);
         if (reverbEnabled)     output = reverb.process(output);
+        // Note: Stereo widener is processed in Sequencer for proper L/R handling
 
         return output;
+    }
+
+    // Process with stereo output (for stereo widener)
+    std::pair<float, float> processStereo(float input, float time) {
+        float mono = process(input, time);
+
+        if (stereoWidenerEnabled) {
+            return stereoWidener.process(mono);
+        }
+
+        return {mono, mono};
     }
 
     void reset() {
         bitcrusher.reset();
         filter.reset();
         delay.reset();
+        stereoWidener.reset();       // NEW
+        tapeSaturation.reset();      // NEW
         chorus.reset();
         phaser.reset();
         sidechain.reset();

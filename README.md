@@ -13,6 +13,35 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
+### What's New in v2.11.0
+
+**Stereo Widener & Tape Saturation - Classic 80s Sound:**
+New effects for authentic synthwave production:
+
+- **Stereo Widener** - Create that lush, wide 80s pad sound
+  - Uses Haas effect and mid/side processing
+  - Width control (0 = mono, 1 = ultra wide)
+  - Haas delay (10-35ms) for stereo perception
+  - Presets: Subtle, Wide Pad, Ultra Wide
+
+- **Tape Saturation** - Warm analog character
+  - Models tape compression and harmonic saturation
+  - Drive (1-3x), Warmth, Compression controls
+  - Adds even harmonics for vintage warmth
+  - Presets: Subtle Warmth, Cassette, Hot Tape
+
+- **Unison Helper** - For thick synthwave sounds
+  - Multiple detuned voice calculations
+  - Stereo spread parameter
+  - Used internally by synth presets
+
+**How to Use:**
+1. Open **Channel Editor** (click channel in Mixer)
+2. Scroll to Effects section
+3. Enable **Stereo Widener** for wide pads
+4. Enable **Tape Saturation** for analog warmth
+5. Use presets or dial in custom settings
+
 ### What's New in v2.10.0
 
 **Reverb Effect & Genre Effect Presets:**
