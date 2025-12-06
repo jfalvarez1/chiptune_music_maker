@@ -317,11 +317,22 @@ private:
             m_previewPattern < static_cast<int>(m_project->patterns.size())) {
 
             const auto& pattern = m_project->patterns[m_previewPattern];
-            float loopLength = static_cast<float>(pattern.length);
 
-            // Wrap beat position for pattern preview
-            float localFrom = std::fmod(fromBeat, loopLength);
-            float localTo = std::fmod(toBeat, loopLength);
+            // Use actual note extent for loop length, not fixed pattern.length
+            // This ensures notes placed beyond the original pattern boundary still play
+            float actualNoteExtent = getPatternEndTime();
+            float loopLength = (actualNoteExtent > 0.0f) ? actualNoteExtent : static_cast<float>(pattern.length);
+
+            // Wrap beat position for pattern preview (only when looping)
+            float localFrom, localTo;
+            if (m_state.loop && loopLength > 0.0f) {
+                localFrom = std::fmod(fromBeat, loopLength);
+                localTo = std::fmod(toBeat, loopLength);
+            } else {
+                // Non-looping: use raw beat positions so notes beyond original length play
+                localFrom = fromBeat;
+                localTo = toBeat;
+            }
 
             // Handle wrap-around
             if (localTo < localFrom) {

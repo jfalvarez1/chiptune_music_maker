@@ -13,6 +13,61 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
+### What's New in v2.9.0
+
+**Tools Panel - 9 Synthwave Production Tools:**
+A comprehensive suite of music creation tools in a dedicated panel:
+
+1. **Drum Pattern Generator** - Create genre-specific drum patterns instantly
+   - 6 genre presets: Synthwave, Outrun, Darksynth, Italo Disco, Techno, Retrowave
+   - Density slider (25-100%) for pattern fullness
+   - Variation control (0-100%) for fills and variations
+   - Auto-generates kick, snare, and hi-hat patterns
+
+2. **Arpeggiator** - Convert selected notes into arpeggiated patterns
+   - Modes: Up, Down, Up-Down, Random
+   - Rate control: 8th, 16th, 32nd notes
+   - Gate control (25-100%) for note lengths
+   - Transforms chords into flowing sequences
+
+3. **Bass Pattern Generator** - Create basslines automatically
+   - Styles: Octave Pulse, Root+Fifth, Walking, Arp
+   - Root note selection (C through B)
+   - Pattern length control (1-8 bars)
+   - Generates rhythmic bass patterns
+
+4. **Scale Lock + Highlighting** - Stay in key effortlessly
+   - 7 scales: Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian
+   - Root note selection for any key
+   - Highlight scale notes in piano roll
+   - Snap-to-scale for perfect pitch
+
+5. **Velocity Curve Painter** - Shape dynamics across notes
+   - Curve types: Linear, Exponential, Logarithmic, S-Curve
+   - Start/End velocity control
+   - Apply to selected notes for crescendos/decrescendos
+
+6. **Fill Generator** - Add drum fills at pattern end
+   - Fill styles: Snare Roll, Tom Cascade, Cymbal Crash, Build-Up
+   - Position control (last 1-4 beats)
+   - Density control (Medium, Dense, Sparse)
+
+7. **Pattern Variation** - Create variations of existing patterns
+   - Variation types: Timing, Velocity, Pitch, All
+   - Amount control for subtle or dramatic changes
+   - Preserves musical structure while adding interest
+
+8. **Quick Layer** - Layer sounds for thicker textures
+   - Octave offset (-2 to +2 octaves)
+   - Detune amount for chorus effects
+   - Velocity scaling for layered dynamics
+   - Duplicate selected notes with modifications
+
+9. **Humanize Selected** - Add natural feel to mechanical patterns
+   - Timing variation (0-50ms)
+   - Velocity variation (0-30%)
+   - Makes robotic patterns feel more human
+
 ### What's New in v2.8.2
 
 **Chord Presets (45 chords across 8 genres!):**
@@ -210,11 +265,17 @@ Pre-made track templates to get you started:
 - **Swing**: Shift off-beat notes for groove (0-100%, 8th/16th/32nd grid)
 - **Humanize**: Random timing and velocity variation for natural feel
 
-### Tools
-- **Hi-Hat Roll Generator**: Quick fills and rolls with:
-  - Density options: 8th, 16th, 32nd, 64th notes
-  - Velocity modes: Flat, Crescendo, Decrescendo
-  - Hi-hat types: Closed, Open, Pedal
+### Tools Panel (9 Production Tools!)
+- **Drum Pattern Generator**: 6 genre presets (Synthwave, Outrun, Darksynth, Italo Disco, Techno, Retrowave)
+- **Arpeggiator**: Convert chords to arpeggiated patterns (Up, Down, Up-Down, Random)
+- **Bass Pattern Generator**: 4 styles (Octave Pulse, Root+Fifth, Walking, Arp)
+- **Scale Lock + Highlighting**: 7 scales with piano roll highlighting and snap-to-scale
+- **Velocity Curve Painter**: 4 curve types (Linear, Exponential, Logarithmic, S-Curve)
+- **Fill Generator**: 4 fill styles (Snare Roll, Tom Cascade, Cymbal Crash, Build-Up)
+- **Pattern Variation**: Randomize timing, velocity, or pitch for variations
+- **Quick Layer**: Layer sounds with octave offset and detuning
+- **Humanize Selected**: Add timing and velocity variation for natural feel
+- **Hi-Hat Roll Generator**: Quick fills and rolls with density and velocity control
 
 ### Pattern Arrangement
 - **Timeline view**: Arrange multiple patterns into a full song
@@ -442,6 +503,7 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 - [x] Proper initial window layout (v2.7.0)
 - [x] Chord presets (45 chords across 8 genres: Pop, Jazz, Rock, EDM, Hip Hop, Reggaeton, Synthwave, Chiptune)
 - [x] Pattern deletion (Delete key + button)
+- [x] Tools Panel with 9 production tools (Drum Pattern Generator, Arpeggiator, Bass Pattern Generator, Scale Lock, Velocity Curve, Fill Generator, Pattern Variation, Quick Layer, Humanize)
 - [ ] FLAC export
 - [ ] VST plugin version
 - [ ] MIDI import/export

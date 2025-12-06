@@ -667,6 +667,7 @@
             <li><a href="#shortcuts" data-section="Shortcuts"></a></li>
             <li><a href="#advanced" data-section="Advanced"></a></li>
             <li><a href="#chiptune-guide" data-section="Chiptune Guide"></a></li>
+            <li><a href="#tools" data-section="Tools Panel"></a></li>
         </ul>
     </nav>
 
@@ -3115,11 +3116,239 @@ Channel 2: Pulse 50% - Same melody, or harmony
             </div>
         </section>
 
+        <!-- Tools Panel -->
+        <section id="tools">
+            <h2>Tools Panel - Production Tools</h2>
+
+            <p>The Tools Panel provides 9 powerful production tools to speed up your music creation workflow.
+            Access it from the Views menu or use it alongside the piano roll for rapid composition.</p>
+
+            <h3>1. Drum Pattern Generator</h3>
+            <p>Create genre-specific drum patterns instantly with a single click.</p>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Genre Presets</h4>
+                    <p>Choose from 6 classic styles:</p>
+                    <ul>
+                        <li><strong>Synthwave</strong> - 80s electronic drums</li>
+                        <li><strong>Outrun</strong> - Driving chase music</li>
+                        <li><strong>Darksynth</strong> - Heavy, aggressive</li>
+                        <li><strong>Italo Disco</strong> - Euro dance beats</li>
+                        <li><strong>Techno</strong> - Four-on-the-floor</li>
+                        <li><strong>Retrowave</strong> - Classic 80s pop</li>
+                    </ul>
+                </div>
+                <div class="param-card">
+                    <h4>Controls</h4>
+                    <p><strong>Density (25-100%):</strong> How full the pattern is - lower for minimal, higher for busy</p>
+                    <p><strong>Variation (0-100%):</strong> Adds fills and ghost notes for interest</p>
+                    <p>Click "Generate" to create a new pattern. Clears existing notes!</p>
+                </div>
+            </div>
+
+            <h3>2. Arpeggiator</h3>
+            <p>Transform chords or selected notes into flowing arpeggiated sequences.</p>
+            <table>
+                <tr>
+                    <th>Mode</th>
+                    <th>Description</th>
+                    <th>Best For</th>
+                </tr>
+                <tr>
+                    <td>Up</td>
+                    <td>Notes play from lowest to highest</td>
+                    <td>Rising energy, classic 80s</td>
+                </tr>
+                <tr>
+                    <td>Down</td>
+                    <td>Notes play from highest to lowest</td>
+                    <td>Descending lines, dramatic</td>
+                </tr>
+                <tr>
+                    <td>Up-Down</td>
+                    <td>Notes alternate up then down</td>
+                    <td>Fluid, continuous motion</td>
+                </tr>
+                <tr>
+                    <td>Random</td>
+                    <td>Notes play in random order</td>
+                    <td>Glitchy, experimental</td>
+                </tr>
+            </table>
+            <p><strong>Rate:</strong> 8th, 16th, or 32nd notes. <strong>Gate:</strong> Note length (25-100% of step).</p>
+            <div class="tip-box">
+                <strong>How to use:</strong> First select notes in the piano roll (use Select mode),
+                then click "Apply" in the Arpeggiator section. Selected notes will be converted to an arpeggio pattern.
+            </div>
+
+            <h3>3. Bass Pattern Generator</h3>
+            <p>Automatically create bass lines in different styles.</p>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Octave Pulse</h4>
+                    <p>Alternates between root and octave above. Classic synthwave bass sound.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Root+Fifth</h4>
+                    <p>Power chord movement between root and fifth. Strong, punchy.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Walking</h4>
+                    <p>Moves through scale tones. Jazz/funk influenced.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Arp</h4>
+                    <p>Arpeggiated bass pattern. Energetic, driving.</p>
+                </div>
+            </div>
+            <p>Select the <strong>root note</strong> (C through B) and <strong>pattern length</strong> (1-8 bars), then generate.</p>
+
+            <h3>4. Scale Lock + Highlighting</h3>
+            <p>Stay in key effortlessly! This tool highlights scale notes in the piano roll and can snap your notes to the scale.</p>
+            <table>
+                <tr>
+                    <th>Scale</th>
+                    <th>Intervals</th>
+                    <th>Character</th>
+                </tr>
+                <tr>
+                    <td>Major</td>
+                    <td>W-W-H-W-W-W-H</td>
+                    <td>Happy, bright, triumphant</td>
+                </tr>
+                <tr>
+                    <td>Minor</td>
+                    <td>W-H-W-W-H-W-W</td>
+                    <td>Sad, dark, mysterious</td>
+                </tr>
+                <tr>
+                    <td>Dorian</td>
+                    <td>W-H-W-W-W-H-W</td>
+                    <td>Minor but hopeful, jazzy</td>
+                </tr>
+                <tr>
+                    <td>Phrygian</td>
+                    <td>H-W-W-W-H-W-W</td>
+                    <td>Spanish, exotic, tense</td>
+                </tr>
+                <tr>
+                    <td>Lydian</td>
+                    <td>W-W-W-H-W-W-H</td>
+                    <td>Dreamy, floating, ethereal</td>
+                </tr>
+                <tr>
+                    <td>Mixolydian</td>
+                    <td>W-W-H-W-W-H-W</td>
+                    <td>Rock, bluesy major</td>
+                </tr>
+                <tr>
+                    <td>Locrian</td>
+                    <td>H-W-W-H-W-W-W</td>
+                    <td>Unstable, rarely used</td>
+                </tr>
+            </table>
+            <p><strong>Highlight:</strong> Shows scale notes visually in piano roll. <strong>Snap-to-Scale:</strong> Automatically corrects notes to nearest scale tone.</p>
+
+            <h3>5. Velocity Curve Painter</h3>
+            <p>Shape dynamics across selected notes for crescendos, decrescendos, and dynamic expression.</p>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Linear</h4>
+                    <p>Straight line from start to end velocity. Simple, predictable.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Exponential</h4>
+                    <p>Slow start, rapid increase at end. Dramatic builds.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Logarithmic</h4>
+                    <p>Fast start, gradual end. Quick attack, soft tail.</p>
+                </div>
+                <div class="param-card">
+                    <h4>S-Curve</h4>
+                    <p>Slow start and end, fast middle. Smooth, natural.</p>
+                </div>
+            </div>
+            <p>Set <strong>Start Velocity</strong> and <strong>End Velocity</strong> (0.0-1.0), select notes, then click "Apply".</p>
+
+            <h3>6. Fill Generator</h3>
+            <p>Add drum fills at the end of patterns for transitions and builds.</p>
+            <table>
+                <tr>
+                    <th>Style</th>
+                    <th>Description</th>
+                </tr>
+                <tr>
+                    <td>Snare Roll</td>
+                    <td>Rapid snare hits building to climax</td>
+                </tr>
+                <tr>
+                    <td>Tom Cascade</td>
+                    <td>Descending toms (high to low)</td>
+                </tr>
+                <tr>
+                    <td>Cymbal Crash</td>
+                    <td>Building hi-hats with crash</td>
+                </tr>
+                <tr>
+                    <td>Build-Up</td>
+                    <td>Combined snare and hi-hat ramp</td>
+                </tr>
+            </table>
+            <p><strong>Position:</strong> Last 1-4 beats of pattern. <strong>Density:</strong> Sparse, Medium, or Dense.</p>
+
+            <h3>7. Pattern Variation</h3>
+            <p>Create variations of existing patterns while preserving the musical structure.</p>
+            <ul>
+                <li><strong>Timing:</strong> Adds subtle timing shifts for groove</li>
+                <li><strong>Velocity:</strong> Randomizes note volumes for dynamics</li>
+                <li><strong>Pitch:</strong> Shifts some notes up/down within scale</li>
+                <li><strong>All:</strong> Combines all variation types</li>
+            </ul>
+            <p>Use the <strong>Amount</strong> slider (0-100%) to control how dramatic the changes are.</p>
+
+            <h3>8. Quick Layer</h3>
+            <p>Layer sounds for thicker textures by duplicating selected notes with modifications.</p>
+            <div class="param-grid">
+                <div class="param-card">
+                    <h4>Octave Offset</h4>
+                    <p>-2 to +2 octaves. Add sub-bass (-1, -2) or sparkle (+1, +2) layers.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Detune</h4>
+                    <p>0-50 cents. Slight detuning creates chorus-like thickness.</p>
+                </div>
+                <div class="param-card">
+                    <h4>Velocity Scale</h4>
+                    <p>50-150%. Quieter layers (50-80%) for subtle doubling.</p>
+                </div>
+            </div>
+            <div class="tip-box">
+                Select notes first, then click "Layer" to create duplicates with the specified modifications.
+                Great for making leads sound huge or adding sub-bass!
+            </div>
+
+            <h3>9. Humanize Selected</h3>
+            <p>Add natural feel to mechanical, quantized patterns by introducing subtle random variations.</p>
+            <ul>
+                <li><strong>Timing Variation (0-50ms):</strong> Shifts note positions slightly earlier or later</li>
+                <li><strong>Velocity Variation (0-30%):</strong> Randomizes note volumes up or down</li>
+            </ul>
+            <p>Start with small values (5-10ms timing, 5-10% velocity) for subtle humanization.
+            Higher values create a looser, more "live" feel.</p>
+
+            <div class="warning-box">
+                <strong>Selection-Based Tools:</strong> Arpeggiator, Velocity Curve, Quick Layer, and Humanize
+                all require you to select notes first (use Select mode, then drag to select).
+                Without a selection, these tools won't do anything!
+            </div>
+        </section>
+
         <footer>
-            <p>CHIPTUNE TRACKER v2.8.2</p>
+            <p>CHIPTUNE TRACKER v2.9.0</p>
             <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
             <p>7 Oscillators | 18 Synths | 45 Chord Presets | 26 Drums | 8 Themes | 7 Sample Track Genres</p>
-            <p>Swing/Humanize | Hi-Hat Roll Generator | Sidechain Compression | NES Duty Cycle/Sweep/Tremolo</p>
+            <p>9 Production Tools | Scale Lock | Arpeggiator | Pattern Generator | Velocity Curve | Humanize</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>

@@ -59,14 +59,14 @@ static float g_SelectedDurationMult = 1.0f;  // Duration multiplier for drums (0
 // Palette category expansion state
 static bool g_PaletteExpanded_Oscillators = false;
 static bool g_PaletteExpanded_Synths = false;
-static bool g_PaletteExpanded_Kicks = true;
-static bool g_PaletteExpanded_Snares = true;
-static bool g_PaletteExpanded_HiHats = true;
+static bool g_PaletteExpanded_Kicks = false;
+static bool g_PaletteExpanded_Snares = false;
+static bool g_PaletteExpanded_HiHats = false;
 static bool g_PaletteExpanded_Toms = false;
 static bool g_PaletteExpanded_Cymbals = false;
 static bool g_PaletteExpanded_Percussion = false;
 static bool g_PaletteExpanded_Reggaeton = false;
-static bool g_PaletteExpanded_Patterns = true;
+static bool g_PaletteExpanded_Patterns = false;
 
 // ============================================================================
 // Pattern Templates - Pre-made drum patterns for different genres
@@ -306,7 +306,7 @@ static constexpr int g_NumChordPresets = sizeof(g_ChordPresets) / sizeof(g_Chord
 static int g_SelectedChordIndex = -1;  // -1 = no chord selected
 
 // Chord palette expansion state by genre
-static bool g_PaletteExpanded_Chords_Pop = true;
+static bool g_PaletteExpanded_Chords_Pop = false;
 static bool g_PaletteExpanded_Chords_Jazz = false;
 static bool g_PaletteExpanded_Chords_Rock = false;
 static bool g_PaletteExpanded_Chords_EDM = false;
@@ -1366,8 +1366,8 @@ static bool g_IsSampleTrackPreviewing = false;
 static int g_PreviewSampleTrackIndex = -1;
 
 // Palette expansion state for sample tracks
-static bool g_PaletteExpanded_SampleTracks = true;
-static bool g_PaletteExpanded_SynthwaveTracks = true;
+static bool g_PaletteExpanded_SampleTracks = false;
+static bool g_PaletteExpanded_SynthwaveTracks = false;
 static bool g_PaletteExpanded_TechnoTracks = false;
 static bool g_PaletteExpanded_ChiptuneTracks = false;
 static bool g_PaletteExpanded_HipHopTracks = false;
@@ -4585,14 +4585,29 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         // Check if this is a drum (drums can't be resized)
                         bool isDrumNote = isDrumType(pattern.notes[noteUnderCursor].oscillatorType);
 
-                        if (onResizeHandle && !isDrumNote && !isPartOfMultiSelection) {
+                        if (onResizeHandle && !isDrumNote) {
                             // Save state for undo before resizing (drums can't resize)
                             g_UndoHistory.saveState(pattern, ui.selectedPattern);
-                            ui.selectedNoteIndex = noteUnderCursor;
-                            // Start resizing immediately (no threshold for resize)
-                            ui.isResizingNote = true;
-                            ui.dragStartDuration = pattern.notes[noteUnderCursor].duration;
-                            ui.dragStartBeat = hoveredBeat;
+
+                            if (isPartOfMultiSelection && ui.selectedNoteIndices.size() > 1) {
+                                // Start multi-resize: resize all selected notes
+                                ui.isResizingMultiple = true;
+                                ui.isResizingNote = false;
+                                ui.dragStartBeat = hoveredBeat;
+
+                                // Store original durations of all selected notes
+                                ui.multiResizeStartDurations.clear();
+                                for (int idx : ui.selectedNoteIndices) {
+                                    ui.multiResizeStartDurations.push_back(pattern.notes[idx].duration);
+                                }
+                            } else {
+                                // Single note resize
+                                ui.selectedNoteIndex = noteUnderCursor;
+                                ui.isResizingNote = true;
+                                ui.isResizingMultiple = false;
+                                ui.dragStartDuration = pattern.notes[noteUnderCursor].duration;
+                                ui.dragStartBeat = hoveredBeat;
+                            }
                         } else if (!onResizeHandle) {
                             // Store mouse position for drag threshold check
                             ImVec2 mousePos = ImGui::GetMousePos();
@@ -4785,6 +4800,23 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                     note.duration = std::max(0.0625f, std::floor(newDuration * 4.0f) / 4.0f);
                 }
             }
+            // Handle multi-note resize
+            if (ui.isResizingMultiple && !ui.selectedNoteIndices.empty()) {
+                float deltaBeats = hoveredBeat - ui.dragStartBeat;
+
+                // Apply delta to all selected notes (additive resize)
+                for (size_t i = 0; i < ui.selectedNoteIndices.size() && i < ui.multiResizeStartDurations.size(); ++i) {
+                    int idx = ui.selectedNoteIndices[i];
+                    if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                        Note& note = pattern.notes[idx];
+                        // Skip drums - they have fixed duration
+                        if (!isDrumType(note.oscillatorType)) {
+                            float newDuration = ui.multiResizeStartDurations[i] + deltaBeats;
+                            note.duration = std::max(0.0625f, std::floor(newDuration * 4.0f) / 4.0f);
+                        }
+                    }
+                }
+            }
             // Update box selection end point
             if (ui.isBoxSelecting) {
                 ui.boxSelectEndX = hoveredBeat;
@@ -4797,10 +4829,12 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             ui.isDraggingNote = false;
             ui.isDraggingMultiple = false;
             ui.isResizingNote = false;
+            ui.isResizingMultiple = false;
             ui.isPendingDrag = false;
             ui.isPendingMultiDrag = false;
             ui.pendingDragNoteIndex = -1;
             ui.multiDragOffsets.clear();
+            ui.multiResizeStartDurations.clear();
 
             // Complete box selection - find all notes in the box
             if (ui.isBoxSelecting) {
@@ -4855,7 +4889,9 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             ui.isDraggingNote = false;
             ui.isDraggingMultiple = false;
             ui.isResizingNote = false;
+            ui.isResizingMultiple = false;
             ui.multiDragOffsets.clear();
+            ui.multiResizeStartDurations.clear();
         }
     }
 
@@ -4875,6 +4911,109 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             // Wheel = Vertical scroll
             ui.scrollY = std::clamp(ui.scrollY - wheel * 30.0f, 0.0f, gridHeight - canvasSize.y);
         }
+    }
+
+    // Middle mouse button panning
+    static bool isMiddleMousePanning = false;
+    static ImVec2 panStartMousePos;
+    static float panStartScrollX = 0.0f;
+    static float panStartScrollY = 0.0f;
+
+    if (ImGui::IsWindowHovered() || isMiddleMousePanning) {
+        if (ImGui::IsMouseClicked(2)) {  // Middle mouse button
+            isMiddleMousePanning = true;
+            panStartMousePos = ImGui::GetMousePos();
+            panStartScrollX = ui.scrollX;
+            panStartScrollY = ui.scrollY;
+        }
+    }
+
+    if (isMiddleMousePanning) {
+        if (ImGui::IsMouseDown(2)) {
+            ImVec2 currentMousePos = ImGui::GetMousePos();
+            float deltaX = panStartMousePos.x - currentMousePos.x;
+            float deltaY = panStartMousePos.y - currentMousePos.y;
+
+            ui.scrollX = std::max(0.0f, panStartScrollX + deltaX);
+            ui.scrollY = std::clamp(panStartScrollY + deltaY, 0.0f, std::max(0.0f, gridHeight - canvasSize.y));
+
+            // Change cursor to indicate panning
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        } else {
+            isMiddleMousePanning = false;
+        }
+    }
+
+    // Clamp scrollX to valid range
+    float maxScrollX = std::max(0.0f, gridWidth - (canvasSize.x - keyWidth));
+    ui.scrollX = std::clamp(ui.scrollX, 0.0f, maxScrollX);
+
+    // ========================================================================
+    // Horizontal scrollbar
+    // ========================================================================
+    float scrollbarHeight = 14.0f;
+    float scrollableWidth = canvasSize.x - keyWidth;
+    float contentWidth = gridWidth;
+
+    if (contentWidth > scrollableWidth) {
+        ImGui::SetCursorScreenPos(ImVec2(canvasPos.x + keyWidth, canvasPos.y + canvasSize.y - scrollbarHeight));
+
+        // Calculate scrollbar thumb size and position
+        float thumbRatio = scrollableWidth / contentWidth;
+        float thumbWidth = std::max(30.0f, scrollableWidth * thumbRatio);
+        float scrollRatio = ui.scrollX / maxScrollX;
+        float thumbX = scrollRatio * (scrollableWidth - thumbWidth);
+
+        // Draw scrollbar background
+        drawList->AddRectFilled(
+            ImVec2(canvasPos.x + keyWidth, canvasPos.y + canvasSize.y - scrollbarHeight),
+            ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
+            IM_COL32(30, 30, 35, 255));
+
+        // Draw scrollbar thumb
+        ImVec2 thumbMin(canvasPos.x + keyWidth + thumbX, canvasPos.y + canvasSize.y - scrollbarHeight + 2);
+        ImVec2 thumbMax(canvasPos.x + keyWidth + thumbX + thumbWidth, canvasPos.y + canvasSize.y - 2);
+
+        // Check if mouse is hovering over thumb
+        ImVec2 mousePos = ImGui::GetMousePos();
+        bool thumbHovered = mousePos.x >= thumbMin.x && mousePos.x <= thumbMax.x &&
+                            mousePos.y >= thumbMin.y && mousePos.y <= thumbMax.y;
+
+        static bool isDraggingScrollbar = false;
+        static float dragStartX = 0.0f;
+        static float dragStartScrollX = 0.0f;
+
+        // Handle scrollbar dragging
+        if (thumbHovered && ImGui::IsMouseClicked(0)) {
+            isDraggingScrollbar = true;
+            dragStartX = mousePos.x;
+            dragStartScrollX = ui.scrollX;
+        }
+
+        if (isDraggingScrollbar) {
+            if (ImGui::IsMouseDown(0)) {
+                float deltaX = mousePos.x - dragStartX;
+                float scrollDelta = (deltaX / (scrollableWidth - thumbWidth)) * maxScrollX;
+                ui.scrollX = std::clamp(dragStartScrollX + scrollDelta, 0.0f, maxScrollX);
+            } else {
+                isDraggingScrollbar = false;
+            }
+        }
+
+        // Click on scrollbar track to jump
+        if (!isDraggingScrollbar && !thumbHovered &&
+            mousePos.x >= canvasPos.x + keyWidth && mousePos.x <= canvasPos.x + canvasSize.x &&
+            mousePos.y >= canvasPos.y + canvasSize.y - scrollbarHeight && mousePos.y <= canvasPos.y + canvasSize.y) {
+            if (ImGui::IsMouseClicked(0)) {
+                float clickRatio = (mousePos.x - canvasPos.x - keyWidth - thumbWidth / 2) / (scrollableWidth - thumbWidth);
+                ui.scrollX = std::clamp(clickRatio * maxScrollX, 0.0f, maxScrollX);
+            }
+        }
+
+        // Draw thumb with hover/active state
+        ImU32 thumbColor = isDraggingScrollbar ? IM_COL32(120, 140, 180, 255) :
+                           (thumbHovered ? IM_COL32(100, 120, 160, 255) : IM_COL32(70, 80, 100, 255));
+        drawList->AddRectFilled(thumbMin, thumbMax, thumbColor, 4.0f);
     }
 
     ImGui::End();
@@ -5658,7 +5797,22 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
 
     Pattern& pattern = project.patterns[ui.selectedPattern];
 
-    if (ui.selectedNoteIndex < 0 || ui.selectedNoteIndex >= static_cast<int>(pattern.notes.size())) {
+    // Check for multi-selection
+    bool hasMultiSelection = !ui.selectedNoteIndices.empty() && ui.selectedNoteIndices.size() > 1;
+    bool hasSingleSelection = ui.selectedNoteIndex >= 0 && ui.selectedNoteIndex < static_cast<int>(pattern.notes.size());
+
+    // Validate multi-selection indices
+    std::vector<int> validIndices;
+    if (hasMultiSelection) {
+        for (int idx : ui.selectedNoteIndices) {
+            if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                validIndices.push_back(idx);
+            }
+        }
+        hasMultiSelection = validIndices.size() > 1;
+    }
+
+    if (!hasMultiSelection && !hasSingleSelection) {
         ImGui::TextDisabled("No note selected");
         ImGui::Separator();
         ImGui::TextWrapped("Select a note in the Piano Roll to edit its properties.");
@@ -5667,6 +5821,176 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
         return;
     }
 
+    // ==========================================================================
+    // MULTI-NOTE EDITING MODE
+    // ==========================================================================
+    if (hasMultiSelection) {
+        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.8f, 1.0f), "Editing %d Notes", static_cast<int>(validIndices.size()));
+        ImGui::Separator();
+
+        // Helper to check if values are mixed
+        auto checkMixed = [&](auto getter) {
+            auto firstVal = getter(pattern.notes[validIndices[0]]);
+            for (size_t i = 1; i < validIndices.size(); ++i) {
+                if (getter(pattern.notes[validIndices[i]]) != firstVal) return true;
+            }
+            return false;
+        };
+
+        // Helper to apply value to all selected notes
+        auto applyToAll = [&](auto setter) {
+            for (int idx : validIndices) {
+                setter(pattern.notes[idx]);
+            }
+        };
+
+        // Use first note as reference
+        Note& refNote = pattern.notes[validIndices[0]];
+
+        // Duration editing (absolute)
+        if (ImGui::CollapsingHeader("Duration", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool durationMixed = checkMixed([](const Note& n) { return n.duration; });
+
+            float displayDuration = refNote.duration;
+            ImGui::SetNextItemWidth(120);
+            if (durationMixed) {
+                ImGui::TextDisabled("(mixed values)");
+            }
+            if (ImGui::DragFloat("Duration##multi", &displayDuration, 0.0625f, 0.0625f, 16.0f, "%.3f")) {
+                applyToAll([displayDuration](Note& n) { n.duration = std::max(0.0625f, displayDuration); });
+            }
+
+            ImGui::Text("Quick:");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1/16##md")) applyToAll([](Note& n) { n.duration = 0.0625f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1/8##md")) applyToAll([](Note& n) { n.duration = 0.125f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1/4##md")) applyToAll([](Note& n) { n.duration = 0.25f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1/2##md")) applyToAll([](Note& n) { n.duration = 0.5f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1##md")) applyToAll([](Note& n) { n.duration = 1.0f; });
+        }
+
+        // Velocity editing
+        if (ImGui::CollapsingHeader("Velocity", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool velocityMixed = checkMixed([](const Note& n) { return n.velocity; });
+
+            float displayVelocity = refNote.velocity * 100.0f;
+            ImGui::SetNextItemWidth(200);
+            if (velocityMixed) {
+                ImGui::TextDisabled("(mixed values)");
+            }
+            if (ImGui::SliderFloat("##velocity_multi", &displayVelocity, 0.0f, 100.0f, "%.0f%%")) {
+                float newVel = displayVelocity / 100.0f;
+                applyToAll([newVel](Note& n) { n.velocity = newVel; });
+            }
+
+            if (ImGui::SmallButton("25%##mv")) applyToAll([](Note& n) { n.velocity = 0.25f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("50%##mv")) applyToAll([](Note& n) { n.velocity = 0.5f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("75%##mv")) applyToAll([](Note& n) { n.velocity = 0.75f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("100%##mv")) applyToAll([](Note& n) { n.velocity = 1.0f; });
+        }
+
+        // Fade editing
+        if (ImGui::CollapsingHeader("Fade", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Fade In:");
+            float displayFadeIn = refNote.fadeIn;
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::SliderFloat("##fadein_multi", &displayFadeIn, 0.0f, 1.0f, "%.3f beats")) {
+                applyToAll([displayFadeIn](Note& n) { n.fadeIn = std::min(displayFadeIn, n.duration * 0.5f); });
+            }
+            if (ImGui::SmallButton("0##mfi")) applyToAll([](Note& n) { n.fadeIn = 0.0f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1/16##mfi")) applyToAll([](Note& n) { n.fadeIn = std::min(0.0625f, n.duration * 0.5f); });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1/8##mfi")) applyToAll([](Note& n) { n.fadeIn = std::min(0.125f, n.duration * 0.5f); });
+
+            ImGui::Spacing();
+
+            ImGui::Text("Fade Out:");
+            float displayFadeOut = refNote.fadeOut;
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::SliderFloat("##fadeout_multi", &displayFadeOut, 0.0f, 1.0f, "%.3f beats")) {
+                applyToAll([displayFadeOut](Note& n) { n.fadeOut = std::min(displayFadeOut, n.duration * 0.5f); });
+            }
+            if (ImGui::SmallButton("0##mfo")) applyToAll([](Note& n) { n.fadeOut = 0.0f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1/16##mfo")) applyToAll([](Note& n) { n.fadeOut = std::min(0.0625f, n.duration * 0.5f); });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("1/8##mfo")) applyToAll([](Note& n) { n.fadeOut = std::min(0.125f, n.duration * 0.5f); });
+        }
+
+        // Effects editing
+        if (ImGui::CollapsingHeader("Note Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Vibrato:");
+            float displayVibrato = refNote.vibrato;
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::SliderFloat("##vibrato_multi", &displayVibrato, 0.0f, 1.0f, "%.2f")) {
+                applyToAll([displayVibrato](Note& n) { n.vibrato = displayVibrato; });
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("0##mvib")) applyToAll([](Note& n) { n.vibrato = 0.0f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("0.3##mvib")) applyToAll([](Note& n) { n.vibrato = 0.3f; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("0.5##mvib")) applyToAll([](Note& n) { n.vibrato = 0.5f; });
+
+            ImGui::Text("Arpeggio presets:");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Off##marp")) applyToAll([](Note& n) { n.arpeggio = 0x00; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Maj##marp")) applyToAll([](Note& n) { n.arpeggio = 0x47; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Min##marp")) applyToAll([](Note& n) { n.arpeggio = 0x37; });
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Oct##marp")) applyToAll([](Note& n) { n.arpeggio = 0xC0; });
+
+            ImGui::Text("Slide:");
+            float displaySlide = refNote.slide;
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::SliderFloat("##slide_multi", &displaySlide, -12.0f, 12.0f, "%.1f st")) {
+                applyToAll([displaySlide](Note& n) { n.slide = displaySlide; });
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("0##mslide")) applyToAll([](Note& n) { n.slide = 0.0f; });
+
+            ImGui::Separator();
+            if (ImGui::Button("Reset All Effects##multi")) {
+                applyToAll([](Note& n) {
+                    n.vibrato = 0.0f;
+                    n.slide = 0.0f;
+                    n.arpeggio = 0;
+                });
+            }
+        }
+
+        ImGui::Separator();
+
+        // Actions for multi-selection
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::Button("Delete Selected Notes")) {
+            // Sort indices in descending order for safe deletion
+            std::sort(validIndices.begin(), validIndices.end(), std::greater<int>());
+            for (int idx : validIndices) {
+                pattern.notes.erase(pattern.notes.begin() + idx);
+            }
+            ui.selectedNoteIndex = -1;
+            ui.selectedNoteIndices.clear();
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::End();
+        return;
+    }
+
+    // ==========================================================================
+    // SINGLE NOTE EDITING MODE (original behavior)
+    // ==========================================================================
     Note& note = pattern.notes[ui.selectedNoteIndex];
 
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Editing Note %d", ui.selectedNoteIndex);
@@ -6575,6 +6899,7 @@ inline void DrawDrumVariant(ImDrawList* drawList, int oscIndex, const char* name
         } else {
             g_SelectedPaletteItem = oscIndex;
             g_SelectedDurationMult = durationMult;
+            g_SelectedChordIndex = -1;  // Clear chord selection when selecting a drum
             ui.pianoRollMode = PianoRollMode::Draw;
             project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(oscIndex);
             seq.updateChannelConfigs();
@@ -6723,6 +7048,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
                 } else {
                     g_SelectedPaletteItem = i;
                     g_SelectedDurationMult = 1.0f;
+                    g_SelectedChordIndex = -1;  // Clear chord selection when selecting an oscillator
                     ui.pianoRollMode = PianoRollMode::Draw;
                     project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
                     seq.updateChannelConfigs();
@@ -6770,6 +7096,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
                 } else {
                     g_SelectedPaletteItem = i;
                     g_SelectedDurationMult = 1.0f;
+                    g_SelectedChordIndex = -1;  // Clear chord selection when selecting a synth
                     ui.pianoRollMode = PianoRollMode::Draw;
                     project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
                     seq.updateChannelConfigs();
@@ -6864,7 +7191,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     DrawChordGenre("Rock", g_PaletteExpanded_Chords_Rock, "Rock Power Chords");
     DrawChordGenre("EDM", g_PaletteExpanded_Chords_EDM, "EDM Chords");
     DrawChordGenre("HipHop", g_PaletteExpanded_Chords_HipHop, "Hip Hop");
-    DrawChordGenre("Reggaeton", g_PaletteExpanded_Chords_Reggaeton, "Reggaeton");
+    DrawChordGenre("Reggaeton", g_PaletteExpanded_Chords_Reggaeton, "Reggaeton Chords");
     DrawChordGenre("Synthwave", g_PaletteExpanded_Chords_Synthwave, "Synthwave/Outrun");
     DrawChordGenre("Chiptune", g_PaletteExpanded_Chords_Chiptune, "Chiptune 8-bit");
 
@@ -6925,7 +7252,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         const int indices[] = { 56, 57, 58, 59, 60, 61, 62 };
         const char* names[] = { "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow 808", "Dembow Snare" };
         const char* descs[] = { "Punchy reggaeton bass", "Latin brass stab", "Scraped metal dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick", "Tight clap snare" };
-        DrawDrumCategory("Reggaeton", g_PaletteExpanded_Reggaeton, indices, names, descs, 7, project, ui, seq);
+        DrawDrumCategory("Reggaeton Drums", g_PaletteExpanded_Reggaeton, indices, names, descs, 7, project, ui, seq);
     }
 
     // ========== PATTERN TEMPLATES ==========
@@ -7976,6 +8303,760 @@ inline void DrawPadController(Project& project, UIState& ui, Sequencer& sequence
     ImGui::EndChild();
 
     ImGui::End();
+}
+
+// ============================================================================
+// Tools Panel - Production Tools for Synthwave Beats
+// ============================================================================
+
+// Global state for tools
+static int g_ToolsDrumGenre = 0;  // 0=Synthwave, 1=Outrun, 2=Darksynth, 3=Italo, 4=Techno, 5=Retrowave
+static float g_ToolsDrumDensity = 0.5f;  // 0.0-1.0 (sparse to busy)
+static bool g_ToolsDrumAddCrash = true;  // Add crash at measure start
+
+static int g_ToolsArpMode = 0;  // 0=Up, 1=Down, 2=UpDown, 3=Random
+static int g_ToolsArpRate = 2;  // 0=8th, 1=16th, 2=32nd
+static int g_ToolsArpOctaves = 2;  // 1-4
+static float g_ToolsArpGate = 0.8f;  // Note length as fraction of step
+
+static int g_ToolsBassStyle = 0;  // 0=Octave Pulse, 1=Root+Fifth, 2=Walking, 3=Arp
+static int g_ToolsBassRoot = 0;  // Root note (0=C, 1=C#, etc.)
+static int g_ToolsBassOctave = 2;  // Base octave
+
+static int g_ToolsScaleType = 0;  // 0=Major, 1=Minor, 2=Dorian, 3=Phrygian, etc.
+static int g_ToolsScaleRoot = 0;  // Root note
+static bool g_ToolsScaleLock = false;  // Snap to scale
+static bool g_ToolsScaleHighlight = true;  // Highlight in-scale notes
+
+static int g_ToolsVelocityCurve = 0;  // 0=Linear, 1=Exp, 2=Log, 3=S-Curve
+static float g_ToolsVelocityStart = 0.5f;
+static float g_ToolsVelocityEnd = 1.0f;
+
+static int g_ToolsFillIntensity = 1;  // 0=Light, 1=Medium, 2=Heavy
+static int g_ToolsFillStyle = 0;  // 0=Snare, 1=Tom, 2=Hihat, 3=Mixed
+
+static float g_ToolsVariationAmount = 0.3f;  // How much to vary
+static bool g_ToolsVariationTiming = true;  // Vary note timing
+static bool g_ToolsVariationVelocity = true;  // Vary velocity
+static bool g_ToolsVariationPitch = false;  // Vary pitch (for non-drums)
+
+static int g_ToolsLayerOctave = 1;  // Octave offset for layer
+static float g_ToolsLayerDetune = 5.0f;  // Detune in cents
+static float g_ToolsLayerVelocity = 0.7f;  // Velocity of layer
+
+static float g_ToolsHumanizeTiming = 0.02f;  // Timing variation in beats
+static float g_ToolsHumanizeVelocity = 0.15f;  // Velocity variation (0-1)
+
+// Scale intervals (semitones from root)
+static const int SCALE_MAJOR[] = {0, 2, 4, 5, 7, 9, 11};
+static const int SCALE_MINOR[] = {0, 2, 3, 5, 7, 8, 10};
+static const int SCALE_DORIAN[] = {0, 2, 3, 5, 7, 9, 10};
+static const int SCALE_PHRYGIAN[] = {0, 1, 3, 5, 7, 8, 10};
+static const int SCALE_LYDIAN[] = {0, 2, 4, 6, 7, 9, 11};
+static const int SCALE_MIXOLYDIAN[] = {0, 2, 4, 5, 7, 9, 10};
+static const int SCALE_LOCRIAN[] = {0, 1, 3, 5, 6, 8, 10};
+static const int SCALE_HARMONIC_MINOR[] = {0, 2, 3, 5, 7, 8, 11};
+static const int SCALE_PENTATONIC_MAJOR[] = {0, 2, 4, 7, 9, -1, -1};  // -1 = unused
+static const int SCALE_PENTATONIC_MINOR[] = {0, 3, 5, 7, 10, -1, -1};
+static const int SCALE_BLUES[] = {0, 3, 5, 6, 7, 10, -1};
+
+// Helper: Check if note is in current scale
+inline bool isNoteInScale(int pitch, int scaleRoot, int scaleType) {
+    const int* scale = nullptr;
+    int scaleSize = 7;
+
+    switch (scaleType) {
+        case 0: scale = SCALE_MAJOR; break;
+        case 1: scale = SCALE_MINOR; break;
+        case 2: scale = SCALE_DORIAN; break;
+        case 3: scale = SCALE_PHRYGIAN; break;
+        case 4: scale = SCALE_LYDIAN; break;
+        case 5: scale = SCALE_MIXOLYDIAN; break;
+        case 6: scale = SCALE_LOCRIAN; break;
+        case 7: scale = SCALE_HARMONIC_MINOR; break;
+        case 8: scale = SCALE_PENTATONIC_MAJOR; scaleSize = 5; break;
+        case 9: scale = SCALE_PENTATONIC_MINOR; scaleSize = 5; break;
+        case 10: scale = SCALE_BLUES; scaleSize = 6; break;
+        default: scale = SCALE_MAJOR; break;
+    }
+
+    int noteInOctave = (pitch - scaleRoot + 120) % 12;  // +120 to handle negatives
+    for (int i = 0; i < scaleSize; ++i) {
+        if (scale[i] == noteInOctave) return true;
+    }
+    return false;
+}
+
+// Helper: Snap pitch to nearest in-scale note
+inline int snapToScale(int pitch, int scaleRoot, int scaleType) {
+    if (isNoteInScale(pitch, scaleRoot, scaleType)) return pitch;
+
+    // Try semitone up and down
+    for (int offset = 1; offset <= 6; ++offset) {
+        if (isNoteInScale(pitch + offset, scaleRoot, scaleType)) return pitch + offset;
+        if (isNoteInScale(pitch - offset, scaleRoot, scaleType)) return pitch - offset;
+    }
+    return pitch;  // Fallback
+}
+
+// Helper: Generate drum pattern based on genre and density
+inline void generateDrumPattern(Pattern& pattern, int genre, float density, bool addCrash, float bpm) {
+    pattern.notes.clear();
+
+    // Base patterns for each genre (4 bars = 16 beats at 4/4)
+    // density affects hi-hat subdivision and ghost notes
+
+    auto addDrum = [&](float beat, OscillatorType type, int pitch, float velocity, float dur) {
+        Note n;
+        n.startTime = beat;
+        n.pitch = pitch;
+        n.oscillatorType = type;
+        n.velocity = velocity;
+        n.duration = dur;
+        pattern.notes.push_back(n);
+    };
+
+    // Calculate durations based on BPM for drums
+    float kickDur = 0.25f;
+    float snareDur = 0.25f;
+    float hatDur = 0.125f;
+
+    int bars = 4;
+    int beatsPerBar = 4;
+
+    // Hi-hat density: 0.0 = quarter notes, 0.5 = 8ths, 1.0 = 16ths with ghost notes
+    float hatStep = density < 0.3f ? 1.0f : (density < 0.7f ? 0.5f : 0.25f);
+    bool addGhosts = density > 0.6f;
+
+    for (int bar = 0; bar < bars; ++bar) {
+        float barStart = static_cast<float>(bar * beatsPerBar);
+
+        // Crash at bar start (optional)
+        if (addCrash && bar == 0) {
+            addDrum(barStart, OscillatorType::Crash, 49, 0.8f, 0.5f);
+        }
+
+        switch (genre) {
+            case 0:  // Synthwave - driving 4/4 with open hats
+            case 5:  // Retrowave (similar)
+                addDrum(barStart, OscillatorType::Kick808, 36, 1.0f, kickDur);
+                addDrum(barStart + 1.0f, OscillatorType::Snare808, 38, 0.9f, snareDur);
+                addDrum(barStart + 2.0f, OscillatorType::Kick808, 36, 1.0f, kickDur);
+                addDrum(barStart + 3.0f, OscillatorType::Snare808, 38, 0.9f, snareDur);
+                // Open hat on offbeats
+                addDrum(barStart + 0.5f, OscillatorType::HiHatOpen, 46, 0.6f, hatDur);
+                addDrum(barStart + 1.5f, OscillatorType::HiHatOpen, 46, 0.5f, hatDur);
+                addDrum(barStart + 2.5f, OscillatorType::HiHatOpen, 46, 0.6f, hatDur);
+                addDrum(barStart + 3.5f, OscillatorType::HiHatOpen, 46, 0.5f, hatDur);
+                if (addGhosts) {
+                    addDrum(barStart + 2.75f, OscillatorType::Kick808, 36, 0.5f, kickDur);  // Ghost kick
+                }
+                break;
+
+            case 1:  // Outrun - faster, more aggressive
+                addDrum(barStart, OscillatorType::KickHard, 36, 1.0f, kickDur);
+                addDrum(barStart + 0.5f, OscillatorType::KickHard, 36, 0.7f, kickDur);
+                addDrum(barStart + 1.0f, OscillatorType::Snare808, 38, 0.95f, snareDur);
+                addDrum(barStart + 2.0f, OscillatorType::KickHard, 36, 1.0f, kickDur);
+                addDrum(barStart + 2.5f, OscillatorType::KickHard, 36, 0.7f, kickDur);
+                addDrum(barStart + 3.0f, OscillatorType::Snare808, 38, 0.95f, snareDur);
+                // Fast closed hats
+                for (float h = 0; h < 4.0f; h += hatStep) {
+                    float vel = (std::fmod(h, 1.0f) < 0.01f) ? 0.7f : 0.4f;
+                    addDrum(barStart + h, OscillatorType::HiHat, 42, vel, hatDur);
+                }
+                break;
+
+            case 2:  // Darksynth - heavy, industrial
+                addDrum(barStart, OscillatorType::KickHard, 36, 1.0f, kickDur);
+                addDrum(barStart + 1.0f, OscillatorType::Snare808, 38, 1.0f, snareDur);
+                addDrum(barStart + 1.0f, OscillatorType::Clap, 39, 0.7f, snareDur);  // Layered clap
+                addDrum(barStart + 2.0f, OscillatorType::KickHard, 36, 1.0f, kickDur);
+                addDrum(barStart + 2.75f, OscillatorType::KickHard, 36, 0.8f, kickDur);  // Syncopation
+                addDrum(barStart + 3.0f, OscillatorType::Snare808, 38, 1.0f, snareDur);
+                addDrum(barStart + 3.0f, OscillatorType::Clap, 39, 0.7f, snareDur);
+                // Ride cymbal
+                for (float h = 0; h < 4.0f; h += 0.5f) {
+                    addDrum(barStart + h, OscillatorType::Ride, 51, 0.4f, hatDur);
+                }
+                break;
+
+            case 3:  // Italo Disco - bouncy, upbeat
+                addDrum(barStart, OscillatorType::Kick, 36, 0.95f, kickDur);
+                addDrum(barStart + 1.0f, OscillatorType::Kick, 36, 0.95f, kickDur);
+                addDrum(barStart + 1.0f, OscillatorType::Clap, 39, 0.8f, snareDur);
+                addDrum(barStart + 2.0f, OscillatorType::Kick, 36, 0.95f, kickDur);
+                addDrum(barStart + 3.0f, OscillatorType::Kick, 36, 0.95f, kickDur);
+                addDrum(barStart + 3.0f, OscillatorType::Clap, 39, 0.8f, snareDur);
+                // Offbeat open hats (disco style)
+                addDrum(barStart + 0.5f, OscillatorType::HiHatOpen, 46, 0.7f, hatDur * 2);
+                addDrum(barStart + 1.5f, OscillatorType::HiHatOpen, 46, 0.7f, hatDur * 2);
+                addDrum(barStart + 2.5f, OscillatorType::HiHatOpen, 46, 0.7f, hatDur * 2);
+                addDrum(barStart + 3.5f, OscillatorType::HiHatOpen, 46, 0.7f, hatDur * 2);
+                break;
+
+            case 4:  // Techno - four on the floor
+                addDrum(barStart, OscillatorType::Kick, 36, 1.0f, kickDur);
+                addDrum(barStart + 1.0f, OscillatorType::Kick, 36, 1.0f, kickDur);
+                addDrum(barStart + 2.0f, OscillatorType::Kick, 36, 1.0f, kickDur);
+                addDrum(barStart + 3.0f, OscillatorType::Kick, 36, 1.0f, kickDur);
+                // Clap on 2 and 4
+                addDrum(barStart + 1.0f, OscillatorType::Clap, 39, 0.85f, snareDur);
+                addDrum(barStart + 3.0f, OscillatorType::Clap, 39, 0.85f, snareDur);
+                // Hi-hats
+                for (float h = 0; h < 4.0f; h += hatStep) {
+                    bool isOffbeat = std::fmod(h, 1.0f) > 0.4f && std::fmod(h, 1.0f) < 0.6f;
+                    OscillatorType hatType = isOffbeat ? OscillatorType::HiHatOpen : OscillatorType::HiHat;
+                    float vel = isOffbeat ? 0.6f : 0.5f;
+                    addDrum(barStart + h, hatType, isOffbeat ? 46 : 42, vel, hatDur);
+                }
+                break;
+        }
+    }
+
+    pattern.length = bars * beatsPerBar;
+}
+
+// Helper: Apply arpeggiator to selected notes
+inline void applyArpeggiator(Pattern& pattern, const std::vector<int>& selectedIndices,
+                             int mode, int rateDiv, int octaves, float gate) {
+    if (selectedIndices.empty()) return;
+
+    // Collect selected notes
+    std::vector<Note> selectedNotes;
+    for (int idx : selectedIndices) {
+        if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+            selectedNotes.push_back(pattern.notes[idx]);
+        }
+    }
+    if (selectedNotes.empty()) return;
+
+    // Find the chord (distinct pitches at similar start times)
+    std::vector<int> chordPitches;
+    float baseTime = selectedNotes[0].startTime;
+    OscillatorType oscType = selectedNotes[0].oscillatorType;
+    float baseVelocity = selectedNotes[0].velocity;
+
+    for (const auto& n : selectedNotes) {
+        bool found = false;
+        for (int p : chordPitches) {
+            if (p == n.pitch) { found = true; break; }
+        }
+        if (!found) chordPitches.push_back(n.pitch);
+    }
+
+    if (chordPitches.empty()) return;
+    std::sort(chordPitches.begin(), chordPitches.end());
+
+    // Extend chord across octaves
+    std::vector<int> arpNotes;
+    for (int oct = 0; oct < octaves; ++oct) {
+        for (int p : chordPitches) {
+            arpNotes.push_back(p + oct * 12);
+        }
+    }
+
+    // Generate arp pattern
+    float step = (rateDiv == 0) ? 0.5f : (rateDiv == 1) ? 0.25f : 0.125f;
+    float totalDuration = selectedNotes[0].duration;
+    if (totalDuration < step * 4) totalDuration = step * 16;  // Minimum 4 notes
+
+    // Remove original selected notes
+    std::vector<int> sortedIndices = selectedIndices;
+    std::sort(sortedIndices.rbegin(), sortedIndices.rend());
+    for (int idx : sortedIndices) {
+        if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+            pattern.notes.erase(pattern.notes.begin() + idx);
+        }
+    }
+
+    // Add arp notes
+    int noteCount = static_cast<int>(totalDuration / step);
+    for (int i = 0; i < noteCount; ++i) {
+        int noteIndex;
+        switch (mode) {
+            case 0:  // Up
+                noteIndex = i % static_cast<int>(arpNotes.size());
+                break;
+            case 1:  // Down
+                noteIndex = static_cast<int>(arpNotes.size()) - 1 - (i % static_cast<int>(arpNotes.size()));
+                break;
+            case 2:  // Up-Down
+                {
+                    int cycle = static_cast<int>(arpNotes.size()) * 2 - 2;
+                    int pos = i % cycle;
+                    if (pos < static_cast<int>(arpNotes.size())) {
+                        noteIndex = pos;
+                    } else {
+                        noteIndex = cycle - pos;
+                    }
+                }
+                break;
+            case 3:  // Random
+                noteIndex = rand() % static_cast<int>(arpNotes.size());
+                break;
+            default:
+                noteIndex = i % static_cast<int>(arpNotes.size());
+        }
+
+        Note n;
+        n.startTime = baseTime + i * step;
+        n.pitch = arpNotes[noteIndex];
+        n.duration = step * gate;
+        n.velocity = baseVelocity * (0.8f + 0.2f * (static_cast<float>(rand()) / RAND_MAX));
+        n.oscillatorType = oscType;
+        pattern.notes.push_back(n);
+    }
+}
+
+// Helper: Generate bass pattern
+inline void generateBassPattern(Pattern& pattern, int style, int root, int octave, int bars = 4) {
+    auto addNote = [&](float beat, int pitch, float dur, float vel) {
+        Note n;
+        n.startTime = beat;
+        n.pitch = pitch;
+        n.duration = dur;
+        n.velocity = vel;
+        n.oscillatorType = OscillatorType::SynthBass;
+        pattern.notes.push_back(n);
+    };
+
+    int rootNote = root + (octave + 1) * 12;  // +1 because octave 2 is C2
+    int fifth = rootNote + 7;
+    int octaveUp = rootNote + 12;
+
+    for (int bar = 0; bar < bars; ++bar) {
+        float barStart = static_cast<float>(bar * 4);
+
+        switch (style) {
+            case 0:  // Octave Pulse - classic synthwave
+                addNote(barStart, rootNote, 0.25f, 1.0f);
+                addNote(barStart + 0.5f, octaveUp, 0.25f, 0.8f);
+                addNote(barStart + 1.0f, rootNote, 0.25f, 0.9f);
+                addNote(barStart + 1.5f, octaveUp, 0.25f, 0.7f);
+                addNote(barStart + 2.0f, rootNote, 0.25f, 1.0f);
+                addNote(barStart + 2.5f, octaveUp, 0.25f, 0.8f);
+                addNote(barStart + 3.0f, rootNote, 0.25f, 0.9f);
+                addNote(barStart + 3.5f, octaveUp, 0.25f, 0.7f);
+                break;
+
+            case 1:  // Root + Fifth
+                addNote(barStart, rootNote, 0.75f, 1.0f);
+                addNote(barStart + 1.0f, fifth, 0.75f, 0.85f);
+                addNote(barStart + 2.0f, rootNote, 0.75f, 1.0f);
+                addNote(barStart + 3.0f, fifth, 0.5f, 0.85f);
+                addNote(barStart + 3.5f, rootNote, 0.25f, 0.7f);
+                break;
+
+            case 2:  // Walking bass
+                {
+                    int notes[] = {0, 2, 4, 5, 7, 5, 4, 2};  // Scale walk
+                    for (int i = 0; i < 8; ++i) {
+                        addNote(barStart + i * 0.5f, rootNote + notes[i], 0.4f, 0.9f - i * 0.02f);
+                    }
+                }
+                break;
+
+            case 3:  // Arp style
+                addNote(barStart, rootNote, 0.2f, 1.0f);
+                addNote(barStart + 0.25f, rootNote + 4, 0.2f, 0.8f);  // Major third
+                addNote(barStart + 0.5f, fifth, 0.2f, 0.85f);
+                addNote(barStart + 0.75f, octaveUp, 0.2f, 0.75f);
+                addNote(barStart + 1.0f, rootNote, 0.2f, 0.95f);
+                addNote(barStart + 1.25f, rootNote + 4, 0.2f, 0.8f);
+                addNote(barStart + 1.5f, fifth, 0.2f, 0.85f);
+                addNote(barStart + 1.75f, octaveUp, 0.2f, 0.75f);
+                addNote(barStart + 2.0f, rootNote, 0.2f, 1.0f);
+                addNote(barStart + 2.25f, rootNote + 4, 0.2f, 0.8f);
+                addNote(barStart + 2.5f, fifth, 0.2f, 0.85f);
+                addNote(barStart + 2.75f, octaveUp, 0.2f, 0.75f);
+                addNote(barStart + 3.0f, rootNote, 0.2f, 0.95f);
+                addNote(barStart + 3.25f, rootNote + 4, 0.2f, 0.8f);
+                addNote(barStart + 3.5f, fifth, 0.2f, 0.85f);
+                addNote(barStart + 3.75f, rootNote - 2, 0.2f, 0.7f);  // Leading tone
+                break;
+        }
+    }
+
+    pattern.length = bars * 4;
+}
+
+// Helper: Apply velocity curve to selected notes
+inline void applyVelocityCurve(Pattern& pattern, const std::vector<int>& selectedIndices,
+                               int curveType, float startVel, float endVel) {
+    if (selectedIndices.size() < 2) return;
+
+    // Sort by start time
+    std::vector<std::pair<float, int>> timeIdx;
+    for (int idx : selectedIndices) {
+        if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+            timeIdx.push_back({pattern.notes[idx].startTime, idx});
+        }
+    }
+    std::sort(timeIdx.begin(), timeIdx.end());
+
+    int count = static_cast<int>(timeIdx.size());
+    for (int i = 0; i < count; ++i) {
+        float t = static_cast<float>(i) / (count - 1);
+        float vel;
+
+        switch (curveType) {
+            case 0:  // Linear
+                vel = startVel + (endVel - startVel) * t;
+                break;
+            case 1:  // Exponential
+                vel = startVel + (endVel - startVel) * (t * t);
+                break;
+            case 2:  // Logarithmic
+                vel = startVel + (endVel - startVel) * std::sqrt(t);
+                break;
+            case 3:  // S-Curve
+                {
+                    float s = t * t * (3.0f - 2.0f * t);  // Smoothstep
+                    vel = startVel + (endVel - startVel) * s;
+                }
+                break;
+            default:
+                vel = startVel + (endVel - startVel) * t;
+        }
+
+        pattern.notes[timeIdx[i].second].velocity = std::max(0.1f, std::min(1.0f, vel));
+    }
+}
+
+// Helper: Generate drum fill
+inline void generateFill(Pattern& pattern, float fillStart, int intensity, int style) {
+    auto addDrum = [&](float beat, OscillatorType type, int pitch, float velocity, float dur) {
+        Note n;
+        n.startTime = beat;
+        n.pitch = pitch;
+        n.oscillatorType = type;
+        n.velocity = velocity;
+        n.duration = dur;
+        pattern.notes.push_back(n);
+    };
+
+    // Fill duration: 0.5 beats (light) to 2 beats (heavy)
+    float fillDur = (intensity == 0) ? 0.5f : (intensity == 1) ? 1.0f : 2.0f;
+    float step = (intensity == 0) ? 0.25f : (intensity == 1) ? 0.125f : 0.0625f;
+
+    int noteCount = static_cast<int>(fillDur / step);
+
+    for (int i = 0; i < noteCount; ++i) {
+        float beat = fillStart - fillDur + i * step;
+        float vel = 0.7f + 0.3f * (static_cast<float>(i) / noteCount);  // Crescendo
+
+        switch (style) {
+            case 0:  // Snare roll
+                addDrum(beat, OscillatorType::Snare808, 38, vel, step * 0.9f);
+                break;
+            case 1:  // Tom fill
+                {
+                    OscillatorType toms[] = {OscillatorType::TomHigh, OscillatorType::Tom, OscillatorType::TomLow};
+                    int tomIdx = i % 3;
+                    int pitches[] = {50, 47, 43};
+                    addDrum(beat, toms[tomIdx], pitches[tomIdx], vel, step * 0.9f);
+                }
+                break;
+            case 2:  // Hi-hat roll
+                addDrum(beat, (i % 2 == 0) ? OscillatorType::HiHat : OscillatorType::HiHatOpen,
+                       (i % 2 == 0) ? 42 : 46, vel * 0.8f, step * 0.8f);
+                break;
+            case 3:  // Mixed
+                {
+                    int choice = rand() % 4;
+                    if (choice == 0) addDrum(beat, OscillatorType::Snare808, 38, vel, step * 0.9f);
+                    else if (choice == 1) addDrum(beat, OscillatorType::Tom, 47, vel, step * 0.9f);
+                    else if (choice == 2) addDrum(beat, OscillatorType::HiHat, 42, vel * 0.7f, step * 0.8f);
+                    else addDrum(beat, OscillatorType::Clap, 39, vel * 0.8f, step * 0.9f);
+                }
+                break;
+        }
+    }
+
+    // Add crash at fill start
+    addDrum(fillStart, OscillatorType::Crash, 49, 0.9f, 0.5f);
+}
+
+// Helper: Create pattern variation
+inline void createVariation(Pattern& pattern, float amount, bool varyTiming, bool varyVelocity, bool varyPitch) {
+    for (auto& note : pattern.notes) {
+        if (varyTiming) {
+            float timingOffset = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f * amount * 0.25f;
+            note.startTime = std::max(0.0f, note.startTime + timingOffset);
+        }
+
+        if (varyVelocity) {
+            float velOffset = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f * amount * 0.3f;
+            note.velocity = std::max(0.1f, std::min(1.0f, note.velocity + velOffset));
+        }
+
+        if (varyPitch && !isDrumType(note.oscillatorType)) {
+            // Occasionally shift by octave or add harmony
+            if (static_cast<float>(rand()) / RAND_MAX < amount * 0.2f) {
+                int shift = (rand() % 2 == 0) ? 12 : -12;  // Octave shift
+                note.pitch = std::max(24, std::min(96, note.pitch + shift));
+            }
+        }
+    }
+}
+
+// Helper: Quick layer (duplicate selection with modifications)
+inline void quickLayer(Pattern& pattern, const std::vector<int>& selectedIndices,
+                       int octaveOffset, float detuneCents, float layerVelocity) {
+    std::vector<Note> newNotes;
+
+    for (int idx : selectedIndices) {
+        if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+            Note n = pattern.notes[idx];
+            n.pitch += octaveOffset * 12;
+            n.velocity *= layerVelocity;
+
+            // Apply detune to oscillator config (via note's detune if we had it)
+            // For now, slight timing offset simulates detune chorus effect
+            n.startTime += 0.005f;  // 5ms offset
+
+            newNotes.push_back(n);
+        }
+    }
+
+    for (const auto& n : newNotes) {
+        pattern.notes.push_back(n);
+    }
+}
+
+// Helper: Humanize selected notes
+inline void humanizeSelected(Pattern& pattern, const std::vector<int>& selectedIndices,
+                             float timingAmount, float velocityAmount) {
+    for (int idx : selectedIndices) {
+        if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+            Note& n = pattern.notes[idx];
+
+            // Timing humanization
+            float timeOffset = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f * timingAmount;
+            n.startTime = std::max(0.0f, n.startTime + timeOffset);
+
+            // Velocity humanization
+            float velOffset = (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 2.0f * velocityAmount;
+            n.velocity = std::max(0.1f, std::min(1.0f, n.velocity + velOffset));
+        }
+    }
+}
+
+inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
+    ImGui::SetNextWindowPos(ImVec2(220, 135), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(280, 500), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_None);
+
+    if (ui.selectedPattern < 0 || ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "No pattern selected");
+        ImGui::End();
+        return;
+    }
+
+    Pattern& pattern = project.patterns[ui.selectedPattern];
+
+    // ========================================================================
+    // 1. Drum Pattern Generator
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Drum Pattern Generator", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const char* genres[] = {"Synthwave", "Outrun", "Darksynth", "Italo Disco", "Techno", "Retrowave"};
+        ImGui::Combo("Genre", &g_ToolsDrumGenre, genres, IM_ARRAYSIZE(genres));
+        ImGui::SliderFloat("Density", &g_ToolsDrumDensity, 0.0f, 1.0f, "%.2f");
+        ImGui::Checkbox("Add Crash", &g_ToolsDrumAddCrash);
+
+        if (ImGui::Button("Generate Drums")) {
+            generateDrumPattern(pattern, g_ToolsDrumGenre, g_ToolsDrumDensity, g_ToolsDrumAddCrash, project.bpm);
+            ui.selectedNoteIndices.clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Variation##drum")) {
+            // Regenerate with slight randomization
+            g_ToolsDrumDensity += (static_cast<float>(rand()) / RAND_MAX - 0.5f) * 0.2f;
+            g_ToolsDrumDensity = std::max(0.0f, std::min(1.0f, g_ToolsDrumDensity));
+            generateDrumPattern(pattern, g_ToolsDrumGenre, g_ToolsDrumDensity, g_ToolsDrumAddCrash, project.bpm);
+        }
+        ImGui::Separator();
+    }
+
+    // ========================================================================
+    // 2. Arpeggiator
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Arpeggiator")) {
+        const char* modes[] = {"Up", "Down", "Up-Down", "Random"};
+        ImGui::Combo("Mode", &g_ToolsArpMode, modes, IM_ARRAYSIZE(modes));
+
+        const char* rates[] = {"8th", "16th", "32nd"};
+        ImGui::Combo("Rate", &g_ToolsArpRate, rates, IM_ARRAYSIZE(rates));
+
+        ImGui::SliderInt("Octaves", &g_ToolsArpOctaves, 1, 4);
+        ImGui::SliderFloat("Gate", &g_ToolsArpGate, 0.1f, 1.0f, "%.2f");
+
+        if (ui.selectedNoteIndices.empty()) {
+            ImGui::TextDisabled("Select notes first");
+        } else {
+            if (ImGui::Button("Apply Arp")) {
+                applyArpeggiator(pattern, ui.selectedNoteIndices, g_ToolsArpMode,
+                                g_ToolsArpRate, g_ToolsArpOctaves, g_ToolsArpGate);
+                ui.selectedNoteIndices.clear();
+            }
+        }
+        ImGui::Separator();
+    }
+
+    // ========================================================================
+    // 3. Bass Pattern Generator
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Bass Generator")) {
+        const char* styles[] = {"Octave Pulse", "Root + Fifth", "Walking", "Arp Style"};
+        ImGui::Combo("Style", &g_ToolsBassStyle, styles, IM_ARRAYSIZE(styles));
+
+        const char* notes[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        ImGui::Combo("Root", &g_ToolsBassRoot, notes, IM_ARRAYSIZE(notes));
+        ImGui::SliderInt("Octave", &g_ToolsBassOctave, 1, 4);
+
+        if (ImGui::Button("Generate Bass")) {
+            // Clear existing bass notes or add to pattern
+            generateBassPattern(pattern, g_ToolsBassStyle, g_ToolsBassRoot, g_ToolsBassOctave);
+            ui.selectedNoteIndices.clear();
+        }
+        ImGui::Separator();
+    }
+
+    // ========================================================================
+    // 4. Scale Lock + Highlighting
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Scale Lock")) {
+        const char* scales[] = {"Major", "Minor", "Dorian", "Phrygian", "Lydian",
+                                "Mixolydian", "Locrian", "Harmonic Minor",
+                                "Pentatonic Maj", "Pentatonic Min", "Blues"};
+        ImGui::Combo("Scale", &g_ToolsScaleType, scales, IM_ARRAYSIZE(scales));
+
+        const char* notes[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        ImGui::Combo("Root##scale", &g_ToolsScaleRoot, notes, IM_ARRAYSIZE(notes));
+
+        ImGui::Checkbox("Highlight In-Scale", &g_ToolsScaleHighlight);
+        ImGui::Checkbox("Snap to Scale", &g_ToolsScaleLock);
+
+        if (!ui.selectedNoteIndices.empty() && ImGui::Button("Snap Selected to Scale")) {
+            for (int idx : ui.selectedNoteIndices) {
+                if (idx >= 0 && idx < static_cast<int>(pattern.notes.size())) {
+                    pattern.notes[idx].pitch = snapToScale(pattern.notes[idx].pitch,
+                                                          g_ToolsScaleRoot, g_ToolsScaleType);
+                }
+            }
+        }
+        ImGui::Separator();
+    }
+
+    // ========================================================================
+    // 5. Velocity Curve Painter
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Velocity Curve")) {
+        const char* curves[] = {"Linear", "Exponential", "Logarithmic", "S-Curve"};
+        ImGui::Combo("Curve", &g_ToolsVelocityCurve, curves, IM_ARRAYSIZE(curves));
+        ImGui::SliderFloat("Start", &g_ToolsVelocityStart, 0.1f, 1.0f);
+        ImGui::SliderFloat("End", &g_ToolsVelocityEnd, 0.1f, 1.0f);
+
+        if (ui.selectedNoteIndices.size() < 2) {
+            ImGui::TextDisabled("Select 2+ notes");
+        } else {
+            if (ImGui::Button("Apply Curve")) {
+                applyVelocityCurve(pattern, ui.selectedNoteIndices, g_ToolsVelocityCurve,
+                                  g_ToolsVelocityStart, g_ToolsVelocityEnd);
+            }
+        }
+        ImGui::Separator();
+    }
+
+    // ========================================================================
+    // 6. Fill Generator
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Fill Generator")) {
+        const char* intensities[] = {"Light", "Medium", "Heavy"};
+        ImGui::Combo("Intensity", &g_ToolsFillIntensity, intensities, IM_ARRAYSIZE(intensities));
+
+        const char* fillStyles[] = {"Snare Roll", "Tom Fill", "Hi-Hat Roll", "Mixed"};
+        ImGui::Combo("Style##fill", &g_ToolsFillStyle, fillStyles, IM_ARRAYSIZE(fillStyles));
+
+        if (ImGui::Button("Add Fill at Bar 4")) {
+            generateFill(pattern, 16.0f, g_ToolsFillIntensity, g_ToolsFillStyle);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Fill at Bar 8")) {
+            generateFill(pattern, 32.0f, g_ToolsFillIntensity, g_ToolsFillStyle);
+        }
+        ImGui::Separator();
+    }
+
+    // ========================================================================
+    // 7. Pattern Variation
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Pattern Variation")) {
+        ImGui::SliderFloat("Amount", &g_ToolsVariationAmount, 0.0f, 1.0f);
+        ImGui::Checkbox("Vary Timing", &g_ToolsVariationTiming);
+        ImGui::Checkbox("Vary Velocity", &g_ToolsVariationVelocity);
+        ImGui::Checkbox("Vary Pitch", &g_ToolsVariationPitch);
+
+        if (ImGui::Button("Create Variation")) {
+            createVariation(pattern, g_ToolsVariationAmount, g_ToolsVariationTiming,
+                           g_ToolsVariationVelocity, g_ToolsVariationPitch);
+        }
+        ImGui::Separator();
+    }
+
+    // ========================================================================
+    // 8. Quick Layer
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Quick Layer")) {
+        ImGui::SliderInt("Octave Offset", &g_ToolsLayerOctave, -2, 2);
+        ImGui::SliderFloat("Detune (cents)", &g_ToolsLayerDetune, 0.0f, 50.0f);
+        ImGui::SliderFloat("Layer Volume", &g_ToolsLayerVelocity, 0.1f, 1.0f);
+
+        if (ui.selectedNoteIndices.empty()) {
+            ImGui::TextDisabled("Select notes first");
+        } else {
+            if (ImGui::Button("Add Layer")) {
+                quickLayer(pattern, ui.selectedNoteIndices, g_ToolsLayerOctave,
+                          g_ToolsLayerDetune, g_ToolsLayerVelocity);
+            }
+        }
+        ImGui::Separator();
+    }
+
+    // ========================================================================
+    // 9. Humanize Selected
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Humanize")) {
+        ImGui::SliderFloat("Timing Var", &g_ToolsHumanizeTiming, 0.0f, 0.1f, "%.3f beats");
+        ImGui::SliderFloat("Velocity Var", &g_ToolsHumanizeVelocity, 0.0f, 0.5f);
+
+        if (ui.selectedNoteIndices.empty()) {
+            ImGui::TextDisabled("Select notes first");
+        } else {
+            if (ImGui::Button("Humanize Selected")) {
+                humanizeSelected(pattern, ui.selectedNoteIndices,
+                                g_ToolsHumanizeTiming, g_ToolsHumanizeVelocity);
+            }
+        }
+    }
+
+    ImGui::End();
+}
+
+// Export scale highlighting state for piano roll
+inline bool isNoteHighlighted(int pitch) {
+    if (!g_ToolsScaleHighlight) return false;
+    return isNoteInScale(pitch, g_ToolsScaleRoot, g_ToolsScaleType);
+}
+
+inline bool shouldSnapToScale() {
+    return g_ToolsScaleLock;
+}
+
+inline int getScaleSnappedPitch(int pitch) {
+    if (!g_ToolsScaleLock) return pitch;
+    return snapToScale(pitch, g_ToolsScaleRoot, g_ToolsScaleType);
 }
 
 } // namespace ChiptuneTracker

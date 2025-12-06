@@ -272,15 +272,32 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                     project = ChiptuneTracker::Project();
                     sequencer.setProject(&project);
                 }
-                if (ImGui::MenuItem("Save Project")) {
-                    // TODO: Implement save
+                if (ImGui::MenuItem("Save Project", "Ctrl+S")) {
+                    if (uiState.projectFilePath.empty()) {
+                        std::string path = ChiptuneTracker::saveFileDialog(
+                            "Chiptune Projects (*.ctp)\0*.ctp\0",
+                            "ctp");
+                        if (!path.empty()) {
+                            uiState.projectFilePath = path;
+                            ChiptuneTracker::saveProject(project, path);
+                        }
+                    } else {
+                        ChiptuneTracker::saveProject(project, uiState.projectFilePath);
+                    }
                 }
-                if (ImGui::MenuItem("Load Project")) {
-                    // TODO: Implement load
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Export WAV")) {
-                    // TODO: Implement export
+                if (ImGui::MenuItem("Load Project", "Ctrl+O")) {
+                    std::string path = ChiptuneTracker::openFileDialog(
+                        "Chiptune Projects (*.ctp)\0*.ctp\0All Files (*.*)\0*.*\0",
+                        "ctp");
+                    if (!path.empty()) {
+                        if (ChiptuneTracker::loadProject(project, path)) {
+                            uiState.projectFilePath = path;
+                            uiState.selectedPattern = 0;
+                            uiState.selectedNoteIndex = -1;
+                            uiState.selectedNoteIndices.clear();
+                            sequencer.updateChannelConfigs();
+                        }
+                    }
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) {
@@ -379,6 +396,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         // Note editor (always visible when in piano roll mode)
         ChiptuneTracker::DrawNoteEditor(project, uiState);
 
+        // Tools panel (always visible)
+        ChiptuneTracker::DrawToolsPanel(project, uiState, sequencer);
+
         // Main editor view (based on current mode)
         switch (uiState.currentView) {
             case ChiptuneTracker::ViewMode::PianoRoll:
@@ -437,6 +457,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                 uiState.pianoRollOctaveOffset = std::min(6, uiState.pianoRollOctaveOffset + 1);
             }
         }
+
+        // Reset layout update flag after all windows have been positioned
+        uiState.needsLayoutUpdate = false;
 
         // ====================================================================
         // Render

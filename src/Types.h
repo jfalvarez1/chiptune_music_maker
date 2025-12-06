@@ -735,12 +735,22 @@ struct UIState {
     bool isDraggingNote = false;    // Dragging a note to move it
     bool isDraggingMultiple = false; // Dragging multiple selected notes
     bool isResizingNote = false;    // Resizing note duration
+    bool isResizingMultiple = false; // Resizing multiple selected notes
     float dragStartBeat = 0.0f;     // Where drag started
     int dragStartPitch = 0;         // Original pitch when drag started
     float dragStartDuration = 0.0f; // Original duration when resize started
+    std::vector<float> multiResizeStartDurations; // Original durations of selected notes for multi-resize
     float dragAnchorBeat = 0.0f;    // Anchor point for multi-drag (mouse position at start)
     int dragAnchorPitch = 0;        // Anchor pitch for multi-drag
     std::vector<std::pair<float, int>> multiDragOffsets; // Beat and pitch offsets from anchor for each selected note
+
+    // Pending drag state (click-select without immediate drag)
+    bool isPendingDrag = false;     // Clicked on note, waiting to see if user drags
+    bool isPendingMultiDrag = false; // Clicked on multi-selection, waiting for drag
+    float pendingDragStartX = 0.0f; // Screen X where click started
+    float pendingDragStartY = 0.0f; // Screen Y where click started
+    int pendingDragNoteIndex = -1;  // Note index for pending single drag
+    static constexpr float DRAG_THRESHOLD = 5.0f; // Pixels before drag starts
 
     // Box selection
     bool isBoxSelecting = false;    // Currently drawing selection box
@@ -770,6 +780,11 @@ struct UIState {
 
     // Pad Controller state
     PadControllerState padController;
+
+    // Window auto-layout (for maximize/resize handling)
+    float lastWindowWidth = 0.0f;
+    float lastWindowHeight = 0.0f;
+    bool needsLayoutUpdate = true;  // True on first frame and after significant resize
 };
 
 // ============================================================================
