@@ -408,6 +408,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         // Automation Editor (always visible)
         ChiptuneTracker::renderAutomation(project, uiState, sequencer.getState());
 
+        // Wavetable Editor (always visible)
+        ChiptuneTracker::renderWavetableEditor(project, uiState);
+
         // Main editor view (based on current mode)
         switch (uiState.currentView) {
             case ChiptuneTracker::ViewMode::PianoRoll:

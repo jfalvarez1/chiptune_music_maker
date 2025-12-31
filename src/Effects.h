@@ -7,6 +7,7 @@
  * Designed for zero-allocation in audio thread.
  */
 
+#include "Types.h"
 #include <cmath>
 #include <array>
 #include <vector>
@@ -14,9 +15,6 @@
 #include <cstdint>
 
 namespace ChiptuneTracker {
-
-constexpr float PI = 3.14159265359f;
-constexpr float TWO_PI = 6.28318530718f;
 
 // ============================================================================
 // Bitcrusher - Reduce bit depth and sample rate

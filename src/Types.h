@@ -16,6 +16,12 @@
 namespace ChiptuneTracker {
 
 // ============================================================================
+// Mathematical Constants
+// ============================================================================
+constexpr float PI = 3.14159265359f;
+constexpr float TWO_PI = 6.28318530718f;
+
+// ============================================================================
 // Musical Constants
 // ============================================================================
 constexpr int NOTES_PER_OCTAVE = 12;
@@ -382,6 +388,128 @@ struct Clip {
 };
 
 // ============================================================================
+// Wavetable System
+// ============================================================================
+
+// Single wavetable (one waveform cycle)
+struct Wavetable {
+    static constexpr int TABLE_SIZE = 256;
+    std::array<float, TABLE_SIZE> samples;  // -1.0 to +1.0
+    std::string name = "Wavetable";
+
+    // Initialize with a basic waveform
+    void initSine() {
+        for (int i = 0; i < TABLE_SIZE; i++) {
+            samples[i] = std::sin(2.0f * PI * i / TABLE_SIZE);
+        }
+        name = "Sine";
+    }
+
+    void initSaw() {
+        for (int i = 0; i < TABLE_SIZE; i++) {
+            samples[i] = 2.0f * (float)i / TABLE_SIZE - 1.0f;
+        }
+        name = "Saw";
+    }
+
+    void initSquare() {
+        for (int i = 0; i < TABLE_SIZE; i++) {
+            samples[i] = (i < TABLE_SIZE / 2) ? 1.0f : -1.0f;
+        }
+        name = "Square";
+    }
+
+    void initTriangle() {
+        for (int i = 0; i < TABLE_SIZE; i++) {
+            if (i < TABLE_SIZE / 2) {
+                samples[i] = 4.0f * i / TABLE_SIZE - 1.0f;
+            } else {
+                samples[i] = 3.0f - 4.0f * i / TABLE_SIZE;
+            }
+        }
+        name = "Triangle";
+    }
+
+    // Clear to silence
+    void clear() {
+        samples.fill(0.0f);
+    }
+
+    // Normalize waveform to -1.0 to +1.0 range
+    void normalize() {
+        float maxVal = 0.0f;
+        for (float sample : samples) {
+            maxVal = std::max(maxVal, std::abs(sample));
+        }
+        if (maxVal > 0.0001f) {
+            for (float& sample : samples) {
+                sample /= maxVal;
+            }
+        }
+    }
+
+    // Interpolated lookup (for high-quality playback)
+    float lookup(float phase) const {
+        // phase is 0.0 to 1.0
+        float pos = phase * TABLE_SIZE;
+        int index0 = (int)pos % TABLE_SIZE;
+        int index1 = (index0 + 1) % TABLE_SIZE;
+        float frac = pos - (int)pos;
+
+        return samples[index0] * (1.0f - frac) + samples[index1] * frac;
+    }
+
+    Wavetable() {
+        initSine();
+    }
+};
+
+// Wavetable bank (collection of wavetables with morphing)
+struct WavetableBank {
+    static constexpr int MAX_TABLES = 16;
+    std::vector<Wavetable> tables;
+    std::string name = "Bank";
+
+    // Add a wavetable
+    void addTable(const Wavetable& table) {
+        if (tables.size() < MAX_TABLES) {
+            tables.push_back(table);
+        }
+    }
+
+    // Get interpolated sample between two wavetables
+    float lookupMorph(float phase, float morphPosition) const {
+        if (tables.empty()) return 0.0f;
+        if (tables.size() == 1) return tables[0].lookup(phase);
+
+        // morphPosition: 0.0 = first table, 1.0 = last table
+        float tableIndex = morphPosition * (tables.size() - 1);
+        int index0 = std::clamp((int)tableIndex, 0, (int)tables.size() - 1);
+        int index1 = std::clamp(index0 + 1, 0, (int)tables.size() - 1);
+        float frac = tableIndex - index0;
+
+        float sample0 = tables[index0].lookup(phase);
+        float sample1 = tables[index1].lookup(phase);
+
+        return sample0 * (1.0f - frac) + sample1 * frac;
+    }
+
+    void clear() {
+        tables.clear();
+    }
+
+    WavetableBank() {
+        // Add some default wavetables
+        Wavetable sine, saw, square;
+        sine.initSine();
+        saw.initSaw();
+        square.initSquare();
+        tables = { sine, saw, square };
+        name = "Default";
+    }
+};
+
+// ============================================================================
 // Automation System
 // ============================================================================
 
@@ -626,6 +754,7 @@ struct Project {
     std::vector<Pattern> patterns;
     std::vector<Clip> arrangement;
     std::vector<AutomationLane> automationLanes;  // Parameter automation
+    std::vector<WavetableBank> wavetableBanks;    // Custom wavetables
 
     float songLength = 64.0f;   // Total length in beats
 
@@ -654,6 +783,9 @@ struct Project {
         // Create one default pattern
         patterns.push_back(Pattern());
         patterns[0].name = "Pattern 1";
+
+        // Initialize default wavetable bank
+        wavetableBanks.push_back(WavetableBank());
     }
 };
 

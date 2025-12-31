@@ -11305,6 +11305,249 @@ inline void renderAutomation(Project& project, UIState& uiState, const PlaybackS
     ImGui::End();
 }
 
+// ============================================================================
+// Wavetable Editor Window
+// ============================================================================
+inline void renderWavetableEditor(Project& project, UIState& uiState) {
+    ImGui::SetNextWindowSize(ImVec2(700, 600), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Wavetable Editor", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    // Ensure at least one bank exists
+    if (project.wavetableBanks.empty()) {
+        project.wavetableBanks.push_back(WavetableBank());
+    }
+
+    // ========================================================================
+    // Bank Selection
+    // ========================================================================
+    static int selectedBankIndex = 0;
+    static int selectedTableIndex = 0;
+
+    if (selectedBankIndex >= (int)project.wavetableBanks.size()) {
+        selectedBankIndex = 0;
+    }
+
+    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Wavetable Bank:");
+    ImGui::SameLine();
+
+    std::vector<const char*> bankNames;
+    for (const auto& bank : project.wavetableBanks) {
+        bankNames.push_back(bank.name.c_str());
+    }
+
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::Combo("##bank", &selectedBankIndex, bankNames.data(), (int)bankNames.size())) {
+        selectedTableIndex = 0;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("+ New Bank")) {
+        project.wavetableBanks.push_back(WavetableBank());
+        selectedBankIndex = (int)project.wavetableBanks.size() - 1;
+        selectedTableIndex = 0;
+    }
+
+    if (project.wavetableBanks.size() > 1) {
+        ImGui::SameLine();
+        if (ImGui::Button("- Delete Bank")) {
+            project.wavetableBanks.erase(project.wavetableBanks.begin() + selectedBankIndex);
+            selectedBankIndex = std::clamp(selectedBankIndex, 0, (int)project.wavetableBanks.size() - 1);
+        }
+    }
+
+    auto& currentBank = project.wavetableBanks[selectedBankIndex];
+
+    ImGui::Separator();
+
+    // ========================================================================
+    // Wavetable Selection within Bank
+    // ========================================================================
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Wavetables in Bank:");
+
+    ImGui::BeginChild("WavetableList", ImVec2(200, 150), true);
+    for (int i = 0; i < (int)currentBank.tables.size(); i++) {
+        bool isSelected = (i == selectedTableIndex);
+        if (ImGui::Selectable(currentBank.tables[i].name.c_str(), isSelected)) {
+            selectedTableIndex = i;
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    if (ImGui::Button("+ Add Table", ImVec2(120, 0))) {
+        if (currentBank.tables.size() < WavetableBank::MAX_TABLES) {
+            Wavetable newTable;
+            newTable.name = "New " + std::to_string(currentBank.tables.size() + 1);
+            currentBank.addTable(newTable);
+            selectedTableIndex = (int)currentBank.tables.size() - 1;
+        }
+    }
+    if (currentBank.tables.size() > 1) {
+        if (ImGui::Button("- Remove Table", ImVec2(120, 0))) {
+            if (selectedTableIndex < (int)currentBank.tables.size()) {
+                currentBank.tables.erase(currentBank.tables.begin() + selectedTableIndex);
+                selectedTableIndex = std::clamp(selectedTableIndex, 0, (int)currentBank.tables.size() - 1);
+            }
+        }
+    }
+    ImGui::EndGroup();
+
+    if (currentBank.tables.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "No wavetables in bank!");
+        ImGui::End();
+        return;
+    }
+
+    if (selectedTableIndex >= (int)currentBank.tables.size()) {
+        selectedTableIndex = 0;
+    }
+
+    auto& currentTable = currentBank.tables[selectedTableIndex];
+
+    ImGui::Separator();
+
+    // ========================================================================
+    // Waveform Drawing Canvas
+    // ========================================================================
+    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Waveform Editor:");
+    ImGui::Text("Click and drag to draw | Right-click to erase");
+
+    ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+    ImVec2 canvas_sz = ImVec2(650, 200);
+    ImVec2 canvas_p1 = ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y);
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+    draw_list->AddRectFilled(canvas_p0, canvas_p1, IM_COL32(20, 20, 30, 255));
+    draw_list->AddRect(canvas_p0, canvas_p1, IM_COL32(100, 100, 120, 255));
+
+    // Grid lines
+    float centerY = canvas_p0.y + canvas_sz.y * 0.5f;
+    draw_list->AddLine(ImVec2(canvas_p0.x, centerY), ImVec2(canvas_p1.x, centerY), IM_COL32(80, 80, 90, 255));
+
+    for (int i = 1; i <= 4; i++) {
+        float y = centerY + (canvas_sz.y * 0.25f * i);
+        draw_list->AddLine(ImVec2(canvas_p0.x, y), ImVec2(canvas_p1.x, y), IM_COL32(50, 50, 60, 150));
+        y = centerY - (canvas_sz.y * 0.25f * i);
+        draw_list->AddLine(ImVec2(canvas_p0.x, y), ImVec2(canvas_p1.x, y), IM_COL32(50, 50, 60, 150));
+    }
+
+    // Draw waveform
+    for (int i = 0; i < Wavetable::TABLE_SIZE - 1; i++) {
+        float x0 = canvas_p0.x + (float)i / Wavetable::TABLE_SIZE * canvas_sz.x;
+        float y0 = centerY - currentTable.samples[i] * canvas_sz.y * 0.45f;
+        float x1 = canvas_p0.x + (float)(i + 1) / Wavetable::TABLE_SIZE * canvas_sz.x;
+        float y1 = centerY - currentTable.samples[i + 1] * canvas_sz.y * 0.45f;
+
+        draw_list->AddLine(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(0, 200, 255, 255), 2.0f);
+    }
+
+    // Handle mouse input for drawing
+    ImGui::SetCursorScreenPos(canvas_p0);
+    ImGui::InvisibleButton("##wavetable_canvas", canvas_sz);
+
+    if (ImGui::IsItemActive()) {
+        ImVec2 mousePos = ImGui::GetMousePos();
+        if (mousePos.x >= canvas_p0.x && mousePos.x <= canvas_p1.x &&
+            mousePos.y >= canvas_p0.y && mousePos.y <= canvas_p1.y) {
+
+            int index = (int)((mousePos.x - canvas_p0.x) / canvas_sz.x * Wavetable::TABLE_SIZE);
+            index = std::clamp(index, 0, Wavetable::TABLE_SIZE - 1);
+
+            float value = -(mousePos.y - centerY) / (canvas_sz.y * 0.45f);
+            value = std::clamp(value, -1.0f, 1.0f);
+
+            // Left mouse = draw, right mouse = erase
+            if (ImGui::IsMouseDown(0)) {
+                currentTable.samples[index] = value;
+                // Smooth nearby samples for better drawing
+                if (index > 0) currentTable.samples[index - 1] = (currentTable.samples[index - 1] + value) * 0.5f;
+                if (index < Wavetable::TABLE_SIZE - 1) currentTable.samples[index + 1] = (currentTable.samples[index + 1] + value) * 0.5f;
+            } else if (ImGui::IsMouseDown(1)) {
+                currentTable.samples[index] = 0.0f;
+            }
+        }
+    }
+
+    ImGui::Dummy(ImVec2(0, 10)); // Spacer
+
+    // ========================================================================
+    // Preset Buttons
+    // ========================================================================
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Initialize Preset:");
+    if (ImGui::Button("Sine", ImVec2(100, 0))) {
+        currentTable.initSine();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Saw", ImVec2(100, 0))) {
+        currentTable.initSaw();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Square", ImVec2(100, 0))) {
+        currentTable.initSquare();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Triangle", ImVec2(100, 0))) {
+        currentTable.initTriangle();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear", ImVec2(100, 0))) {
+        currentTable.clear();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Normalize", ImVec2(100, 0))) {
+        currentTable.normalize();
+    }
+
+    ImGui::Separator();
+
+    // ========================================================================
+    // Morph Control (if multiple tables in bank)
+    // ========================================================================
+    if (currentBank.tables.size() > 1) {
+        static float morphPosition = 0.0f;
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Morph Position:");
+        ImGui::SliderFloat("##morph", &morphPosition, 0.0f, 1.0f, "%.3f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Morphs between %d wavetables in the bank", (int)currentBank.tables.size());
+        }
+
+        // Preview morphed waveform
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Morphed Waveform Preview:");
+        ImVec2 preview_p0 = ImGui::GetCursorScreenPos();
+        ImVec2 preview_sz = ImVec2(650, 100);
+        ImVec2 preview_p1 = ImVec2(preview_p0.x + preview_sz.x, preview_p0.y + preview_sz.y);
+
+        draw_list->AddRectFilled(preview_p0, preview_p1, IM_COL32(20, 20, 30, 255));
+        draw_list->AddRect(preview_p0, preview_p1, IM_COL32(100, 100, 120, 255));
+
+        float previewCenterY = preview_p0.y + preview_sz.y * 0.5f;
+        draw_list->AddLine(ImVec2(preview_p0.x, previewCenterY), ImVec2(preview_p1.x, previewCenterY), IM_COL32(80, 80, 90, 255));
+
+        // Draw morphed waveform
+        for (int i = 0; i < 256; i++) {
+            float phase = (float)i / 256.0f;
+            float sample = currentBank.lookupMorph(phase, morphPosition);
+
+            float x = preview_p0.x + (float)i / 256.0f * preview_sz.x;
+            float y = previewCenterY - sample * preview_sz.y * 0.45f;
+
+            if (i > 0) {
+                float prevPhase = (float)(i - 1) / 256.0f;
+                float prevSample = currentBank.lookupMorph(prevPhase, morphPosition);
+                float prevX = preview_p0.x + (float)(i - 1) / 256.0f * preview_sz.x;
+                float prevY = previewCenterY - prevSample * preview_sz.y * 0.45f;
+
+                draw_list->AddLine(ImVec2(prevX, prevY), ImVec2(x, y), IM_COL32(255, 150, 0, 255), 2.0f);
+            }
+        }
+
+        ImGui::Dummy(preview_sz);
+    }
+
+    ImGui::End();
+}
+
 // Export scale highlighting state for piano roll
 inline bool isNoteHighlighted(int pitch) {
     if (!g_ToolsScaleHighlight) return false;
