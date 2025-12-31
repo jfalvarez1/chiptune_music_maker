@@ -10931,6 +10931,121 @@ inline void renderSpectrumAnalyzer(Sequencer& seq) {
     ImGui::End();
 }
 
+// ============================================================================
+// MIDI Input Window
+// ============================================================================
+inline void renderMIDIInput(Sequencer& seq, UIState& uiState) {
+    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
+    ImGui::Begin("MIDI Input", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    auto& midiInput = seq.getMIDIInput();
+
+    // Device selection
+    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "MIDI Device:");
+    ImGui::SameLine();
+
+    auto devices = midiInput.getDevices();
+    int currentDevice = midiInput.getCurrentDevice();
+
+    if (devices.empty()) {
+        ImGui::Text("No MIDI devices found");
+    } else {
+        std::vector<const char*> deviceNames;
+        for (const auto& dev : devices) {
+            deviceNames.push_back(dev.name.c_str());
+        }
+
+        int selectedIdx = currentDevice;
+        if (selectedIdx < 0) selectedIdx = 0;
+
+        if (ImGui::Combo("##midiDevice", &selectedIdx, deviceNames.data(), (int)deviceNames.size())) {
+            if (midiInput.openDevice(selectedIdx)) {
+                // Successfully opened
+            } else {
+                ImGui::OpenPopup("MIDI Error");
+            }
+        }
+    }
+
+    // Error popup
+    if (ImGui::BeginPopupModal("MIDI Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Failed to open MIDI device:");
+        ImGui::TextWrapped("%s", midiInput.getErrorMessage().c_str());
+        if (ImGui::Button("OK", ImVec2(120, 0))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::Separator();
+
+    // Recording controls
+    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Recording:");
+
+    const char* recordModeItems[] = { "Off", "Replace", "Overdub" };
+    int recordModeIdx = (int)midiInput.getRecordMode();
+    if (ImGui::Combo("Record Mode", &recordModeIdx, recordModeItems, 3)) {
+        midiInput.setRecordMode((MIDIInput::RecordMode)recordModeIdx);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Off: Just play through\nReplace: Erase and record new\nOverdub: Add to existing notes");
+    }
+
+    // Quantization
+    bool quantizeEnabled = midiInput.isQuantizeEnabled();
+    if (ImGui::Checkbox("Quantize", &quantizeEnabled)) {
+        midiInput.setQuantizeEnabled(quantizeEnabled);
+    }
+
+    if (quantizeEnabled) {
+        ImGui::SameLine();
+        const char* gridItems[] = { "1/4", "1/8", "1/16", "1/32" };
+        float gridValues[] = { 1.0f, 0.5f, 0.25f, 0.125f };
+
+        float currentGrid = midiInput.getQuantization();
+        int gridIdx = 2; // Default to 1/16
+        for (int i = 0; i < 4; i++) {
+            if (std::abs(currentGrid - gridValues[i]) < 0.01f) {
+                gridIdx = i;
+                break;
+            }
+        }
+
+        if (ImGui::Combo("Grid", &gridIdx, gridItems, 4)) {
+            midiInput.setQuantization(gridValues[gridIdx]);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Quantize recorded notes to grid");
+        }
+    }
+
+    ImGui::Separator();
+
+    // Input channel selection
+    ImGui::Text("Record to Channel:");
+    ImGui::SameLine();
+    int channel = uiState.selectedChannel;
+    if (ImGui::SliderInt("##inputChannel", &channel, 0, 7, "Ch %d")) {
+        uiState.selectedChannel = channel;
+    }
+
+    // Status
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Status:");
+
+    if (currentDevice >= 0 && currentDevice < (int)devices.size()) {
+        ImGui::Text("Connected: %s", devices[currentDevice].name.c_str());
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "No device connected");
+    }
+
+    if (midiInput.getRecordMode() != MIDIInput::RecordMode::Off) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "RECORDING");
+    }
+
+    ImGui::End();
+}
+
 // Export scale highlighting state for piano roll
 inline bool isNoteHighlighted(int pitch) {
     if (!g_ToolsScaleHighlight) return false;

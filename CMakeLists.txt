@@ -43,6 +43,24 @@ add_library(miniaudio INTERFACE)
 target_include_directories(miniaudio INTERFACE ${CMAKE_SOURCE_DIR}/vendor/miniaudio)
 
 # ============================================================================
+# midifile Library (MIDI export/import)
+# ============================================================================
+set(MIDIFILE_DIR ${CMAKE_SOURCE_DIR}/vendor/midifile)
+
+add_library(midifile STATIC
+    ${MIDIFILE_DIR}/src/Binasc.cpp
+    ${MIDIFILE_DIR}/src/MidiEvent.cpp
+    ${MIDIFILE_DIR}/src/MidiEventList.cpp
+    ${MIDIFILE_DIR}/src/MidiFile.cpp
+    ${MIDIFILE_DIR}/src/MidiMessage.cpp
+    ${MIDIFILE_DIR}/src/Options.cpp
+)
+
+target_include_directories(midifile PUBLIC
+    ${MIDIFILE_DIR}/include
+)
+
+# ============================================================================
 # Dear ImGui Library
 # ============================================================================
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/vendor/imgui)
@@ -79,15 +97,18 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/Synthesizer.h
     src/Sequencer.h
     src/FileIO.h
+    src/MIDIExport.h
     src/UI.h
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/vendor/libremidi/include
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     miniaudio
+    midifile
     imgui
     OpenGL::GL
 )
@@ -99,6 +120,7 @@ if(WIN32)
         imm32       # For IME support
         comdlg32    # For file dialogs
         shell32     # For shell functions
+        winmm       # For MIDI input (libremidi)
     )
 elseif(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)
@@ -127,6 +149,77 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 # Install Rules
 # ============================================================================
 install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION bin
+)
+
+# ============================================================================
+# VoiceToNote Tool
+# ============================================================================
+add_executable(VoiceToNote WIN32
+    src/VoiceToNoteTool.cpp
+    src/AudioAnalyzer.cpp
+    src/AudioImplementation.cpp
+)
+
+target_include_directories(VoiceToNote PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(VoiceToNote PRIVATE
+    miniaudio
+    imgui
+    OpenGL::GL
+)
+
+if(WIN32)
+    target_link_libraries(VoiceToNote PRIVATE
+        dwmapi
+        imm32
+        comdlg32
+        shell32
+    )
+elseif(UNIX AND NOT APPLE)
+    target_link_libraries(VoiceToNote PRIVATE
+        Threads::Threads
+        dl
+        m
+    )
+elseif(APPLE)
+    target_link_libraries(VoiceToNote PRIVATE
+        ${COREAUDIO_LIBRARY}
+        ${AUDIOTOOLBOX_LIBRARY}
+    )
+endif()
+
+set_target_properties(VoiceToNote PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+install(TARGETS VoiceToNote
+    RUNTIME DESTINATION bin
+)
+
+# ============================================================================
+# DebugAnalyzer Tool
+# ============================================================================
+add_executable(DebugAnalyzer
+    src/DebugAnalyzer.cpp
+    src/AudioAnalyzer.cpp
+)
+
+target_include_directories(DebugAnalyzer PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(DebugAnalyzer PRIVATE
+    miniaudio
+)
+
+set_target_properties(DebugAnalyzer PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+install(TARGETS DebugAnalyzer
     RUNTIME DESTINATION bin
 )
 

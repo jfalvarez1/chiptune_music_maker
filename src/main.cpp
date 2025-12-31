@@ -402,6 +402,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         // Spectrum Analyzer (always visible)
         ChiptuneTracker::renderSpectrumAnalyzer(sequencer);
 
+        // MIDI Input (always visible)
+        ChiptuneTracker::renderMIDIInput(sequencer, uiState);
+
         // Main editor view (based on current mode)
         switch (uiState.currentView) {
             case ChiptuneTracker::ViewMode::PianoRoll:

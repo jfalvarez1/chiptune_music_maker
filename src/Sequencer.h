@@ -11,6 +11,7 @@
 #include "Synthesizer.h"
 #include "MasterEffects.h"
 #include "SpectrumAnalyzer.h"
+#include "MIDIInput.h"
 #include <array>
 #include <algorithm>
 #include <cstdlib>
@@ -28,6 +29,15 @@ public:
         for (auto& synth : m_synths) {
             synth.setSampleRate(44100.0f);
         }
+
+        // Set up MIDI input callback
+        m_midiInput.setNoteEventCallback([this](int pitch, float velocity, bool isNoteOn) {
+            if (isNoteOn) {
+                triggerNote(m_previewChannel, pitch, velocity);
+            } else {
+                releaseNote(m_previewChannel, pitch);
+            }
+        });
     }
 
     void setSampleRate(float sr) {
@@ -261,6 +271,13 @@ public:
     // ========================================================================
     SpectrumAnalyzer& getSpectrumAnalyzer() {
         return m_spectrumAnalyzer;
+    }
+
+    // ========================================================================
+    // MIDI Input Access
+    // ========================================================================
+    MIDIInput& getMIDIInput() {
+        return m_midiInput;
     }
 
     void updateChannelConfigs() {
@@ -585,6 +602,9 @@ private:
 
     // Spectrum analyzer (frequency visualization)
     SpectrumAnalyzer m_spectrumAnalyzer;
+
+    // MIDI input (keyboard input and recording)
+    MIDIInput m_midiInput;
 
     // Pattern preview mode
     int m_previewPattern = -1;
