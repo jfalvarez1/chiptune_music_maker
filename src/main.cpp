@@ -399,6 +399,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         // Tools panel (always visible)
         ChiptuneTracker::DrawToolsPanel(project, uiState, sequencer);
 
+        // Spectrum Analyzer (always visible)
+        ChiptuneTracker::renderSpectrumAnalyzer(sequencer);
+
         // Main editor view (based on current mode)
         switch (uiState.currentView) {
             case ChiptuneTracker::ViewMode::PianoRoll:

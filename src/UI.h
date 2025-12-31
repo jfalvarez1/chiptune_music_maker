@@ -10810,6 +10810,127 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::End();
 }
 
+// ============================================================================
+// Spectrum Analyzer Window
+// ============================================================================
+inline void renderSpectrumAnalyzer(Sequencer& seq) {
+    ImGui::SetNextWindowSize(ImVec2(800, 300), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Spectrum Analyzer", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    auto& analyzer = seq.getSpectrumAnalyzer();
+
+    // Get all magnitudes
+    std::vector<float> magnitudes = analyzer.getAllMagnitudes();
+
+    if (magnitudes.empty()) {
+        ImGui::Text("No audio data");
+        ImGui::End();
+        return;
+    }
+
+    // Draw spectrum as bars
+    ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+    ImVec2 canvas_size = ImGui::GetContentRegionAvail();
+    if (canvas_size.y < 50) canvas_size.y = 200;
+
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    // Background
+    draw_list->AddRectFilled(canvas_pos,
+                            ImVec2(canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y),
+                            IM_COL32(20, 20, 30, 255));
+
+    // Frequency bins to display (20 Hz to 20 kHz)
+    const int numBinsToShow = std::min(512, (int)magnitudes.size());
+
+    // Logarithmic frequency scale for better visualization
+    const float minFreq = 20.0f;
+    const float maxFreq = 20000.0f;
+
+    // Draw frequency bars
+    float barWidth = canvas_size.x / numBinsToShow;
+
+    for (int i = 0; i < numBinsToShow; i++) {
+        // Logarithmic bin mapping for perceptually uniform display
+        float logPos = (float)i / numBinsToShow;
+        float freq = minFreq * std::pow(maxFreq / minFreq, logPos);
+        int binIdx = analyzer.frequencyToBin(freq);
+
+        if (binIdx >= 0 && binIdx < (int)magnitudes.size()) {
+            float magnitude = magnitudes[binIdx];
+
+            // Bar height
+            float barHeight = magnitude * canvas_size.y;
+
+            // Color gradient (green -> yellow -> red)
+            ImU32 color;
+            if (magnitude < 0.5f) {
+                // Green to yellow
+                float t = magnitude / 0.5f;
+                color = IM_COL32(
+                    (int)(0 + t * 255),
+                    255,
+                    0,
+                    200
+                );
+            } else {
+                // Yellow to red
+                float t = (magnitude - 0.5f) / 0.5f;
+                color = IM_COL32(
+                    255,
+                    (int)(255 - t * 255),
+                    0,
+                    200
+                );
+            }
+
+            // Draw bar from bottom
+            float x = canvas_pos.x + i * barWidth;
+            float yTop = canvas_pos.y + canvas_size.y - barHeight;
+            float yBottom = canvas_pos.y + canvas_size.y;
+
+            draw_list->AddRectFilled(
+                ImVec2(x, yTop),
+                ImVec2(x + barWidth - 1, yBottom),
+                color
+            );
+        }
+    }
+
+    // Draw frequency labels
+    const char* freqLabels[] = { "20Hz", "100Hz", "1kHz", "10kHz", "20kHz" };
+    const float freqValues[] = { 20.0f, 100.0f, 1000.0f, 10000.0f, 20000.0f };
+
+    for (int i = 0; i < 5; i++) {
+        float logPos = std::log(freqValues[i] / minFreq) / std::log(maxFreq / minFreq);
+        float x = canvas_pos.x + logPos * canvas_size.x;
+
+        // Vertical line
+        draw_list->AddLine(
+            ImVec2(x, canvas_pos.y),
+            ImVec2(x, canvas_pos.y + canvas_size.y),
+            IM_COL32(80, 80, 100, 100),
+            1.0f
+        );
+
+        // Label
+        draw_list->AddText(
+            ImVec2(x + 2, canvas_pos.y + 5),
+            IM_COL32(180, 180, 200, 255),
+            freqLabels[i]
+        );
+    }
+
+    // Dummy item to reserve space
+    ImGui::Dummy(canvas_size);
+
+    // Display peak frequency
+    float peakFreq = analyzer.getPeakFrequency();
+    ImGui::Text("Peak Frequency: %.1f Hz", peakFreq);
+
+    ImGui::End();
+}
+
 // Export scale highlighting state for piano roll
 inline bool isNoteHighlighted(int pitch) {
     if (!g_ToolsScaleHighlight) return false;

@@ -10,6 +10,7 @@
 #include "Types.h"
 #include "Synthesizer.h"
 #include "MasterEffects.h"
+#include "SpectrumAnalyzer.h"
 #include <array>
 #include <algorithm>
 #include <cstdlib>
@@ -35,6 +36,7 @@ public:
             synth.setSampleRate(sr);
         }
         m_masterEffects.setSampleRate(sr);
+        m_spectrumAnalyzer.setSampleRate(sr);
     }
 
     void setProject(Project* project) {
@@ -195,6 +197,9 @@ public:
             left = std::tanh(left);
             right = std::tanh(right);
 
+            // Feed to spectrum analyzer for visualization
+            m_spectrumAnalyzer.process(left, right);
+
             leftOut[i] = left;
             rightOut[i] = right;
         }
@@ -249,6 +254,13 @@ public:
     // ========================================================================
     MasterEffects& getMasterEffects() {
         return m_masterEffects;
+    }
+
+    // ========================================================================
+    // Spectrum Analyzer Access
+    // ========================================================================
+    SpectrumAnalyzer& getSpectrumAnalyzer() {
+        return m_spectrumAnalyzer;
     }
 
     void updateChannelConfigs() {
@@ -570,6 +582,9 @@ private:
 
     // Master bus effects (post-mixer processing)
     MasterEffects m_masterEffects;
+
+    // Spectrum analyzer (frequency visualization)
+    SpectrumAnalyzer m_spectrumAnalyzer;
 
     // Pattern preview mode
     int m_previewPattern = -1;
