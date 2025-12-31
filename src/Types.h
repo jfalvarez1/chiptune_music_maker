@@ -382,6 +382,211 @@ struct Clip {
 };
 
 // ============================================================================
+// Automation System
+// ============================================================================
+
+// What parameter to automate
+enum class AutomationTarget : uint8_t {
+    Volume,
+    Pan,
+    FilterCutoff,
+    FilterResonance,
+    ReverbMix,
+    DelayMix,
+    ChorusMix,
+    DistortionDrive,
+    BitcrusherDepth,
+    PhaserRate,
+    FlangerRate,
+    TremoloRate,
+    CompressorThreshold,
+    EQLow,
+    EQMid,
+    EQHigh,
+    StereoWidth,
+    TapeDrive,
+    // Master channel parameters
+    MasterVolume,
+    MasterEQLow,
+    MasterEQMid,
+    MasterEQHigh,
+    MasterCompThreshold,
+    MasterLimiterCeiling
+};
+
+// Interpolation type for automation curves
+enum class InterpolationType : uint8_t {
+    Linear,     // Straight lines between points
+    Bezier,     // Smooth curves with curvature control
+    Step        // Hold value until next point (stairs)
+};
+
+// Single point on an automation curve
+struct AutomationPoint {
+    float time = 0.0f;          // Beat position
+    float value = 0.0f;         // Normalized value (0.0 to 1.0)
+    float curvature = 0.0f;     // Bezier curve tension (-1.0 to 1.0, 0 = linear)
+
+    bool operator<(const AutomationPoint& other) const {
+        return time < other.time;
+    }
+};
+
+// Automation curve (collection of points with interpolation)
+struct AutomationCurve {
+    std::vector<AutomationPoint> points;
+    InterpolationType interpolation = InterpolationType::Linear;
+
+    // Evaluate curve at a given time (returns normalized 0.0-1.0 value)
+    float evaluate(float time) const {
+        if (points.empty()) return 0.5f; // Default to midpoint
+
+        // Before first point - return first value
+        if (time <= points.front().time) {
+            return points.front().value;
+        }
+
+        // After last point - return last value
+        if (time >= points.back().time) {
+            return points.back().value;
+        }
+
+        // Find the two points we're between
+        for (size_t i = 0; i < points.size() - 1; i++) {
+            const auto& p1 = points[i];
+            const auto& p2 = points[i + 1];
+
+            if (time >= p1.time && time <= p2.time) {
+                // Calculate normalized position between points (0.0 to 1.0)
+                float t = (time - p1.time) / (p2.time - p1.time);
+
+                switch (interpolation) {
+                    case InterpolationType::Step:
+                        return p1.value;
+
+                    case InterpolationType::Linear:
+                        return p1.value + t * (p2.value - p1.value);
+
+                    case InterpolationType::Bezier: {
+                        // Hermite interpolation with curvature control
+                        // curvature affects the "tightness" of the curve
+                        float tension = (p1.curvature + p2.curvature) * 0.5f;
+
+                        // Ease-in-out cubic interpolation modified by tension
+                        float eased = t * t * (3.0f - 2.0f * t); // Smoothstep
+                        float linear = t;
+                        float blend = (1.0f + tension) * 0.5f; // 0 to 1
+                        float finalT = linear * (1.0f - blend) + eased * blend;
+
+                        return p1.value + finalT * (p2.value - p1.value);
+                    }
+                }
+            }
+        }
+
+        return 0.5f; // Shouldn't reach here
+    }
+
+    // Add a point (automatically sorts by time)
+    void addPoint(float time, float value, float curvature = 0.0f) {
+        AutomationPoint point;
+        point.time = time;
+        point.value = std::clamp(value, 0.0f, 1.0f);
+        point.curvature = std::clamp(curvature, -1.0f, 1.0f);
+
+        points.push_back(point);
+        std::sort(points.begin(), points.end());
+    }
+
+    // Remove a point by index
+    void removePoint(int index) {
+        if (index >= 0 && index < (int)points.size()) {
+            points.erase(points.begin() + index);
+        }
+    }
+
+    // Move a point (maintains sort order)
+    void movePoint(int index, float time, float value) {
+        if (index >= 0 && index < (int)points.size()) {
+            points[index].time = time;
+            points[index].value = std::clamp(value, 0.0f, 1.0f);
+            std::sort(points.begin(), points.end());
+        }
+    }
+
+    // Set curvature for a point
+    void setCurvature(int index, float curvature) {
+        if (index >= 0 && index < (int)points.size()) {
+            points[index].curvature = std::clamp(curvature, -1.0f, 1.0f);
+        }
+    }
+
+    // Clear all points
+    void clear() {
+        points.clear();
+    }
+
+    // Find point at or near a time (within tolerance)
+    int findPointAt(float time, float tolerance = 0.1f) const {
+        for (int i = 0; i < (int)points.size(); i++) {
+            if (std::abs(points[i].time - time) <= tolerance) {
+                return i;
+            }
+        }
+        return -1;
+    }
+};
+
+// Automation lane (binds a curve to a specific parameter on a channel)
+struct AutomationLane {
+    std::string name = "Automation";
+    int channelIndex = 0;               // Which channel (-1 for master)
+    AutomationTarget target = AutomationTarget::Volume;
+    AutomationCurve curve;
+    bool enabled = true;
+    bool visible = true;                // Show in UI
+    uint32_t color = 0xFF88AAFF;        // Visual color
+
+    // Get display name for this automation
+    std::string getDisplayName() const {
+        std::string targetName;
+        switch (target) {
+            case AutomationTarget::Volume: targetName = "Volume"; break;
+            case AutomationTarget::Pan: targetName = "Pan"; break;
+            case AutomationTarget::FilterCutoff: targetName = "Filter Cutoff"; break;
+            case AutomationTarget::FilterResonance: targetName = "Filter Resonance"; break;
+            case AutomationTarget::ReverbMix: targetName = "Reverb Mix"; break;
+            case AutomationTarget::DelayMix: targetName = "Delay Mix"; break;
+            case AutomationTarget::ChorusMix: targetName = "Chorus Mix"; break;
+            case AutomationTarget::DistortionDrive: targetName = "Distortion Drive"; break;
+            case AutomationTarget::BitcrusherDepth: targetName = "Bitcrusher"; break;
+            case AutomationTarget::PhaserRate: targetName = "Phaser Rate"; break;
+            case AutomationTarget::FlangerRate: targetName = "Flanger Rate"; break;
+            case AutomationTarget::TremoloRate: targetName = "Tremolo Rate"; break;
+            case AutomationTarget::CompressorThreshold: targetName = "Compressor"; break;
+            case AutomationTarget::EQLow: targetName = "EQ Low"; break;
+            case AutomationTarget::EQMid: targetName = "EQ Mid"; break;
+            case AutomationTarget::EQHigh: targetName = "EQ High"; break;
+            case AutomationTarget::StereoWidth: targetName = "Stereo Width"; break;
+            case AutomationTarget::TapeDrive: targetName = "Tape Drive"; break;
+            case AutomationTarget::MasterVolume: targetName = "Master Volume"; break;
+            case AutomationTarget::MasterEQLow: targetName = "Master EQ Low"; break;
+            case AutomationTarget::MasterEQMid: targetName = "Master EQ Mid"; break;
+            case AutomationTarget::MasterEQHigh: targetName = "Master EQ High"; break;
+            case AutomationTarget::MasterCompThreshold: targetName = "Master Comp"; break;
+            case AutomationTarget::MasterLimiterCeiling: targetName = "Master Limiter"; break;
+            default: targetName = "Unknown"; break;
+        }
+
+        if (channelIndex < 0) {
+            return "Master - " + targetName;
+        } else {
+            return "Ch" + std::to_string(channelIndex + 1) + " - " + targetName;
+        }
+    }
+};
+
+// ============================================================================
 // Project State
 // ============================================================================
 struct Project {
@@ -420,6 +625,7 @@ struct Project {
     std::array<ChannelConfig, MAX_CHANNELS> channels;
     std::vector<Pattern> patterns;
     std::vector<Clip> arrangement;
+    std::vector<AutomationLane> automationLanes;  // Parameter automation
 
     float songLength = 64.0f;   // Total length in beats
 

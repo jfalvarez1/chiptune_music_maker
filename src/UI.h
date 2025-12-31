@@ -11046,6 +11046,265 @@ inline void renderMIDIInput(Sequencer& seq, UIState& uiState) {
     ImGui::End();
 }
 
+// ============================================================================
+// Automation Editor Window
+// ============================================================================
+inline void renderAutomation(Project& project, UIState& uiState, const PlaybackState& playbackState) {
+    ImGui::SetNextWindowSize(ImVec2(800, 500), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Automation", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    // ========================================================================
+    // Toolbar - Add/Remove Lanes
+    // ========================================================================
+    if (ImGui::Button("+ Add Lane")) {
+        AutomationLane newLane;
+        newLane.name = "New Automation";
+        newLane.channelIndex = uiState.selectedChannel;
+        newLane.target = AutomationTarget::Volume;
+        newLane.color = 0xFF00AAFF + (project.automationLanes.size() * 0x112233);
+        project.automationLanes.push_back(newLane);
+    }
+    ImGui::SameLine();
+
+    static int selectedLaneIndex = -1;
+    if (selectedLaneIndex >= 0 && selectedLaneIndex < (int)project.automationLanes.size()) {
+        if (ImGui::Button("- Remove Lane")) {
+            project.automationLanes.erase(project.automationLanes.begin() + selectedLaneIndex);
+            selectedLaneIndex = -1;
+        }
+    } else {
+        ImGui::BeginDisabled();
+        ImGui::Button("- Remove Lane");
+        ImGui::EndDisabled();
+    }
+
+    ImGui::SameLine();
+    ImGui::Text("| Lanes: %zu", project.automationLanes.size());
+
+    ImGui::Separator();
+
+    // ========================================================================
+    // Lane List + Editor (Split view)
+    // ========================================================================
+    ImGui::BeginChild("LaneList", ImVec2(250, 0), true);
+    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Automation Lanes:");
+
+    for (int i = 0; i < (int)project.automationLanes.size(); i++) {
+        auto& lane = project.automationLanes[i];
+
+        // Lane item (selectable)
+        bool isSelected = (selectedLaneIndex == i);
+        ImVec4 laneColor = ImColor(lane.color);
+
+        ImGui::PushID(i);
+        if (ImGui::Selectable(lane.getDisplayName().c_str(), isSelected)) {
+            selectedLaneIndex = i;
+        }
+
+        // Show enabled checkbox
+        ImGui::SameLine(220);
+        if (ImGui::Checkbox("##enabled", &lane.enabled)) {
+            // Toggle enabled
+        }
+
+        ImGui::PopID();
+    }
+
+    ImGui::EndChild();
+
+    // ========================================================================
+    // Lane Editor (Right panel)
+    // ========================================================================
+    ImGui::SameLine();
+    ImGui::BeginChild("LaneEditor", ImVec2(0, 0), true);
+
+    if (selectedLaneIndex >= 0 && selectedLaneIndex < (int)project.automationLanes.size()) {
+        auto& lane = project.automationLanes[selectedLaneIndex];
+        auto& curve = lane.curve;
+
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Lane Settings:");
+        ImGui::Separator();
+
+        // Channel selection
+        const char* channelNames[] = { "Ch 1", "Ch 2", "Ch 3", "Ch 4", "Ch 5", "Ch 6", "Ch 7", "Ch 8", "Master" };
+        int channelIdx = lane.channelIndex < 0 ? 8 : lane.channelIndex;
+        if (ImGui::Combo("Channel", &channelIdx, channelNames, 9)) {
+            lane.channelIndex = (channelIdx == 8) ? -1 : channelIdx;
+        }
+
+        // Parameter selection
+        const char* parameterNames[] = {
+            "Volume", "Pan", "Filter Cutoff", "Filter Resonance",
+            "Reverb Mix", "Delay Mix", "Chorus Mix", "Distortion Drive",
+            "Bitcrusher", "Phaser Rate", "Flanger Rate", "Tremolo Rate",
+            "Compressor", "EQ Low", "EQ Mid", "EQ High",
+            "Stereo Width", "Tape Drive",
+            "Master Volume", "Master EQ Low", "Master EQ Mid", "Master EQ High",
+            "Master Compressor", "Master Limiter"
+        };
+        int targetIdx = (int)lane.target;
+        if (ImGui::Combo("Parameter", &targetIdx, parameterNames, 24)) {
+            lane.target = (AutomationTarget)targetIdx;
+        }
+
+        // Interpolation type
+        const char* interpNames[] = { "Linear", "Bezier", "Step" };
+        int interpIdx = (int)curve.interpolation;
+        if (ImGui::Combo("Interpolation", &interpIdx, interpNames, 3)) {
+            curve.interpolation = (InterpolationType)interpIdx;
+        }
+
+        ImGui::Separator();
+
+        // ====================================================================
+        // Curve Editor Canvas
+        // ====================================================================
+        ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Curve Editor:");
+        ImGui::Text("Click to add points | Right-click point to delete | Drag to move");
+
+        ImVec2 canvas_p0 = ImGui::GetCursorScreenPos();
+        ImVec2 canvas_sz = ImVec2(500, 200);
+        if (canvas_sz.x < 50.0f) canvas_sz.x = 50.0f;
+        if (canvas_sz.y < 50.0f) canvas_sz.y = 50.0f;
+        ImVec2 canvas_p1 = ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y);
+
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddRectFilled(canvas_p0, canvas_p1, IM_COL32(20, 20, 30, 255));
+        draw_list->AddRect(canvas_p0, canvas_p1, IM_COL32(100, 100, 120, 255));
+
+        // Grid lines
+        for (int i = 0; i <= 4; i++) {
+            float y = canvas_p0.y + (canvas_sz.y * i / 4);
+            draw_list->AddLine(ImVec2(canvas_p0.x, y), ImVec2(canvas_p1.x, y), IM_COL32(50, 50, 60, 150));
+        }
+        for (int i = 0; i <= 8; i++) {
+            float x = canvas_p0.x + (canvas_sz.x * i / 8);
+            draw_list->AddLine(ImVec2(x, canvas_p0.y), ImVec2(x, canvas_p1.y), IM_COL32(50, 50, 60, 150));
+        }
+
+        // Playback cursor
+        float songLength = project.songLength;
+        if (songLength > 0.0f) {
+            float cursorX = canvas_p0.x + (playbackState.currentBeat / songLength) * canvas_sz.x;
+            draw_list->AddLine(ImVec2(cursorX, canvas_p0.y), ImVec2(cursorX, canvas_p1.y), IM_COL32(255, 100, 100, 200), 2.0f);
+        }
+
+        ImGui::InvisibleButton("canvas", canvas_sz, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+        const bool isHovered = ImGui::IsItemHovered();
+        const bool isActive = ImGui::IsItemActive();
+        const ImVec2 mousePos = ImGui::GetIO().MousePos;
+
+        // Draw automation curve
+        if (curve.points.size() >= 2) {
+            for (size_t i = 0; i < curve.points.size() - 1; i++) {
+                const auto& p1 = curve.points[i];
+                const auto& p2 = curve.points[i + 1];
+
+                float x1 = canvas_p0.x + (p1.time / songLength) * canvas_sz.x;
+                float y1 = canvas_p1.y - (p1.value * canvas_sz.y);
+                float x2 = canvas_p0.x + (p2.time / songLength) * canvas_sz.x;
+                float y2 = canvas_p1.y - (p2.value * canvas_sz.y);
+
+                // Draw interpolated curve (multiple line segments)
+                int segments = 20;
+                for (int seg = 0; seg < segments; seg++) {
+                    float t1 = (float)seg / segments;
+                    float t2 = (float)(seg + 1) / segments;
+
+                    float time1 = p1.time + t1 * (p2.time - p1.time);
+                    float time2 = p1.time + t2 * (p2.time - p1.time);
+
+                    float val1 = curve.evaluate(time1);
+                    float val2 = curve.evaluate(time2);
+
+                    float sx1 = canvas_p0.x + (time1 / songLength) * canvas_sz.x;
+                    float sy1 = canvas_p1.y - (val1 * canvas_sz.y);
+                    float sx2 = canvas_p0.x + (time2 / songLength) * canvas_sz.x;
+                    float sy2 = canvas_p1.y - (val2 * canvas_sz.y);
+
+                    draw_list->AddLine(ImVec2(sx1, sy1), ImVec2(sx2, sy2), IM_COL32(0, 200, 255, 255), 2.0f);
+                }
+            }
+        }
+
+        // Draw automation points
+        static int draggingPointIndex = -1;
+        for (int i = 0; i < (int)curve.points.size(); i++) {
+            const auto& point = curve.points[i];
+            float px = canvas_p0.x + (point.time / songLength) * canvas_sz.x;
+            float py = canvas_p1.y - (point.value * canvas_sz.y);
+
+            bool isPointHovered = (mousePos.x - px) * (mousePos.x - px) + (mousePos.y - py) * (mousePos.y - py) < 36.0f;
+
+            // Draw point
+            ImU32 pointColor = isPointHovered ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 150, 0, 255);
+            draw_list->AddCircleFilled(ImVec2(px, py), 5.0f, pointColor);
+            draw_list->AddCircle(ImVec2(px, py), 5.0f, IM_COL32(255, 255, 255, 200), 12, 1.5f);
+
+            // Drag point
+            if (isHovered && isActive && isPointHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                draggingPointIndex = i;
+            }
+
+            // Delete point (right-click)
+            if (isHovered && isPointHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                curve.removePoint(i);
+                break;
+            }
+        }
+
+        // Handle dragging
+        if (draggingPointIndex >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            float newTime = ((mousePos.x - canvas_p0.x) / canvas_sz.x) * songLength;
+            float newValue = 1.0f - ((mousePos.y - canvas_p0.y) / canvas_sz.y);
+            newTime = std::clamp(newTime, 0.0f, songLength);
+            newValue = std::clamp(newValue, 0.0f, 1.0f);
+            curve.movePoint(draggingPointIndex, newTime, newValue);
+        }
+
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            draggingPointIndex = -1;
+        }
+
+        // Add new point (click on canvas)
+        if (isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            bool clickedOnPoint = false;
+            for (int i = 0; i < (int)curve.points.size(); i++) {
+                const auto& point = curve.points[i];
+                float px = canvas_p0.x + (point.time / songLength) * canvas_sz.x;
+                float py = canvas_p1.y - (point.value * canvas_sz.y);
+                if ((mousePos.x - px) * (mousePos.x - px) + (mousePos.y - py) * (mousePos.y - py) < 36.0f) {
+                    clickedOnPoint = true;
+                    break;
+                }
+            }
+
+            if (!clickedOnPoint) {
+                float newTime = ((mousePos.x - canvas_p0.x) / canvas_sz.x) * songLength;
+                float newValue = 1.0f - ((mousePos.y - canvas_p0.y) / canvas_sz.y);
+                newTime = std::clamp(newTime, 0.0f, songLength);
+                newValue = std::clamp(newValue, 0.0f, 1.0f);
+                curve.addPoint(newTime, newValue);
+            }
+        }
+
+        ImGui::Separator();
+
+        // Point list
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Points: %zu", curve.points.size());
+        if (ImGui::Button("Clear All Points")) {
+            curve.clear();
+        }
+
+    } else {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Select a lane to edit");
+    }
+
+    ImGui::EndChild();
+
+    ImGui::End();
+}
+
 // Export scale highlighting state for piano roll
 inline bool isNoteHighlighted(int pitch) {
     if (!g_ToolsScaleHighlight) return false;

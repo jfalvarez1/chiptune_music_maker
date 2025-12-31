@@ -405,6 +405,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         // MIDI Input (always visible)
         ChiptuneTracker::renderMIDIInput(sequencer, uiState);
 
+        // Automation Editor (always visible)
+        ChiptuneTracker::renderAutomation(project, uiState, sequencer.getState());
+
         // Main editor view (based on current mode)
         switch (uiState.currentView) {
             case ChiptuneTracker::ViewMode::PianoRoll:

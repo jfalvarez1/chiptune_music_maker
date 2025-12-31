@@ -145,6 +145,9 @@ public:
                 processNoteEvents(prevBeat, m_state.currentBeat);
             }
 
+            // Apply automation to parameters at current playback position
+            applyAutomation(m_state.currentBeat);
+
             // ============================================================
             // Two-pass mix for sidechain support
             // ============================================================
@@ -578,6 +581,159 @@ private:
             }
         }
         return maxEndTime;
+    }
+
+    // ========================================================================
+    // Automation Processing
+    // ========================================================================
+
+    // Apply automation curves to parameters at current beat
+    void applyAutomation(float currentBeat) {
+        if (!m_project) return;
+
+        for (const auto& lane : m_project->automationLanes) {
+            if (!lane.enabled || lane.curve.points.empty()) continue;
+
+            // Evaluate automation curve at current beat (returns 0.0-1.0)
+            float normalizedValue = lane.curve.evaluate(currentBeat);
+
+            // Apply to appropriate parameter
+            applyAutomationValue(lane.channelIndex, lane.target, normalizedValue);
+        }
+    }
+
+    // Map normalized value (0-1) to actual parameter value and apply it
+    void applyAutomationValue(int channelIndex, AutomationTarget target, float normalizedValue) {
+        if (!m_project) return;
+
+        // Master channel parameters (channelIndex == -1)
+        if (channelIndex < 0) {
+            switch (target) {
+                case AutomationTarget::MasterVolume:
+                    m_project->masterVolume = normalizedValue;
+                    break;
+                case AutomationTarget::MasterEQLow:
+                    m_project->masterEQLowGain = normalizedValue * 24.0f - 12.0f; // -12 to +12 dB
+                    break;
+                case AutomationTarget::MasterEQMid:
+                    m_project->masterEQMidGain = normalizedValue * 24.0f - 12.0f;
+                    break;
+                case AutomationTarget::MasterEQHigh:
+                    m_project->masterEQHighGain = normalizedValue * 24.0f - 12.0f;
+                    break;
+                case AutomationTarget::MasterCompThreshold:
+                    m_project->masterCompThreshold = normalizedValue * 48.0f - 48.0f; // -48 to 0 dB
+                    break;
+                case AutomationTarget::MasterLimiterCeiling:
+                    m_project->masterLimiterCeiling = normalizedValue * 12.0f - 12.0f; // -12 to 0 dB
+                    break;
+                default:
+                    break;
+            }
+            // Update master effects with new values
+            updateMasterEffects();
+            return;
+        }
+
+        // Channel parameters
+        if (channelIndex < 0 || channelIndex >= MAX_CHANNELS) return;
+        auto& channel = m_project->channels[channelIndex];
+
+        switch (target) {
+            case AutomationTarget::Volume:
+                channel.volume = normalizedValue;
+                break;
+
+            case AutomationTarget::Pan:
+                channel.pan = normalizedValue * 2.0f - 1.0f; // -1.0 to +1.0
+                break;
+
+            case AutomationTarget::FilterCutoff:
+                channel.filterCutoff = 20.0f + normalizedValue * 19980.0f; // 20 Hz to 20 kHz (log scale would be better)
+                break;
+
+            case AutomationTarget::FilterResonance:
+                channel.filterResonance = normalizedValue; // 0.0 to 1.0
+                break;
+
+            case AutomationTarget::ReverbMix:
+                channel.reverbMix = normalizedValue;
+                break;
+
+            case AutomationTarget::DelayMix:
+                channel.delayMix = normalizedValue;
+                break;
+
+            case AutomationTarget::ChorusMix:
+                channel.chorusMix = normalizedValue;
+                break;
+
+            case AutomationTarget::DistortionDrive:
+                channel.distortionDrive = 1.0f + normalizedValue * 9.0f; // 1.0 to 10.0
+                break;
+
+            case AutomationTarget::BitcrusherDepth:
+                channel.bitDepth = 1.0f + normalizedValue * 15.0f; // 1 to 16 bits
+                break;
+
+            case AutomationTarget::PhaserRate:
+                channel.phaserRate = normalizedValue * 10.0f; // 0.0 to 10.0 Hz
+                break;
+
+            case AutomationTarget::FlangerRate:
+                channel.flangerRate = 0.1f + normalizedValue * 9.9f; // 0.1 to 10.0 Hz
+                break;
+
+            case AutomationTarget::TremoloRate:
+                channel.tremoloRate = normalizedValue * 20.0f; // 0.0 to 20.0 Hz
+                break;
+
+            case AutomationTarget::CompressorThreshold:
+                channel.compThreshold = normalizedValue; // 0.0 to 1.0
+                break;
+
+            case AutomationTarget::EQLow:
+                channel.eqLow = normalizedValue * 2.0f; // 0.0 to 2.0 (gain multiplier)
+                break;
+
+            case AutomationTarget::EQMid:
+                channel.eqMid = normalizedValue * 2.0f;
+                break;
+
+            case AutomationTarget::EQHigh:
+                channel.eqHigh = normalizedValue * 2.0f;
+                break;
+
+            case AutomationTarget::StereoWidth:
+                channel.stereoWidenerWidth = normalizedValue;
+                break;
+
+            case AutomationTarget::TapeDrive:
+                channel.tapeDrive = 1.0f + normalizedValue * 4.0f; // 1.0 to 5.0
+                break;
+
+            default:
+                break;
+        }
+
+        // Sync channel config to synthesizer effects
+        auto& fx = m_synths[channelIndex].effects();
+        fx.filter.cutoff = channel.filterCutoff;
+        fx.filter.resonance = channel.filterResonance;
+        fx.bitcrusher.bitDepth = channel.bitDepth;
+        fx.distortion.drive = channel.distortionDrive;
+        fx.reverb.mix = channel.reverbMix;
+        fx.delay.mix = channel.delayMix;
+        fx.chorus.mix = channel.chorusMix;
+        fx.phaser.rate = channel.phaserRate;
+        fx.flanger.rate = channel.flangerRate;
+        fx.tremolo.rate = channel.tremoloRate;
+        fx.compressor.threshold = channel.compThreshold;
+        fx.eq.lowGain = channel.eqLow;
+        fx.eq.midGain = channel.eqMid;
+        fx.eq.highGain = channel.eqHigh;
+        fx.stereoWidener.width = channel.stereoWidenerWidth;
+        fx.tapeSaturation.drive = channel.tapeDrive;
     }
 
 public:
