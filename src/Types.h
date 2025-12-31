@@ -106,7 +106,11 @@ enum class OscillatorType : uint8_t {
     Bongo,          // Bongo drums
     Timbale,        // Timbale hit
     Dembow808,      // 808-style kick tuned for dembow rhythm
-    DembowSnare     // Tight clap-like snare for dembow (1-3kHz emphasis)
+    DembowSnare,    // Tight clap-like snare for dembow (1-3kHz emphasis)
+    
+    // High-Accuracy Recreations
+    Vocoder,        // Sawtooth with formant filtering (Nightcall lead)
+    KavinskyBass    // Filtered Saw with envelope (Nightcall bass)
 };
 
 // ============================================================================
@@ -180,6 +184,9 @@ struct Note {
 
     // Per-note oscillator type (each note can have its own sound)
     OscillatorType oscillatorType = OscillatorType::Pulse;
+
+    // Sample playback (if >= 0, use sample instead of oscillatorType)
+    int      sampleID = -1;         // -1 = use oscillatorType, >= 0 = use sample from pool
 
     // Fade in/out (in beats, 0 = instant)
     float    fadeIn    = 0.0f;      // Fade in duration (beats)
@@ -265,11 +272,63 @@ struct ChannelConfig {
     bool chorusEnabled = false;
     float chorusMix = 0.3f;
     float chorusRate = 0.5f;
+    float chorusDepth = 0.005f;
 
     // Extended delay settings (genre effects)
     float delayMix = 0.2f;
     float delayTime = 0.25f;
     float delayFeedback = 0.3f;
+
+    // Stereo Widener (essential for synthwave pads)
+    bool stereoWidenerEnabled = false;
+    float stereoWidenerWidth = 0.5f;
+    float stereoWidenerHaas = 0.015f;
+    float stereoWidenerMix = 0.5f;
+
+    // Tape Saturation (analog warmth)
+    bool tapeSaturationEnabled = false;
+    float tapeDrive = 1.5f;
+    float tapeWarmth = 0.5f;
+    float tapeCompression = 0.3f;
+    float tapeMix = 0.5f;
+
+    // Filter settings (for genre effects)
+    int filterType = 0;  // 0=LP, 1=HP, 2=BP
+    float filterCutoff = 2000.0f;
+    float filterResonance = 0.3f;
+
+    // Distortion settings
+    int distortionType = 0;  // 0=Tanh, 1=HardClip, 2=Foldback, 3=Asymmetric
+    float distortionDrive = 2.0f;
+    float distortionMix = 0.5f;
+
+    // Bitcrusher settings (lo-fi / chiptune)
+    float bitDepth = 8.0f;
+    float sampleRateDiv = 4.0f;
+
+    // Phaser settings
+    bool phaserEnabled = false;
+    float phaserRate = 0.5f;
+    float phaserDepth = 0.5f;
+    float phaserFeedback = 0.5f;
+
+    // Flanger settings (NEW - jet-plane/swoosh effect for synthwave)
+    bool flangerEnabled = false;
+    float flangerRate = 0.5f;      // LFO Hz (0.1-10)
+    float flangerDepth = 0.005f;   // Delay depth in seconds (0.001-0.01)
+    float flangerFeedback = 0.5f;  // Feedback amount (-0.95 to +0.95)
+    float flangerMix = 0.5f;       // Dry/wet mix (0.0-1.0)
+
+    // Tremolo settings
+    bool tremoloEnabled = false;
+    float tremoloRate = 5.0f;
+    float tremoloDepth = 0.3f;
+
+    // Sidechain settings
+    bool sidechainEnabled = false;
+    int sidechainSource = -1; // Source channel index (-1 = none)
+    float sidechainAmount = 0.6f;
+    float sidechainRelease = 0.15f;
 
     // Channel-level Echo (applies to all notes on this channel)
     bool echoEnabled = false;
@@ -279,6 +338,34 @@ struct ChannelConfig {
 
     // Channel Detune (for stereo widening/richness)
     float detuneCents = 0.0f;       // Fine detune (-100 to +100 cents)
+
+    // Filter Envelope (Per-voice modulation)
+    bool filterEnvEnabled = false;
+    float filterEnvAmount = 0.0f;   // -1.0 to 1.0 (modulates cutoff relative to base)
+    float filterEnvAttack = 0.0f;   // Seconds
+    float filterEnvDecay = 0.1f;    // Seconds
+
+    // 3-Band EQ settings
+    bool eqEnabled = false;
+    float eqLow = 1.0f;     // Gain (0.0 to 2.0)
+    float eqMid = 1.0f;
+    float eqHigh = 1.0f;
+    float eqLowFreq = 200.0f;
+    float eqMidFreq = 1000.0f;
+    float eqHighFreq = 5000.0f;
+
+    // Compressor settings
+    bool compressorEnabled = false;
+    float compThreshold = 0.5f;
+    float compRatio = 4.0f;
+    float compAttack = 0.01f;
+    float compRelease = 0.1f;
+    float compGain = 1.0f;
+    
+    // Formant Filter
+    bool formantEnabled = false;
+    int formantVowel = 3; // 0=A, 1=E, 2=I, 3=O, 4=U (Default O for Nightcall)
+    float formantResonance = 5.0f;
 };
 
 // ============================================================================
@@ -305,6 +392,23 @@ struct Project {
     float bpm = 120.0f;
     int beatsPerMeasure = 4;
     float masterVolume = 0.7f;      // Master volume (0.0 to 1.0)
+
+    // Master Effects Settings (for final mastering)
+    bool masterEQEnabled = false;
+    float masterEQLowGain = 0.0f;       // dB (-12 to +12)
+    float masterEQMidGain = 0.0f;
+    float masterEQHighGain = 0.0f;
+
+    bool masterCompressorEnabled = false;
+    float masterCompThreshold = -12.0f;  // dB
+    float masterCompRatio = 2.5f;
+    float masterCompAttack = 0.01f;      // seconds
+    float masterCompRelease = 0.1f;
+    float masterCompMakeup = 2.0f;       // dB
+
+    bool masterLimiterEnabled = true;    // Usually always on
+    float masterLimiterCeiling = -0.3f;  // dB
+    float masterLimiterRelease = 0.05f;  // seconds
 
     // Swing/groove settings
     float swing = 0.0f;             // Swing amount: 0.0 = no swing, 1.0 = max swing (triplet feel)

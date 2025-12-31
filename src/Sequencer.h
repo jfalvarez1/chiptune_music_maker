@@ -9,6 +9,7 @@
 
 #include "Types.h"
 #include "Synthesizer.h"
+#include "MasterEffects.h"
 #include <array>
 #include <algorithm>
 #include <cstdlib>
@@ -33,11 +34,13 @@ public:
         for (auto& synth : m_synths) {
             synth.setSampleRate(sr);
         }
+        m_masterEffects.setSampleRate(sr);
     }
 
     void setProject(Project* project) {
         m_project = project;
         updateChannelConfigs();
+        updateMasterEffects();
     }
 
     // ========================================================================
@@ -180,10 +183,17 @@ public:
                 right += sample * rightGain;
             }
 
-            // Apply master volume and soft clip
+            // Apply master volume
             float master = m_project->masterVolume;
-            left = std::tanh(left * master);
-            right = std::tanh(right * master);
+            left *= master;
+            right *= master;
+
+            // Apply master bus effects (EQ, Compressor, Limiter)
+            m_masterEffects.process(left, right);
+
+            // Soft clip (in case limiter is disabled)
+            left = std::tanh(left);
+            right = std::tanh(right);
 
             leftOut[i] = left;
             rightOut[i] = right;
@@ -234,6 +244,13 @@ public:
         return m_synths[channel % MAX_CHANNELS];
     }
 
+    // ========================================================================
+    // Master Effects Access
+    // ========================================================================
+    MasterEffects& getMasterEffects() {
+        return m_masterEffects;
+    }
+
     void updateChannelConfigs() {
         if (!m_project) return;
 
@@ -257,6 +274,7 @@ public:
             fx.chorusEnabled = config.chorusEnabled;
             fx.chorus.mix = config.chorusMix;
             fx.chorus.rate = config.chorusRate;
+            fx.chorus.depth = config.chorusDepth;
 
             // Extended delay settings
             if (config.delayEnabled) {
@@ -264,7 +282,80 @@ public:
                 fx.delay.delayTime = config.delayTime;
                 fx.delay.feedback = config.delayFeedback;
             }
+
+            // Stereo Widener (essential for synthwave pads)
+            fx.stereoWidenerEnabled = config.stereoWidenerEnabled;
+            fx.stereoWidener.width = config.stereoWidenerWidth;
+            fx.stereoWidener.haasDelay = config.stereoWidenerHaas;
+            fx.stereoWidener.mix = config.stereoWidenerMix;
+
+            // Tape Saturation (analog warmth)
+            fx.tapeSaturationEnabled = config.tapeSaturationEnabled;
+            fx.tapeSaturation.drive = config.tapeDrive;
+            fx.tapeSaturation.warmth = config.tapeWarmth;
+            fx.tapeSaturation.compression = config.tapeCompression;
+            fx.tapeSaturation.mix = config.tapeMix;
+
+            // Filter settings
+            fx.filter.type = static_cast<FilterType>(config.filterType);
+            fx.filter.cutoff = config.filterCutoff;
+            fx.filter.resonance = config.filterResonance;
+
+            // Distortion settings
+            fx.distortion.type = static_cast<DistortionType>(config.distortionType);
+            fx.distortion.drive = config.distortionDrive;
+            fx.distortion.mix = config.distortionMix;
+
+            // Bitcrusher settings
+            fx.bitcrusher.bitDepth = config.bitDepth;
+            fx.bitcrusher.sampleRateReduction = config.sampleRateDiv;
+
+            // Phaser settings
+            fx.phaserEnabled = config.phaserEnabled;
+            fx.phaser.rate = config.phaserRate;
+            fx.phaser.depth = config.phaserDepth;
+            fx.phaser.feedback = config.phaserFeedback;
+
+            // Flanger settings (NEW)
+            fx.flangerEnabled = config.flangerEnabled;
+            fx.flanger.rate = config.flangerRate;
+            fx.flanger.depth = config.flangerDepth;
+            fx.flanger.feedback = config.flangerFeedback;
+            fx.flanger.mix = config.flangerMix;
+
+            // Tremolo settings
+            fx.tremoloEnabled = config.tremoloEnabled;
+            fx.tremolo.depth = config.tremoloDepth;
+            fx.tremolo.rate = config.tremoloRate;
+
+            // Sidechain settings
+            fx.sidechainEnabled = config.sidechainEnabled;
+            fx.sidechain.amount = config.sidechainAmount;
+            fx.sidechain.release = config.sidechainRelease;
         }
+    }
+
+    void updateMasterEffects() {
+        if (!m_project) return;
+
+        // Master EQ settings
+        m_masterEffects.eqEnabled = m_project->masterEQEnabled;
+        m_masterEffects.eq.lowGain = m_project->masterEQLowGain;
+        m_masterEffects.eq.midGain = m_project->masterEQMidGain;
+        m_masterEffects.eq.highGain = m_project->masterEQHighGain;
+
+        // Master Compressor settings
+        m_masterEffects.compressorEnabled = m_project->masterCompressorEnabled;
+        m_masterEffects.compressor.threshold = m_project->masterCompThreshold;
+        m_masterEffects.compressor.ratio = m_project->masterCompRatio;
+        m_masterEffects.compressor.attack = m_project->masterCompAttack;
+        m_masterEffects.compressor.release = m_project->masterCompRelease;
+        m_masterEffects.compressor.makeupGain = m_project->masterCompMakeup;
+
+        // Master Limiter settings
+        m_masterEffects.limiterEnabled = m_project->masterLimiterEnabled;
+        m_masterEffects.limiter.ceiling = m_project->masterLimiterCeiling;
+        m_masterEffects.limiter.release = m_project->masterLimiterRelease;
     }
 
 private:
@@ -476,6 +567,9 @@ private:
     PlaybackState m_state;
 
     std::array<Synthesizer, MAX_CHANNELS> m_synths;
+
+    // Master bus effects (post-mixer processing)
+    MasterEffects m_masterEffects;
 
     // Pattern preview mode
     int m_previewPattern = -1;

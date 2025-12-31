@@ -407,6 +407,60 @@ private:
 };
 
 // ============================================================================
+// Flanger - Short delay modulation for jet-plane/swoosh effect
+// ============================================================================
+class Flanger {
+public:
+    float rate = 0.5f;          // LFO rate (Hz) - 0.1 to 10
+    float depth = 0.005f;       // Delay modulation depth (seconds) - 0.001 to 0.01
+    float feedback = 0.5f;      // Feedback amount (-0.95 to +0.95)
+    float mix = 0.5f;           // Dry/wet mix (0.0 to 1.0)
+
+    void init(int sampleRate) {
+        m_sampleRate = sampleRate;
+        m_writePos = 0;
+        m_delayBuffer.fill(0.0f);
+        m_phase = 0.0f;
+    }
+
+    float process(float input) {
+        // LFO for delay modulation
+        float lfo = std::sin(m_phase * TWO_PI);
+        m_phase += rate / m_sampleRate;
+        if (m_phase >= 1.0f) m_phase -= 1.0f;
+
+        // Variable delay time (1-10ms typically for flanger)
+        float delayTime = 0.001f + depth * (lfo + 1.0f) * 0.5f;
+        int delaySamples = (int)(delayTime * m_sampleRate);
+        delaySamples = std::clamp(delaySamples, 1, BUFFER_SIZE - 1);
+
+        // Read from delay buffer with linear interpolation
+        int readPos = (m_writePos - delaySamples + BUFFER_SIZE) % BUFFER_SIZE;
+        float delayed = m_delayBuffer[readPos];
+
+        // Write to delay buffer with feedback
+        m_delayBuffer[m_writePos] = input + delayed * feedback;
+        m_writePos = (m_writePos + 1) % BUFFER_SIZE;
+
+        // Mix dry and wet signals
+        return input * (1.0f - mix) + delayed * mix;
+    }
+
+    void reset() {
+        m_delayBuffer.fill(0.0f);
+        m_writePos = 0;
+        m_phase = 0.0f;
+    }
+
+private:
+    static constexpr int BUFFER_SIZE = 96000; // 2 seconds at 48kHz
+    std::array<float, BUFFER_SIZE> m_delayBuffer = {};
+    int m_writePos = 0;
+    float m_phase = 0.0f;
+    int m_sampleRate = 48000;
+};
+
+// ============================================================================
 // Reverb - Schroeder-style algorithmic reverb for spacious sound
 // ============================================================================
 class Reverb {
@@ -800,6 +854,195 @@ private:
 };
 
 // ============================================================================
+// Compressor - Standard dynamic range compression
+// ============================================================================
+class Compressor {
+public:
+    float threshold = 0.5f;         // 0.0 to 1.0
+    float ratio = 4.0f;             // 1.0 to 20.0
+    float attack = 0.01f;           // Seconds
+    float release = 0.1f;           // Seconds
+    float makeupGain = 1.0f;        // Linear gain (1.0 = 0dB)
+
+    void setSampleRate(float sr) {
+        m_sampleRate = sr;
+    }
+
+    float process(float input) {
+        float absInput = std::abs(input);
+        
+        // Envelope follower
+        if (absInput > m_envelope) {
+            float attackCoef = std::exp(-1.0f / (attack * m_sampleRate + 0.001f));
+            m_envelope = attackCoef * m_envelope + (1.0f - attackCoef) * absInput;
+        } else {
+            float releaseCoef = std::exp(-1.0f / (release * m_sampleRate + 0.001f));
+            m_envelope = releaseCoef * m_envelope + (1.0f - releaseCoef) * absInput;
+        }
+
+        // Gain reduction
+        float gain = 1.0f;
+        if (m_envelope > threshold) {
+            float over = m_envelope - threshold;
+            float compressed = over / ratio;
+            float target = threshold + compressed;
+            gain = target / m_envelope;
+        }
+
+        return input * gain * makeupGain;
+    }
+
+    void reset() {
+        m_envelope = 0.0f;
+    }
+
+private:
+    float m_sampleRate = 44100.0f;
+    float m_envelope = 0.0f;
+};
+
+// ============================================================================
+// ThreeBandEQ - Low/Mid/High shelf and peak filters
+// ============================================================================
+class ThreeBandEQ {
+public:
+    float lowGain = 1.0f;   // Low shelf gain
+    float midGain = 1.0f;   // Peaking gain
+    float highGain = 1.0f;  // High shelf gain
+    float lowFreq = 200.0f;
+    float midFreq = 1000.0f;
+    float highFreq = 5000.0f;
+
+    void setSampleRate(float sr) {
+        m_sampleRate = sr;
+        // Simple biquad implementation or state variable would be better, 
+        // but for zero-allocation efficiently, let's use 3 simple 1-pole filters logic for now
+        // or actually standard shelving filters are better.
+        // Implementing basic 3-band isolate logic:
+    }
+
+    // Simple 3-band splitter/combiner
+    float process(float input) {
+        // 1-pole Lowpass for low band
+        float f_low = 2.0f * std::sin(PI * lowFreq / m_sampleRate);
+        m_low += f_low * (input - m_low);
+
+        // 1-pole Highpass for high band
+        float f_high = 2.0f * std::sin(PI * highFreq / m_sampleRate);
+        m_high += f_high * (input - m_high);
+        float h_content = input - m_high; // This is actually lowpassed at high freq? 
+        // Wait, correct 1-pole HP is: y[n] = (1-a)*x[n] + a*y[n-1]? No.
+        // Let's use state variable for cleaner bands.
+        
+        // Actually, simple LPF/HPF combo:
+        // Low content = LPF(input)
+        // High content = input - LPF_high(input)
+        // Mid content = input - Low - High
+        
+        // Refined simple crossover:
+        m_lpf1 += f_low * (input - m_lpf1);
+        float lowPart = m_lpf1;
+        
+        m_lpf2 += f_high * (input - m_lpf2);
+        float highPart = input - m_lpf2;
+        
+        float midPart = input - lowPart - highPart;
+        
+        return lowPart * lowGain + midPart * midGain + highPart * highGain;
+    }
+
+    void reset() {
+        m_lpf1 = 0.0f;
+        m_lpf2 = 0.0f;
+        m_low = 0.0f;
+        m_high = 0.0f;
+    }
+
+private:
+    float m_sampleRate = 44100.0f;
+    float m_low = 0.0f;
+    float m_high = 0.0f;
+    float m_lpf1 = 0.0f;
+    float m_lpf2 = 0.0f;
+};
+
+// ============================================================================
+// Formant Filter - Simulates vowel sounds (Vocal/Talkbox effect)
+// ============================================================================
+class FormantFilter {
+public:
+    enum class Vowel : int { A, E, I, O, U };
+    
+    Vowel vowel = Vowel::O;
+    float resonance = 5.0f; // Q factor
+    float mix = 1.0f;
+    float gain = 1.0f;
+
+    void setSampleRate(float sr) {
+        m_sampleRate = sr;
+    }
+
+    float process(float input) {
+        float output = 0.0f;
+        
+        // Formant frequencies for Male voice (approx)
+        // A: 600, 1000, 2500
+        // E: 400, 1600, 2700
+        // I: 250, 2000, 3000
+        // O: 400, 800,  2250
+        // U: 290, 600,  2150
+        
+        float f1, f2, f3;
+        float g1=1.0f, g2=0.5f, g3=0.2f; // Relative gains
+        
+        switch (vowel) {
+            case Vowel::A: f1=600; f2=1000; f3=2500; break;
+            case Vowel::E: f1=400; f2=1600; f3=2700; break;
+            case Vowel::I: f1=250; f2=2000; f3=3000; break;
+            case Vowel::O: f1=400; f2=800;  f3=2250; break;
+            case Vowel::U: f1=290; f2=600;  f3=2150; break;
+            default:       f1=600; f2=1000; f3=2500; break;
+        }
+        
+        // Run 3 parallel Bandpass filters
+        output += runBPF(input, 0, f1, g1);
+        output += runBPF(input, 1, f2, g2);
+        output += runBPF(input, 2, f3, g3);
+        
+        // Makeup gain usually needed for BPFs
+        output *= 3.0f * gain;
+        
+        return input * (1.0f - mix) + output * mix;
+    }
+
+    void reset() {
+        for(int i=0; i<3; ++i) {
+            m_states[i][0] = 0.0f;
+            m_states[i][1] = 0.0f;
+        }
+    }
+
+private:
+    float m_sampleRate = 44100.0f;
+    // State Variable Filter states: [band][0=band, 1=low]
+    float m_states[3][2] = {{0,0}, {0,0}, {0,0}}; 
+    
+    float runBPF(float input, int bandIdx, float freq, float bandGain) {
+        float f = 2.0f * std::sin(PI * freq / m_sampleRate);
+        float q = 1.0f / resonance;
+        
+        float low = m_states[bandIdx][1] + f * m_states[bandIdx][0];
+        float high = input - low - q * m_states[bandIdx][0];
+        float band = f * high + m_states[bandIdx][0];
+        
+        m_states[bandIdx][0] = band;
+        m_states[bandIdx][1] = low;
+        
+        return band * bandGain;
+    }
+};
+
+// ============================================================================
 // Effects Chain - Combines all effects for a channel
 // ============================================================================
 struct EffectsChain {
@@ -807,10 +1050,14 @@ struct EffectsChain {
     Bitcrusher bitcrusher;
     Distortion distortion;
     Filter filter;
+    ThreeBandEQ eq;                 // NEW
+    Compressor compressor;          // NEW
+    FormantFilter formant;          // NEW: For vocoder sounds
     Delay delay;
     Chorus chorus;
     Tremolo tremolo;
     Phaser phaser;
+    Flanger flanger;                // NEW: Jet-plane swoosh effect for synthwave
     RingModulator ringMod;
     Sidechain sidechain;
     Reverb reverb;
@@ -822,10 +1069,14 @@ struct EffectsChain {
     bool bitcrusherEnabled = false;
     bool distortionEnabled = false;
     bool filterEnabled = false;
+    bool eqEnabled = false;         // NEW
+    bool compressorEnabled = false; // NEW
+    bool formantEnabled = false;    // NEW
     bool delayEnabled = false;
     bool chorusEnabled = false;
     bool tremoloEnabled = false;
     bool phaserEnabled = false;
+    bool flangerEnabled = false;        // NEW
     bool ringModEnabled = false;
     bool sidechainEnabled = false;
     bool reverbEnabled = false;
@@ -835,8 +1086,12 @@ struct EffectsChain {
 
     void setSampleRate(float sr) {
         filter.setSampleRate(sr);
+        eq.setSampleRate(sr);           // NEW
+        compressor.setSampleRate(sr);   // NEW
+        formant.setSampleRate(sr);      // NEW
         delay.setSampleRate(sr);
         chorus.setSampleRate(sr);
+        flanger.init((int)sr);          // NEW
         sidechain.setSampleRate(sr);
         reverb.setSampleRate(sr);
         stereoWidener.setSampleRate(sr);    // NEW
@@ -846,14 +1101,18 @@ struct EffectsChain {
     float process(float input, float time) {
         float output = input;
 
-        // Process in order: saturation -> filter -> modulation -> time-based -> reverb
-        if (tapeSaturationEnabled) output = tapeSaturation.process(output);  // NEW: Tape before other effects
+        // Process in order: EQ -> Saturation -> Formant -> Compressor -> Filter -> Modulation -> Time-based -> Reverb
+        if (eqEnabled)         output = eq.process(output);             // NEW
+        if (tapeSaturationEnabled) output = tapeSaturation.process(output);
+        if (formantEnabled)    output = formant.process(output);        // NEW: Formant shaping early
+        if (compressorEnabled) output = compressor.process(output);     // NEW
         if (bitcrusherEnabled) output = bitcrusher.process(output);
         if (distortionEnabled) output = distortion.process(output);
         if (filterEnabled)     output = filter.process(output);
         if (ringModEnabled)    output = ringMod.process(output, time);
         if (tremoloEnabled)    output *= tremolo.process(time);
         if (phaserEnabled)     output = phaser.process(output, time);
+        if (flangerEnabled)    output = flanger.process(output);        // NEW
         if (chorusEnabled)     output = chorus.process(output, time);
         if (delayEnabled)      output = delay.process(output);
         if (reverbEnabled)     output = reverb.process(output);
@@ -876,11 +1135,15 @@ struct EffectsChain {
     void reset() {
         bitcrusher.reset();
         filter.reset();
+        eq.reset();             // NEW
+        compressor.reset();     // NEW
+        formant.reset();        // NEW
         delay.reset();
         stereoWidener.reset();       // NEW
         tapeSaturation.reset();      // NEW
         chorus.reset();
         phaser.reset();
+        flanger.reset();        // NEW
         sidechain.reset();
         reverb.reset();
     }

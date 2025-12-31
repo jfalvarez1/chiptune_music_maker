@@ -348,98 +348,481 @@ struct TrackNote {
 
 // Genre-specific effect presets for professional sound
 struct GenreEffects {
+    // Reverb
     bool reverbEnabled = false;
     float reverbMix = 0.3f;
     float reverbRoomSize = 0.7f;
     float reverbDamping = 0.4f;
+    // Chorus
     bool chorusEnabled = false;
     float chorusMix = 0.3f;
     float chorusRate = 0.5f;
+    float chorusDepth = 0.01f;
+    // Delay
     bool delayEnabled = false;
     float delayMix = 0.2f;
     float delayTime = 0.25f;
     float delayFeedback = 0.3f;
+    // Sidechain
     bool sidechainEnabled = false;
+    float sidechainAmount = 0.6f;
+    float sidechainRelease = 0.15f;
+    // Stereo Widener (essential for synthwave)
+    bool stereoWidenerEnabled = false;
+    float stereoWidenerWidth = 0.5f;
+    float stereoWidenerHaas = 0.015f;
+    float stereoWidenerMix = 0.5f;
+    // Tape Saturation (analog warmth)
+    bool tapeSaturationEnabled = false;
+    float tapeDrive = 1.5f;
+    float tapeWarmth = 0.5f;
+    float tapeCompression = 0.3f;
+    float tapeMix = 0.5f;
+    // Filter
+    bool filterEnabled = false;
+    int filterType = 0;  // 0=LP, 1=HP, 2=BP
+    float filterCutoff = 2000.0f;
+    float filterResonance = 0.3f;
+    // Distortion
+    bool distortionEnabled = false;
+    int distortionType = 0;  // 0=Tanh, 1=HardClip, 2=Foldback, 3=Asymmetric
+    float distortionDrive = 2.0f;
+    float distortionMix = 0.5f;
+    // Bitcrusher (lo-fi / chiptune)
+    bool bitcrusherEnabled = false;
+    float bitDepth = 8.0f;
+    float sampleRateDiv = 4.0f;
+    // Phaser
+    bool phaserEnabled = false;
+    float phaserRate = 0.5f;
+    float phaserDepth = 0.5f;
+    float phaserFeedback = 0.5f;
+    // Tremolo
+    bool tremoloEnabled = false;
+    float tremoloRate = 5.0f;
+    float tremoloDepth = 0.3f;
+    // EQ
+    bool eqEnabled = false;
+    float eqLow = 1.0f;
+    float eqMid = 1.0f;
+    float eqHigh = 1.0f;
+    // Compressor
+    bool compressorEnabled = false;
+    float compThreshold = 0.5f;
+    float compRatio = 4.0f;
+    float compAttack = 0.01f;
+    float compRelease = 0.1f;
+    float compGain = 1.0f;
+    // Filter Envelope
+    bool filterEnvEnabled = false;
+    float filterEnvAmount = 0.0f;
+    float filterEnvAttack = 0.0f;
+    float filterEnvDecay = 0.1f;
 };
 
-// Get effect preset for a genre
+// Apply effects to channel config
+inline void applyGenreEffects(ChannelConfig& config, const GenreEffects& fx) {
+    config.reverbEnabled = fx.reverbEnabled;
+    config.reverbMix = fx.reverbMix;
+    config.reverbRoomSize = fx.reverbRoomSize;
+    config.reverbDamping = fx.reverbDamping;
+    
+    config.chorusEnabled = fx.chorusEnabled;
+    config.chorusMix = fx.chorusMix;
+    config.chorusRate = fx.chorusRate;
+    
+    config.delayEnabled = fx.delayEnabled;
+    config.delayMix = fx.delayMix;
+    config.delayTime = fx.delayTime;
+    config.delayFeedback = fx.delayFeedback;
+    
+    config.sidechainEnabled = fx.sidechainEnabled;
+    config.sidechainAmount = fx.sidechainAmount;
+    config.sidechainRelease = fx.sidechainRelease;
+    
+    config.stereoWidenerEnabled = fx.stereoWidenerEnabled;
+    config.stereoWidenerWidth = fx.stereoWidenerWidth;
+    config.stereoWidenerHaas = fx.stereoWidenerHaas;
+    config.stereoWidenerMix = fx.stereoWidenerMix;
+    
+    config.tapeSaturationEnabled = fx.tapeSaturationEnabled;
+    config.tapeDrive = fx.tapeDrive;
+    config.tapeWarmth = fx.tapeWarmth;
+    config.tapeCompression = fx.tapeCompression;
+    config.tapeMix = fx.tapeMix;
+    
+    config.filterEnabled = fx.filterEnabled;
+    config.filterType = fx.filterType;
+    config.filterCutoff = fx.filterCutoff;
+    config.filterResonance = fx.filterResonance;
+    
+    config.distortionEnabled = fx.distortionEnabled;
+    config.distortionType = fx.distortionType;
+    config.distortionDrive = fx.distortionDrive;
+    config.distortionMix = fx.distortionMix;
+    
+    config.bitcrusherEnabled = fx.bitcrusherEnabled;
+    config.bitDepth = fx.bitDepth;
+    config.sampleRateDiv = fx.sampleRateDiv;
+    
+    config.phaserEnabled = fx.phaserEnabled;
+    config.phaserRate = fx.phaserRate;
+    config.phaserDepth = fx.phaserDepth;
+    config.phaserFeedback = fx.phaserFeedback;
+    
+    config.tremoloEnabled = fx.tremoloEnabled;
+    config.tremoloRate = fx.tremoloRate;
+    config.tremoloDepth = fx.tremoloDepth;
+    
+    // NEW ADVANCED EFFECTS
+    config.eqEnabled = fx.eqEnabled;
+    config.eqLow = fx.eqLow;
+    config.eqMid = fx.eqMid;
+    config.eqHigh = fx.eqHigh;
+    
+    config.compressorEnabled = fx.compressorEnabled;
+    config.compThreshold = fx.compThreshold;
+    config.compRatio = fx.compRatio;
+    config.compAttack = fx.compAttack;
+    config.compRelease = fx.compRelease;
+    config.compGain = fx.compGain;
+    
+    config.filterEnvEnabled = fx.filterEnvEnabled;
+    config.filterEnvAmount = fx.filterEnvAmount;
+    config.filterEnvAttack = fx.filterEnvAttack;
+    config.filterEnvDecay = fx.filterEnvDecay;
+}
+
+// Get effect preset for a genre - comprehensive settings for authentic sound
 inline GenreEffects getGenreEffects(const char* genre) {
     GenreEffects fx;
 
     if (strcmp(genre, "Synthwave") == 0) {
-        // Heavy reverb, chorus for lush 80s sound, sidechain pumping
+        // === SYNTHWAVE: The signature 80s sound ===
+        // Lush reverb with long tail (like Vangelis/Blade Runner)
         fx.reverbEnabled = true;
-        fx.reverbMix = 0.4f;
-        fx.reverbRoomSize = 0.8f;
-        fx.reverbDamping = 0.3f;
+        fx.reverbMix = 0.45f;
+        fx.reverbRoomSize = 0.85f;
+        fx.reverbDamping = 0.25f;  // Bright reverb tail
+        // Thick chorus for detuned poly-synth feel (like Juno-106)
         fx.chorusEnabled = true;
-        fx.chorusMix = 0.35f;
-        fx.chorusRate = 0.4f;
+        fx.chorusMix = 0.4f;
+        fx.chorusRate = 0.35f;
+        fx.chorusDepth = 0.015f;
+        // Dotted 8th delay (THE synthwave delay - "Take On Me", "The Midnight")
         fx.delayEnabled = true;
-        fx.delayMix = 0.25f;
-        fx.delayTime = 0.375f;  // Dotted 8th for 80s feel
-        fx.delayFeedback = 0.35f;
+        fx.delayMix = 0.3f;
+        fx.delayTime = 0.375f;  // Dotted 8th at 120bpm = 375ms
+        fx.delayFeedback = 0.4f;
+        // Stereo widener for huge pad sounds (essential for synthwave)
+        fx.stereoWidenerEnabled = true;
+        fx.stereoWidenerWidth = 0.7f;
+        fx.stereoWidenerHaas = 0.020f;  // 20ms Haas for wide stereo
+        fx.stereoWidenerMix = 0.6f;
+        // Tape saturation for analog warmth (cassette/VHS aesthetic)
+        fx.tapeSaturationEnabled = true;
+        fx.tapeDrive = 1.8f;
+        fx.tapeWarmth = 0.6f;
+        fx.tapeCompression = 0.35f;
+        fx.tapeMix = 0.5f;
+        // Subtle low-pass for warmth
+        fx.filterEnabled = true;
+        fx.filterType = 0;  // Low-pass
+        fx.filterCutoff = 8000.0f;  // Roll off harsh highs
+        fx.filterResonance = 0.2f;
+        // Sidechain for pumping (The Weeknd, Kavinsky style)
         fx.sidechainEnabled = true;
+        fx.sidechainAmount = 0.5f;
+        fx.sidechainRelease = 0.2f;
+        
+        // === NEW ADVANCED EFFECTS ===
+        // EQ: V-shape (boost lows and highs)
+        fx.eqEnabled = true;
+        fx.eqLow = 1.2f;   // Boost bass
+        fx.eqMid = 0.9f;   // Cut mids slightly
+        fx.eqHigh = 1.2f;  // Boost air
+        
+        // Compressor: Glue everything together
+        fx.compressorEnabled = true;
+        fx.compThreshold = 0.4f;
+        fx.compRatio = 3.0f;
+        fx.compAttack = 0.01f;
+        fx.compRelease = 0.1f;
+        fx.compGain = 1.2f;
+        
+        // Filter Envelope: For that analog "wow" on bass/leads
+        fx.filterEnvEnabled = true;
+        fx.filterEnvAmount = 0.3f;
+        fx.filterEnvAttack = 0.05f;
+        fx.filterEnvDecay = 0.3f;
     }
     else if (strcmp(genre, "Chiptune") == 0) {
-        // Minimal effects - authentic 8-bit sound
+        // === CHIPTUNE: Authentic 8-bit NES/C64 sound ===
+        // No reverb - consoles didn't have it!
         fx.reverbEnabled = false;
         fx.chorusEnabled = false;
+        // Short delay for pseudo-echo effect (like cave levels)
         fx.delayEnabled = true;
-        fx.delayMix = 0.15f;
-        fx.delayTime = 0.125f;
-        fx.delayFeedback = 0.2f;
+        fx.delayMix = 0.2f;
+        fx.delayTime = 0.125f;  // Tempo-synced short delay
+        fx.delayFeedback = 0.25f;
+        // Bitcrusher for authentic lo-fi (NES was 7-bit, C64 was 4-bit DAC)
+        fx.bitcrusherEnabled = true;
+        fx.bitDepth = 8.0f;
+        fx.sampleRateDiv = 2.0f;  // Subtle crunch
+        // No stereo widening - NES was mono!
+        fx.stereoWidenerEnabled = false;
+        // No saturation - keep it digital
+        fx.tapeSaturationEnabled = false;
     }
     else if (strcmp(genre, "Techno") == 0) {
-        // Room reverb, heavy sidechain
+        // === TECHNO: Dark Berlin warehouse sound ===
+        // Industrial reverb (short, metallic)
         fx.reverbEnabled = true;
         fx.reverbMix = 0.25f;
-        fx.reverbRoomSize = 0.5f;
-        fx.reverbDamping = 0.6f;
+        fx.reverbRoomSize = 0.4f;  // Small dark room
+        fx.reverbDamping = 0.65f;  // Damped, dark
+        // No chorus - techno is precise
         fx.chorusEnabled = false;
+        // Tempo-synced delay (16th notes)
         fx.delayEnabled = true;
-        fx.delayMix = 0.2f;
-        fx.delayTime = 0.25f;
-        fx.delayFeedback = 0.4f;
+        fx.delayMix = 0.25f;
+        fx.delayTime = 0.125f;  // 16th note at 130bpm
+        fx.delayFeedback = 0.45f;
+        // Aggressive sidechain (the pumping sound)
         fx.sidechainEnabled = true;
+        fx.sidechainAmount = 0.75f;
+        fx.sidechainRelease = 0.12f;  // Quick release
+        // Resonant filter sweep (essential for techno)
+        fx.filterEnabled = true;
+        fx.filterType = 0;  // Low-pass
+        fx.filterCutoff = 3500.0f;
+        fx.filterResonance = 0.6f;  // Resonant acid sound
+        // Subtle distortion for edge
+        fx.distortionEnabled = true;
+        fx.distortionType = 0;  // Tanh (soft)
+        fx.distortionDrive = 2.5f;
+        fx.distortionMix = 0.3f;
+        // Phaser for movement
+        fx.phaserEnabled = true;
+        fx.phaserRate = 0.3f;
+        fx.phaserDepth = 0.4f;
+        fx.phaserFeedback = 0.5f;
     }
-    else if (strcmp(genre, "Hip Hop") == 0 || strcmp(genre, "Trap") == 0) {
-        // Lo-fi vibes, subtle reverb
+    else if (strcmp(genre, "Hip Hop") == 0) {
+        // === HIP HOP: Boom bap / modern trap hybrid ===
+        // Lo-fi room reverb
         fx.reverbEnabled = true;
         fx.reverbMix = 0.2f;
-        fx.reverbRoomSize = 0.4f;
+        fx.reverbRoomSize = 0.35f;
         fx.reverbDamping = 0.7f;
         fx.chorusEnabled = false;
+        // Subtle delay for vibe
         fx.delayEnabled = true;
         fx.delayMix = 0.15f;
-        fx.delayTime = 0.375f;
-        fx.delayFeedback = 0.25f;
+        fx.delayTime = 0.3f;
+        fx.delayFeedback = 0.2f;
+        // Lo-fi tape for vinyl warmth
+        fx.tapeSaturationEnabled = true;
+        fx.tapeDrive = 1.4f;
+        fx.tapeWarmth = 0.65f;
+        fx.tapeCompression = 0.4f;
+        fx.tapeMix = 0.45f;
+        // Lo-fi filter (dusty vinyl sound)
+        fx.filterEnabled = true;
+        fx.filterType = 0;  // Low-pass
+        fx.filterCutoff = 6000.0f;
+        fx.filterResonance = 0.15f;
+        // Subtle bitcrush for lo-fi
+        fx.bitcrusherEnabled = true;
+        fx.bitDepth = 12.0f;  // Subtle SP-1200 style
+        fx.sampleRateDiv = 1.5f;
     }
-    else if (strcmp(genre, "House") == 0) {
-        // Big room reverb, sidechain
+    else if (strcmp(genre, "Trap") == 0) {
+        // === TRAP: Dark 808s and hi-hats ===
+        // Big hall reverb on snares
         fx.reverbEnabled = true;
-        fx.reverbMix = 0.35f;
-        fx.reverbRoomSize = 0.7f;
-        fx.reverbDamping = 0.4f;
-        fx.chorusEnabled = true;
-        fx.chorusMix = 0.2f;
-        fx.delayEnabled = true;
-        fx.delayMix = 0.2f;
-        fx.delayTime = 0.25f;
-        fx.delayFeedback = 0.3f;
-        fx.sidechainEnabled = true;
-    }
-    else if (strcmp(genre, "Reggaeton") == 0) {
-        // Tight room, punchy
-        fx.reverbEnabled = true;
-        fx.reverbMix = 0.2f;
-        fx.reverbRoomSize = 0.3f;
+        fx.reverbMix = 0.3f;
+        fx.reverbRoomSize = 0.6f;
         fx.reverbDamping = 0.5f;
         fx.chorusEnabled = false;
+        // Triplet delay (trap signature)
         fx.delayEnabled = true;
-        fx.delayMix = 0.15f;
+        fx.delayMix = 0.2f;
+        fx.delayTime = 0.222f;  // Triplet feel
+        fx.delayFeedback = 0.25f;
+        // Stereo width for pads
+        fx.stereoWidenerEnabled = true;
+        fx.stereoWidenerWidth = 0.5f;
+        fx.stereoWidenerHaas = 0.015f;
+        fx.stereoWidenerMix = 0.4f;
+        // Distortion for hard 808s
+        fx.distortionEnabled = true;
+        fx.distortionType = 3;  // Asymmetric for 808 growl
+        fx.distortionDrive = 3.0f;
+        fx.distortionMix = 0.35f;
+    }
+    else if (strcmp(genre, "House") == 0) {
+        // === HOUSE: Classic Chicago / Ibiza sound ===
+        // Big room reverb (club sound)
+        fx.reverbEnabled = true;
+        fx.reverbMix = 0.4f;
+        fx.reverbRoomSize = 0.75f;
+        fx.reverbDamping = 0.35f;
+        // Subtle chorus for warmth
+        fx.chorusEnabled = true;
+        fx.chorusMix = 0.25f;
+        fx.chorusRate = 0.4f;
+        fx.chorusDepth = 0.01f;
+        // Tempo-synced delay
+        fx.delayEnabled = true;
+        fx.delayMix = 0.2f;
+        fx.delayTime = 0.25f;  // Quarter note
+        fx.delayFeedback = 0.35f;
+        // Classic sidechain pump
+        fx.sidechainEnabled = true;
+        fx.sidechainAmount = 0.65f;
+        fx.sidechainRelease = 0.18f;
+        // Phaser for movement (disco heritage)
+        fx.phaserEnabled = true;
+        fx.phaserRate = 0.25f;
+        fx.phaserDepth = 0.35f;
+        fx.phaserFeedback = 0.4f;
+        // Gentle high-pass to keep it clean
+        fx.filterEnabled = true;
+        fx.filterType = 1;  // High-pass
+        fx.filterCutoff = 80.0f;  // Remove sub rumble
+        fx.filterResonance = 0.1f;
+    }
+    else if (strcmp(genre, "Reggaeton") == 0) {
+        // === REGGAETON: Dembow and perreo ===
+        // Tight room reverb (club/street sound)
+        fx.reverbEnabled = true;
+        fx.reverbMix = 0.2f;
+        fx.reverbRoomSize = 0.25f;  // Small, punchy
+        fx.reverbDamping = 0.55f;
+        fx.chorusEnabled = false;
+        // Short slapback delay (dembow bounce)
+        fx.delayEnabled = true;
+        fx.delayMix = 0.18f;
+        fx.delayTime = 0.1875f;  // Synced to dembow
+        fx.delayFeedback = 0.15f;
+        // Distortion for punchy 808s
+        fx.distortionEnabled = true;
+        fx.distortionType = 0;  // Tanh soft clip
+        fx.distortionDrive = 2.0f;
+        fx.distortionMix = 0.25f;
+        // High-pass to keep kicks tight
+        fx.filterEnabled = true;
+        fx.filterType = 1;  // High-pass
+        fx.filterCutoff = 60.0f;
+        fx.filterResonance = 0.2f;
+        // Slight stereo width on synths
+        fx.stereoWidenerEnabled = true;
+        fx.stereoWidenerWidth = 0.35f;
+        fx.stereoWidenerHaas = 0.010f;
+        fx.stereoWidenerMix = 0.3f;
+    }
+    else if (strcmp(genre, "EDM") == 0) {
+        // === EDM: Festival main stage sound ===
+        // Huge reverb for big room
+        fx.reverbEnabled = true;
+        fx.reverbMix = 0.5f;
+        fx.reverbRoomSize = 0.9f;
+        fx.reverbDamping = 0.3f;
+        // Supersaw chorus
+        fx.chorusEnabled = true;
+        fx.chorusMix = 0.45f;
+        fx.chorusRate = 0.3f;
+        fx.chorusDepth = 0.02f;
+        // Build-up delay
+        fx.delayEnabled = true;
+        fx.delayMix = 0.25f;
         fx.delayTime = 0.1875f;
-        fx.delayFeedback = 0.2f;
+        fx.delayFeedback = 0.5f;
+        // Massive sidechain
+        fx.sidechainEnabled = true;
+        fx.sidechainAmount = 0.8f;
+        fx.sidechainRelease = 0.15f;
+        // Wide stereo
+        fx.stereoWidenerEnabled = true;
+        fx.stereoWidenerWidth = 0.8f;
+        fx.stereoWidenerHaas = 0.025f;
+        fx.stereoWidenerMix = 0.7f;
+        // Bright filter
+        fx.filterEnabled = true;
+        fx.filterType = 0;
+        fx.filterCutoff = 12000.0f;
+        fx.filterResonance = 0.4f;
+    }
+    else if (strcmp(genre, "Ambient") == 0) {
+        // === AMBIENT: Atmospheric soundscapes ===
+        // Massive cathedral reverb
+        fx.reverbEnabled = true;
+        fx.reverbMix = 0.7f;
+        fx.reverbRoomSize = 0.95f;
+        fx.reverbDamping = 0.2f;
+        // Lush modulation
+        fx.chorusEnabled = true;
+        fx.chorusMix = 0.5f;
+        fx.chorusRate = 0.15f;  // Very slow
+        fx.chorusDepth = 0.02f;
+        // Long, evolving delay
+        fx.delayEnabled = true;
+        fx.delayMix = 0.35f;
+        fx.delayTime = 0.5f;
+        fx.delayFeedback = 0.6f;
+        // Ultra-wide stereo
+        fx.stereoWidenerEnabled = true;
+        fx.stereoWidenerWidth = 0.9f;
+        fx.stereoWidenerHaas = 0.030f;
+        fx.stereoWidenerMix = 0.7f;
+        // Slow tremolo for movement
+        fx.tremoloEnabled = true;
+        fx.tremoloRate = 2.0f;
+        fx.tremoloDepth = 0.2f;
+        // Dark filter
+        fx.filterEnabled = true;
+        fx.filterType = 0;
+        fx.filterCutoff = 4000.0f;
+        fx.filterResonance = 0.1f;
+    }
+    else if (strcmp(genre, "Phonk") == 0) {
+        // === PHONK: Gritty, distorted, cowbell-heavy ===
+        // Heavy distortion for that blown-out sound
+        fx.distortionEnabled = true;
+        fx.distortionType = 1; // Hard clip
+        fx.distortionDrive = 4.5f;
+        fx.distortionMix = 0.4f;
+        // Lo-fi grit
+        fx.bitcrusherEnabled = true;
+        fx.bitDepth = 12.0f;
+        fx.sampleRateDiv = 1.5f;
+        // Dark room reverb
+        fx.reverbEnabled = true;
+        fx.reverbMix = 0.25f;
+        fx.reverbRoomSize = 0.4f;
+        // Heavy sidechain
+        fx.sidechainEnabled = true;
+        fx.sidechainAmount = 0.85f;
+    }
+    else if (strcmp(genre, "Future Bass") == 0) {
+        // === FUTURE BASS: Huge saws and heavy ducking ===
+        // Massive sidechain is the defining feature
+        fx.sidechainEnabled = true;
+        fx.sidechainAmount = 0.95f; // Extreme ducking
+        fx.sidechainRelease = 0.3f; // Longer release for "sucking" feel
+        // Wide stereo for supersaws
+        fx.stereoWidenerEnabled = true;
+        fx.stereoWidenerWidth = 0.8f;
+        fx.stereoWidenerMix = 0.7f;
+        // Bright reverb
+        fx.reverbEnabled = true;
+        fx.reverbMix = 0.35f;
+        fx.reverbRoomSize = 0.8f;
+        // Chorus for thickness
+        fx.chorusEnabled = true;
+        fx.chorusMix = 0.3f;
     }
 
     return fx;
@@ -671,57 +1054,117 @@ static const TrackNote g_SynthwaveRetroRacer[] = {
     {15.0f, 76, OscillatorType::SynthwaveLead, 1.0f}, // E5
 };
 
-// Synthwave Track 4: "Nightcall" - Kavinsky style, slow pulsing (Fm-Cm-Ab-Eb)
+// Synthwave Track 4: "Nightcall" - Kavinsky style, corrected (Cm-Eb-Bb-Gm)
+// Driving 16th note bass, heavy snare, vocoded lead approximation
 static const TrackNote g_SynthwaveNightcall[] = {
-    // === DRUMS (sparse, punchy 808s) ===
-    {0.0f, 36, OscillatorType::Kick808, 0.5f}, {2.0f, 38, OscillatorType::Snare808, 0.25f},
-    {4.0f, 36, OscillatorType::Kick808, 0.5f}, {6.0f, 38, OscillatorType::Snare808, 0.25f},
-    {8.0f, 36, OscillatorType::Kick808, 0.5f}, {10.0f, 38, OscillatorType::Snare808, 0.25f},
-    {12.0f, 36, OscillatorType::Kick808, 0.5f}, {14.0f, 38, OscillatorType::Snare808, 0.25f},
-    // Open hihats on offbeats
-    {1.0f, 46, OscillatorType::HiHatOpen, 0.25f}, {3.0f, 46, OscillatorType::HiHatOpen, 0.25f},
-    {5.0f, 46, OscillatorType::HiHatOpen, 0.25f}, {7.0f, 46, OscillatorType::HiHatOpen, 0.25f},
-    {9.0f, 46, OscillatorType::HiHatOpen, 0.25f}, {11.0f, 46, OscillatorType::HiHatOpen, 0.25f},
-    {13.0f, 46, OscillatorType::HiHatOpen, 0.25f}, {15.0f, 46, OscillatorType::HiHatOpen, 0.25f},
-    // === BASS (driving octave pulse - iconic Kavinsky) ===
-    {0.0f, 29, OscillatorType::SynthwaveBass, 0.5f}, {0.5f, 41, OscillatorType::SynthwaveBass, 0.5f},
-    {1.0f, 29, OscillatorType::SynthwaveBass, 0.5f}, {1.5f, 41, OscillatorType::SynthwaveBass, 0.5f},
-    {2.0f, 29, OscillatorType::SynthwaveBass, 0.5f}, {2.5f, 41, OscillatorType::SynthwaveBass, 0.5f},
-    {3.0f, 29, OscillatorType::SynthwaveBass, 0.5f}, {3.5f, 41, OscillatorType::SynthwaveBass, 0.5f},
-    {4.0f, 24, OscillatorType::SynthwaveBass, 0.5f}, {4.5f, 36, OscillatorType::SynthwaveBass, 0.5f},
-    {5.0f, 24, OscillatorType::SynthwaveBass, 0.5f}, {5.5f, 36, OscillatorType::SynthwaveBass, 0.5f},
-    {6.0f, 24, OscillatorType::SynthwaveBass, 0.5f}, {6.5f, 36, OscillatorType::SynthwaveBass, 0.5f},
-    {7.0f, 24, OscillatorType::SynthwaveBass, 0.5f}, {7.5f, 36, OscillatorType::SynthwaveBass, 0.5f},
-    {8.0f, 32, OscillatorType::SynthwaveBass, 0.5f}, {8.5f, 44, OscillatorType::SynthwaveBass, 0.5f},
-    {9.0f, 32, OscillatorType::SynthwaveBass, 0.5f}, {9.5f, 44, OscillatorType::SynthwaveBass, 0.5f},
-    {10.0f, 32, OscillatorType::SynthwaveBass, 0.5f}, {10.5f, 44, OscillatorType::SynthwaveBass, 0.5f},
-    {11.0f, 32, OscillatorType::SynthwaveBass, 0.5f}, {11.5f, 44, OscillatorType::SynthwaveBass, 0.5f},
-    {12.0f, 27, OscillatorType::SynthwaveBass, 0.5f}, {12.5f, 39, OscillatorType::SynthwaveBass, 0.5f},
-    {13.0f, 27, OscillatorType::SynthwaveBass, 0.5f}, {13.5f, 39, OscillatorType::SynthwaveBass, 0.5f},
-    {14.0f, 27, OscillatorType::SynthwaveBass, 0.5f}, {14.5f, 39, OscillatorType::SynthwaveBass, 0.5f},
-    {15.0f, 27, OscillatorType::SynthwaveBass, 0.5f}, {15.5f, 39, OscillatorType::SynthwaveBass, 0.5f},
-    // === LEAD (simple, haunting melody) ===
-    {0.0f, 65, OscillatorType::SynthwaveLead, 2.0f},   // F4
-    {2.0f, 63, OscillatorType::SynthwaveLead, 2.0f},   // Eb4
-    {4.0f, 60, OscillatorType::SynthwaveLead, 2.0f},   // C4
-    {6.0f, 58, OscillatorType::SynthwaveLead, 2.0f},   // Bb3
-    {8.0f, 56, OscillatorType::SynthwaveLead, 2.0f},   // Ab3
-    {10.0f, 58, OscillatorType::SynthwaveLead, 2.0f},  // Bb3
-    {12.0f, 63, OscillatorType::SynthwaveLead, 2.0f},  // Eb4
-    {14.0f, 65, OscillatorType::SynthwaveLead, 2.0f},  // F4
-    // === PADS (Fm-Cm-Ab-Eb) ===
-    {0.0f, 53, OscillatorType::SynthwavePad, 4.0f},    // F3
-    {0.0f, 56, OscillatorType::SynthwavePad, 4.0f},    // Ab3
-    {0.0f, 60, OscillatorType::SynthwavePad, 4.0f},    // C4
-    {4.0f, 48, OscillatorType::SynthwavePad, 4.0f},    // C3
-    {4.0f, 51, OscillatorType::SynthwavePad, 4.0f},    // Eb3
-    {4.0f, 55, OscillatorType::SynthwavePad, 4.0f},    // G3
-    {8.0f, 56, OscillatorType::SynthwavePad, 4.0f},    // Ab3
-    {8.0f, 60, OscillatorType::SynthwavePad, 4.0f},    // C4
-    {8.0f, 63, OscillatorType::SynthwavePad, 4.0f},    // Eb4
-    {12.0f, 51, OscillatorType::SynthwavePad, 4.0f},   // Eb3
-    {12.0f, 55, OscillatorType::SynthwavePad, 4.0f},   // G3
-    {12.0f, 58, OscillatorType::SynthwavePad, 4.0f},   // Bb3
+    // === DRUMS (Heavy, gated reverb feel) ===
+    // Kick: Driving beat (Boom... Boom-Boom...)
+    {0.0f, 36, OscillatorType::Kick808, 0.6f},   // 1
+    {1.5f, 36, OscillatorType::Kick808, 0.4f},   // 2& (ghost)
+    {2.0f, 36, OscillatorType::Kick808, 0.6f},   // 3
+    {2.5f, 36, OscillatorType::Kick808, 0.5f},   // 3&
+    {4.0f, 36, OscillatorType::Kick808, 0.6f},   // 1
+    {6.0f, 36, OscillatorType::Kick808, 0.6f},   // 3
+    {6.5f, 36, OscillatorType::Kick808, 0.5f},   // 3&
+    {8.0f, 36, OscillatorType::Kick808, 0.6f},   // 1
+    {9.5f, 36, OscillatorType::Kick808, 0.4f},   // 2&
+    {10.0f, 36, OscillatorType::Kick808, 0.6f},  // 3
+    {10.5f, 36, OscillatorType::Kick808, 0.5f},  // 3&
+    {12.0f, 36, OscillatorType::Kick808, 0.6f},  // 1
+    {14.0f, 36, OscillatorType::Kick808, 0.6f},  // 3
+    {14.5f, 36, OscillatorType::Kick808, 0.5f},  // 3&
+
+    // Snare: Huge, gated sound on 2 and 4
+    {1.0f, 38, OscillatorType::Snare808, 0.7f},
+    {3.0f, 38, OscillatorType::Snare808, 0.7f},
+    {5.0f, 38, OscillatorType::Snare808, 0.7f},
+    {7.0f, 38, OscillatorType::Snare808, 0.7f},
+    {9.0f, 38, OscillatorType::Snare808, 0.7f},
+    {11.0f, 38, OscillatorType::Snare808, 0.7f},
+    {13.0f, 38, OscillatorType::Snare808, 0.7f},
+    {15.0f, 38, OscillatorType::Snare808, 0.7f},
+
+    // Hi-Hats: Steady 16th notes (closed)
+    {0.0f, 42, OscillatorType::HiHat, 0.3f}, {0.25f, 42, OscillatorType::HiHat, 0.2f}, {0.5f, 42, OscillatorType::HiHat, 0.3f}, {0.75f, 42, OscillatorType::HiHat, 0.2f},
+    {1.0f, 42, OscillatorType::HiHat, 0.3f}, {1.25f, 42, OscillatorType::HiHat, 0.2f}, {1.5f, 42, OscillatorType::HiHat, 0.3f}, {1.75f, 42, OscillatorType::HiHat, 0.2f},
+    {2.0f, 42, OscillatorType::HiHat, 0.3f}, {2.25f, 42, OscillatorType::HiHat, 0.2f}, {2.5f, 42, OscillatorType::HiHat, 0.3f}, {2.75f, 42, OscillatorType::HiHat, 0.2f},
+    {3.0f, 42, OscillatorType::HiHat, 0.3f}, {3.25f, 42, OscillatorType::HiHat, 0.2f}, {3.5f, 42, OscillatorType::HiHat, 0.3f}, {3.75f, 42, OscillatorType::HiHat, 0.2f},
+    // ... repeat for 4 bars ...
+    {4.0f, 42, OscillatorType::HiHat, 0.3f}, {4.5f, 42, OscillatorType::HiHat, 0.3f}, {5.0f, 42, OscillatorType::HiHat, 0.3f}, {5.5f, 42, OscillatorType::HiHat, 0.3f},
+    {6.0f, 42, OscillatorType::HiHat, 0.3f}, {6.5f, 42, OscillatorType::HiHat, 0.3f}, {7.0f, 42, OscillatorType::HiHat, 0.3f}, {7.5f, 42, OscillatorType::HiHat, 0.3f},
+    {8.0f, 42, OscillatorType::HiHat, 0.3f}, {8.5f, 42, OscillatorType::HiHat, 0.3f}, {9.0f, 42, OscillatorType::HiHat, 0.3f}, {9.5f, 42, OscillatorType::HiHat, 0.3f},
+    {10.0f, 42, OscillatorType::HiHat, 0.3f}, {10.5f, 42, OscillatorType::HiHat, 0.3f}, {11.0f, 42, OscillatorType::HiHat, 0.3f}, {11.5f, 42, OscillatorType::HiHat, 0.3f},
+    {12.0f, 42, OscillatorType::HiHat, 0.3f}, {12.5f, 42, OscillatorType::HiHat, 0.3f}, {13.0f, 42, OscillatorType::HiHat, 0.3f}, {13.5f, 42, OscillatorType::HiHat, 0.3f},
+    {14.0f, 42, OscillatorType::HiHat, 0.3f}, {14.5f, 42, OscillatorType::HiHat, 0.3f}, {15.0f, 42, OscillatorType::HiHat, 0.3f}, {15.5f, 42, OscillatorType::HiHat, 0.3f},
+
+    // === BASS (Cm - Eb - Bb - Gm) ===
+    // Driving 8th note pulse with octave jumps
+    // Bar 1: Cm (C2)
+    {0.0f, 36, OscillatorType::Sawtooth, 0.5f}, {0.5f, 48, OscillatorType::Sawtooth, 0.5f},
+    {1.0f, 36, OscillatorType::Sawtooth, 0.5f}, {1.5f, 48, OscillatorType::Sawtooth, 0.5f},
+    {2.0f, 36, OscillatorType::Sawtooth, 0.5f}, {2.5f, 48, OscillatorType::Sawtooth, 0.5f},
+    {3.0f, 36, OscillatorType::Sawtooth, 0.5f}, {3.5f, 48, OscillatorType::Sawtooth, 0.5f},
+    // Bar 2: Eb (Eb2)
+    {4.0f, 39, OscillatorType::Sawtooth, 0.5f}, {4.5f, 51, OscillatorType::Sawtooth, 0.5f},
+    {5.0f, 39, OscillatorType::Sawtooth, 0.5f}, {5.5f, 51, OscillatorType::Sawtooth, 0.5f},
+    {6.0f, 39, OscillatorType::Sawtooth, 0.5f}, {6.5f, 51, OscillatorType::Sawtooth, 0.5f},
+    {7.0f, 39, OscillatorType::Sawtooth, 0.5f}, {7.5f, 51, OscillatorType::Sawtooth, 0.5f},
+    // Bar 3: Bb (Bb1)
+    {8.0f, 34, OscillatorType::Sawtooth, 0.5f}, {8.5f, 46, OscillatorType::Sawtooth, 0.5f},
+    {9.0f, 34, OscillatorType::Sawtooth, 0.5f}, {9.5f, 46, OscillatorType::Sawtooth, 0.5f},
+    {10.0f, 34, OscillatorType::Sawtooth, 0.5f}, {10.5f, 46, OscillatorType::Sawtooth, 0.5f},
+    {11.0f, 34, OscillatorType::Sawtooth, 0.5f}, {11.5f, 46, OscillatorType::Sawtooth, 0.5f},
+    // Bar 4: Gm (G1)
+    {12.0f, 31, OscillatorType::Sawtooth, 0.5f}, {12.5f, 43, OscillatorType::Sawtooth, 0.5f},
+    {13.0f, 31, OscillatorType::Sawtooth, 0.5f}, {13.5f, 43, OscillatorType::Sawtooth, 0.5f},
+    {14.0f, 31, OscillatorType::Sawtooth, 0.5f}, {14.5f, 43, OscillatorType::Sawtooth, 0.5f},
+    {15.0f, 31, OscillatorType::Sawtooth, 0.5f}, {15.5f, 43, OscillatorType::Sawtooth, 0.5f},
+
+    // === PADS (Dark, sustained) ===
+    // Cm
+    {0.0f, 48, OscillatorType::SynthwavePad, 4.0f}, {0.0f, 51, OscillatorType::SynthwavePad, 4.0f}, {0.0f, 55, OscillatorType::SynthwavePad, 4.0f},
+    // Eb
+    {4.0f, 51, OscillatorType::SynthwavePad, 4.0f}, {4.0f, 55, OscillatorType::SynthwavePad, 4.0f}, {4.0f, 58, OscillatorType::SynthwavePad, 4.0f},
+    // Bb
+    {8.0f, 46, OscillatorType::SynthwavePad, 4.0f}, {8.0f, 50, OscillatorType::SynthwavePad, 4.0f}, {8.0f, 53, OscillatorType::SynthwavePad, 4.0f},
+    // Gm
+    {12.0f, 43, OscillatorType::SynthwavePad, 4.0f}, {12.0f, 46, OscillatorType::SynthwavePad, 4.0f}, {12.0f, 50, OscillatorType::SynthwavePad, 4.0f},
+
+    // === LEAD (Vocoder-style melody approximation) ===
+    // "I'm giving you a night call..."
+    {0.0f, 67, OscillatorType::Sawtooth, 0.5f},  // G4
+    {0.5f, 67, OscillatorType::Sawtooth, 0.25f}, // G4
+    {0.75f, 67, OscillatorType::Sawtooth, 0.5f}, // G4
+    {1.25f, 65, OscillatorType::Sawtooth, 0.25f}, // F4
+    {1.5f, 63, OscillatorType::Sawtooth, 0.5f},  // Eb4
+    {2.0f, 63, OscillatorType::Sawtooth, 1.0f},  // Eb4
+    {3.0f, 60, OscillatorType::Sawtooth, 1.0f},  // C4
+
+    // "To tell you how I feel"
+    {4.0f, 67, OscillatorType::Sawtooth, 0.5f},  // G4
+    {4.5f, 67, OscillatorType::Sawtooth, 0.25f}, // G4
+    {4.75f, 67, OscillatorType::Sawtooth, 0.5f}, // G4
+    {5.25f, 68, OscillatorType::Sawtooth, 0.25f}, // Ab4
+    {5.5f, 67, OscillatorType::Sawtooth, 0.5f},  // G4
+    {6.0f, 65, OscillatorType::Sawtooth, 1.0f},  // F4
+    {7.0f, 63, OscillatorType::Sawtooth, 1.0f},  // Eb4
+
+    // "I want to drive you through the night"
+    {8.0f, 65, OscillatorType::Sawtooth, 0.5f},  // F4
+    {8.5f, 65, OscillatorType::Sawtooth, 0.25f}, // F4
+    {8.75f, 65, OscillatorType::Sawtooth, 0.5f}, // F4
+    {9.25f, 63, OscillatorType::Sawtooth, 0.25f}, // Eb4
+    {9.5f, 62, OscillatorType::Sawtooth, 0.5f},  // D4
+    {10.0f, 62, OscillatorType::Sawtooth, 1.0f}, // D4
+    {11.0f, 58, OscillatorType::Sawtooth, 1.0f}, // Bb3
+
+    // "Down the hills"
+    {12.0f, 62, OscillatorType::Sawtooth, 0.5f}, // D4
+    {12.5f, 62, OscillatorType::Sawtooth, 0.25f}, // D4
+    {12.75f, 62, OscillatorType::Sawtooth, 0.5f}, // D4
+    {13.25f, 63, OscillatorType::Sawtooth, 0.25f}, // Eb4
+    {13.5f, 62, OscillatorType::Sawtooth, 0.5f}, // D4
+    {14.0f, 60, OscillatorType::Sawtooth, 2.0f}, // C4
 };
 
 // Synthwave Track 5: "Turbo Killer" - Carpenter Brut style, aggressive (Em-C-G-D)
@@ -1705,6 +2148,12 @@ static const TrackNote g_ReggaetonGasolina[] = {
     {5.75f, 76, OscillatorType::SynthwaveLead, 0.75f},   // E5
 };
 
+
+
+// =============================================================================
+// NEW RECREATION TRACKS
+// =============================================================================
+
 // Reggaeton Track 3: "Noche" - Dark/moody reggaeton
 static const TrackNote g_ReggaetonNoche[] = {
     // === DRUMS (slower, moodier dembow) ===
@@ -1744,6 +2193,214 @@ static const TrackNote g_ReggaetonNoche[] = {
     {6.0f, 64, OscillatorType::SynthBell, 2.0f},         // E4
 };
 
+// 1. HOME - "Resonance" (Synthwave)
+// Warm detuned saw pad, pluck lead, subby sine/saw bass
+static const TrackNote g_SynthwaveResonance[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::Kick808, 0.5f}, {2.0f, 38, OscillatorType::Snare808, 0.25f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f}, {6.0f, 38, OscillatorType::Snare808, 0.25f},
+    {8.0f, 36, OscillatorType::Kick808, 0.5f}, {10.0f, 38, OscillatorType::Snare808, 0.25f},
+    {12.0f, 36, OscillatorType::Kick808, 0.5f}, {14.0f, 38, OscillatorType::Snare808, 0.25f},
+    // Bass
+    {0.0f, 24, OscillatorType::SynthwaveBass, 3.5f}, {4.0f, 29, OscillatorType::SynthwaveBass, 3.5f},
+    {8.0f, 26, OscillatorType::SynthwaveBass, 3.5f}, {12.0f, 31, OscillatorType::SynthwaveBass, 3.5f},
+    // Pad
+    {0.0f, 48, OscillatorType::SynthwavePad, 4.0f}, {0.0f, 52, OscillatorType::SynthwavePad, 4.0f}, {0.0f, 55, OscillatorType::SynthwavePad, 4.0f},
+    {4.0f, 53, OscillatorType::SynthwavePad, 4.0f}, {4.0f, 57, OscillatorType::SynthwavePad, 4.0f}, {4.0f, 60, OscillatorType::SynthwavePad, 4.0f},
+    {8.0f, 50, OscillatorType::SynthwavePad, 4.0f}, {8.0f, 53, OscillatorType::SynthwavePad, 4.0f}, {8.0f, 57, OscillatorType::SynthwavePad, 4.0f},
+    {12.0f, 55, OscillatorType::SynthwavePad, 4.0f}, {12.0f, 59, OscillatorType::SynthwavePad, 4.0f}, {12.0f, 62, OscillatorType::SynthwavePad, 4.0f},
+    // Lead
+    {0.0f, 72, OscillatorType::SynthPluck, 0.5f}, {0.75f, 74, OscillatorType::SynthPluck, 0.5f},
+    {1.5f, 76, OscillatorType::SynthPluck, 0.5f}, {2.5f, 79, OscillatorType::SynthPluck, 0.5f},
+};
+
+// 2. Instupendo - "Comfort Chain" (Lo-Fi)
+// Bell/mallety lead, airy pad, gentle sub, lo-fi hats
+static const TrackNote g_LofiComfortChain[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::KickSoft, 0.5f}, {2.0f, 37, OscillatorType::SnareRim, 0.25f},
+    {4.0f, 36, OscillatorType::KickSoft, 0.5f}, {6.0f, 37, OscillatorType::SnareRim, 0.25f},
+    {8.0f, 36, OscillatorType::KickSoft, 0.5f}, {10.0f, 37, OscillatorType::SnareRim, 0.25f},
+    {12.0f, 36, OscillatorType::KickSoft, 0.5f}, {14.0f, 37, OscillatorType::SnareRim, 0.25f},
+    {0.5f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f}, {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    // Bass
+    {0.0f, 33, OscillatorType::SubBass808, 4.0f}, {4.0f, 36, OscillatorType::SubBass808, 4.0f},
+    // Lead (Bell)
+    {0.0f, 69, OscillatorType::SynthBell, 1.0f}, {1.0f, 72, OscillatorType::SynthBell, 1.0f},
+    {2.0f, 76, OscillatorType::SynthBell, 1.0f}, {3.0f, 74, OscillatorType::SynthBell, 1.0f},
+    {4.0f, 72, OscillatorType::SynthBell, 1.0f}, {5.0f, 69, OscillatorType::SynthBell, 1.0f},
+};
+
+// 3. Juice WRLD - "All Girls Are the Same" (Trap)
+// Plucked guitar lead, 808 bass, trap hats
+static const TrackNote g_TrapAllGirls[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::Kick808, 0.5f}, {2.5f, 36, OscillatorType::Kick808, 0.25f},
+    {3.0f, 38, OscillatorType::Snare808, 0.25f}, {7.0f, 38, OscillatorType::Snare808, 0.25f},
+    {0.0f, 42, OscillatorType::HiHat, 0.125f}, {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 42, OscillatorType::HiHat, 0.125f}, {1.25f, 42, OscillatorType::HiHat, 0.0625f},
+    {1.5f, 42, OscillatorType::HiHat, 0.0625f}, {1.75f, 42, OscillatorType::HiHat, 0.125f},
+    // Bass
+    {0.0f, 29, OscillatorType::SubBass808, 2.5f}, {3.0f, 34, OscillatorType::SubBass808, 1.0f},
+    {4.0f, 29, OscillatorType::SubBass808, 2.5f}, {7.0f, 36, OscillatorType::SubBass808, 1.0f},
+    // Lead (Pluck)
+    {0.0f, 65, OscillatorType::SynthPluck, 0.5f}, {0.5f, 67, OscillatorType::SynthPluck, 0.5f},
+    {1.0f, 69, OscillatorType::SynthPluck, 0.5f}, {1.5f, 65, OscillatorType::SynthPluck, 0.5f},
+    {2.0f, 67, OscillatorType::SynthPluck, 0.5f}, {2.5f, 62, OscillatorType::SynthPluck, 0.5f},
+};
+
+// 4. Playboi Carti - "Broke Boi" (Hip Hop/Trap)
+// Simple square/saw lead, sub/808 bass, thin hats
+static const TrackNote g_HipHopBrokeBoi[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::Kick808, 0.5f}, {2.0f, 39, OscillatorType::Clap, 0.25f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f}, {6.0f, 39, OscillatorType::Clap, 0.25f},
+    {0.0f, 42, OscillatorType::HiHat, 0.125f}, {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    // Bass
+    {0.0f, 31, OscillatorType::SubBass808, 2.0f}, {2.0f, 26, OscillatorType::SubBass808, 2.0f},
+    {4.0f, 31, OscillatorType::SubBass808, 2.0f}, {6.0f, 33, OscillatorType::SubBass808, 2.0f},
+    // Lead
+    {0.0f, 74, OscillatorType::Pulse, 0.5f}, {0.5f, 71, OscillatorType::Pulse, 0.5f},
+    {1.0f, 69, OscillatorType::Pulse, 0.5f}, {1.5f, 67, OscillatorType::Pulse, 0.5f},
+};
+
+// 5. Crystal Waters - "Gypsy Woman" (House)
+// Organ/house piano stab, M1-style organ bass
+static const TrackNote g_HouseGypsyWoman[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::Kick, 0.25f}, {1.0f, 36, OscillatorType::Kick, 0.25f},
+    {2.0f, 36, OscillatorType::Kick, 0.25f}, {3.0f, 36, OscillatorType::Kick, 0.25f},
+    {1.0f, 39, OscillatorType::Clap, 0.25f}, {3.0f, 39, OscillatorType::Clap, 0.25f},
+    {0.5f, 46, OscillatorType::HiHatOpen, 0.25f}, {1.5f, 46, OscillatorType::HiHatOpen, 0.25f},
+    {2.5f, 46, OscillatorType::HiHatOpen, 0.25f}, {3.5f, 46, OscillatorType::HiHatOpen, 0.25f},
+    // Bass
+    {0.0f, 36, OscillatorType::SynthOrgan, 0.5f}, {0.5f, 48, OscillatorType::SynthOrgan, 0.25f},
+    {1.0f, 36, OscillatorType::SynthOrgan, 0.5f}, {1.5f, 43, OscillatorType::SynthOrgan, 0.25f},
+    {2.0f, 36, OscillatorType::SynthOrgan, 0.5f}, {2.5f, 48, OscillatorType::SynthOrgan, 0.25f},
+    // Chords
+    {0.0f, 60, OscillatorType::SynthOrgan, 0.25f}, {0.0f, 63, OscillatorType::SynthOrgan, 0.25f}, {0.0f, 67, OscillatorType::SynthOrgan, 0.25f},
+    {1.5f, 60, OscillatorType::SynthOrgan, 0.25f}, {1.5f, 63, OscillatorType::SynthOrgan, 0.25f}, {1.5f, 67, OscillatorType::SynthOrgan, 0.25f},
+    {3.0f, 60, OscillatorType::SynthOrgan, 0.25f}, {3.0f, 63, OscillatorType::SynthOrgan, 0.25f}, {3.0f, 67, OscillatorType::SynthOrgan, 0.25f},
+};
+
+// 6. Juice WRLD - "Hide" (Trap)
+// Clean bell/mallet lead, lush pad, sub/808
+static const TrackNote g_TrapHide[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::Kick808, 0.5f}, {3.0f, 38, OscillatorType::Snare808, 0.25f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f}, {7.0f, 38, OscillatorType::Snare808, 0.25f},
+    {0.0f, 42, OscillatorType::HiHat, 0.125f}, {0.5f, 42, OscillatorType::HiHat, 0.125f},
+    {1.0f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    // Bass
+    {0.0f, 31, OscillatorType::SubBass808, 3.0f}, {4.0f, 26, OscillatorType::SubBass808, 3.0f},
+    // Lead
+    {0.0f, 72, OscillatorType::SynthBell, 0.5f}, {0.5f, 74, OscillatorType::SynthBell, 0.5f},
+    {1.0f, 76, OscillatorType::SynthBell, 0.5f}, {1.5f, 72, OscillatorType::SynthBell, 0.5f},
+    {2.0f, 79, OscillatorType::SynthBell, 0.5f}, {3.0f, 76, OscillatorType::SynthBell, 0.5f},
+};
+
+// 7. Sam Gellaitry - "Assumptions" (Future Bass)
+// Detuned saw leads, filtered plucks, heavy sidechain
+static const TrackNote g_FutureBassAssumptions[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::KickHard, 0.5f}, {2.0f, 38, OscillatorType::Snare808, 0.25f},
+    {4.0f, 36, OscillatorType::KickHard, 0.5f}, {6.0f, 38, OscillatorType::Snare808, 0.25f},
+    // Bass
+    {0.0f, 33, OscillatorType::SynthBass, 2.0f}, {2.0f, 33, OscillatorType::SynthBass, 2.0f},
+    {4.0f, 33, OscillatorType::SynthBass, 2.0f}, {6.0f, 33, OscillatorType::SynthBass, 2.0f},
+    // Chords (Supersaw)
+    {0.0f, 57, OscillatorType::Supersaw, 2.0f}, {0.0f, 60, OscillatorType::Supersaw, 2.0f}, {0.0f, 64, OscillatorType::Supersaw, 2.0f},
+    {2.0f, 57, OscillatorType::Supersaw, 2.0f}, {2.0f, 60, OscillatorType::Supersaw, 2.0f}, {2.0f, 64, OscillatorType::Supersaw, 2.0f},
+    {4.0f, 53, OscillatorType::Supersaw, 2.0f}, {4.0f, 57, OscillatorType::Supersaw, 2.0f}, {4.0f, 60, OscillatorType::Supersaw, 2.0f},
+    {6.0f, 53, OscillatorType::Supersaw, 2.0f}, {6.0f, 57, OscillatorType::Supersaw, 2.0f}, {6.0f, 60, OscillatorType::Supersaw, 2.0f},
+    // Lead
+    {0.0f, 76, OscillatorType::SynthLead, 0.5f}, {0.5f, 74, OscillatorType::SynthLead, 0.5f},
+    {1.0f, 72, OscillatorType::SynthLead, 0.5f}, {1.5f, 69, OscillatorType::SynthLead, 0.5f},
+};
+
+// 8. Ark Patrol - "Let Go" (Electronic/Ambient)
+// Airy vocal-like lead, wide pad, sub bass
+static const TrackNote g_ElectronicLetGo[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::KickSoft, 0.5f}, {2.0f, 38, OscillatorType::SnareRim, 0.25f},
+    {4.0f, 36, OscillatorType::KickSoft, 0.5f}, {6.0f, 38, OscillatorType::SnareRim, 0.25f},
+    // Bass
+    {0.0f, 33, OscillatorType::SubBass808, 4.0f}, {4.0f, 36, OscillatorType::SubBass808, 4.0f},
+    // Pad
+    {0.0f, 57, OscillatorType::SynthPad, 4.0f}, {0.0f, 60, OscillatorType::SynthPad, 4.0f}, {0.0f, 64, OscillatorType::SynthPad, 4.0f},
+    {4.0f, 53, OscillatorType::SynthPad, 4.0f}, {4.0f, 57, OscillatorType::SynthPad, 4.0f}, {4.0f, 60, OscillatorType::SynthPad, 4.0f},
+    // Lead
+    {0.0f, 76, OscillatorType::Sine, 1.0f}, {1.0f, 74, OscillatorType::Sine, 1.0f},
+    {2.0f, 72, OscillatorType::Sine, 1.0f}, {3.0f, 69, OscillatorType::Sine, 1.0f},
+};
+
+// 9. INTERWORLD - "METAMORPHOSIS" (Phonk)
+// Aggressive reese bass, sharp pluck lead, hard trap drums
+static const TrackNote g_PhonkMetamorphosis[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::KickHard, 0.5f}, {2.0f, 38, OscillatorType::Snare808, 0.25f},
+    {4.0f, 36, OscillatorType::KickHard, 0.5f}, {6.0f, 38, OscillatorType::Snare808, 0.25f},
+    {0.0f, 56, OscillatorType::Cowbell, 0.25f}, {0.5f, 56, OscillatorType::Cowbell, 0.25f},
+    {1.0f, 56, OscillatorType::Cowbell, 0.25f}, {1.5f, 56, OscillatorType::Cowbell, 0.25f},
+    // Bass (Reese)
+    {0.0f, 29, OscillatorType::Reese, 4.0f}, {4.0f, 31, OscillatorType::Reese, 4.0f},
+    {8.0f, 33, OscillatorType::Reese, 4.0f}, {12.0f, 31, OscillatorType::Reese, 4.0f},
+    // Lead (Cowbell Melody)
+    {0.0f, 72, OscillatorType::Cowbell, 0.25f}, {0.25f, 72, OscillatorType::Cowbell, 0.25f},
+    {0.5f, 75, OscillatorType::Cowbell, 0.25f}, {0.75f, 72, OscillatorType::Cowbell, 0.25f},
+    {1.0f, 70, OscillatorType::Cowbell, 0.25f}, {1.25f, 67, OscillatorType::Cowbell, 0.25f},
+    {1.5f, 70, OscillatorType::Cowbell, 0.25f}, {1.75f, 67, OscillatorType::Cowbell, 0.25f},
+};
+
+// 10. Narvent/VOJ - "Memory Reboot" (Ambient/Synthwave)
+// Lush pad, deep sub sine, soft keys
+static const TrackNote g_AmbientMemoryReboot[] = {
+    // Bass
+    {0.0f, 33, OscillatorType::SubBass808, 8.0f}, {8.0f, 29, OscillatorType::SubBass808, 8.0f},
+    // Pad
+    {0.0f, 57, OscillatorType::SynthPad, 8.0f}, {0.0f, 60, OscillatorType::SynthPad, 8.0f}, {0.0f, 64, OscillatorType::SynthPad, 8.0f},
+    {8.0f, 53, OscillatorType::SynthPad, 8.0f}, {8.0f, 57, OscillatorType::SynthPad, 8.0f}, {8.0f, 60, OscillatorType::SynthPad, 8.0f},
+    // Keys
+    {0.0f, 72, OscillatorType::SynthBell, 2.0f}, {2.0f, 76, OscillatorType::SynthBell, 2.0f},
+    {4.0f, 79, OscillatorType::SynthBell, 2.0f}, {6.0f, 76, OscillatorType::SynthBell, 2.0f},
+};
+
+// 11. "7 Weeks & 3 Days" (Lo-Fi)
+// Chill lo-fi keys, pad, sub
+static const TrackNote g_Lofi7Weeks[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::KickSoft, 0.5f}, {2.0f, 37, OscillatorType::SnareRim, 0.25f},
+    {4.0f, 36, OscillatorType::KickSoft, 0.5f}, {6.0f, 37, OscillatorType::SnareRim, 0.25f},
+    // Bass
+    {0.0f, 33, OscillatorType::SubBass808, 4.0f}, {4.0f, 36, OscillatorType::SubBass808, 4.0f},
+    // Keys
+    {0.0f, 60, OscillatorType::LoFiKeys, 0.5f}, {0.0f, 64, OscillatorType::LoFiKeys, 0.5f}, {0.0f, 67, OscillatorType::LoFiKeys, 0.5f},
+    {1.0f, 60, OscillatorType::LoFiKeys, 0.5f}, {1.0f, 64, OscillatorType::LoFiKeys, 0.5f}, {1.0f, 67, OscillatorType::LoFiKeys, 0.5f},
+    {2.0f, 62, OscillatorType::LoFiKeys, 0.5f}, {2.0f, 65, OscillatorType::LoFiKeys, 0.5f}, {2.0f, 69, OscillatorType::LoFiKeys, 0.5f},
+};
+
+// 12. The Midnight - "Vampires" (Synthwave)
+// 80s synth brass/pad, sax/lead, analog bass
+static const TrackNote g_SynthwaveVampires[] = {
+    // Drums
+    {0.0f, 36, OscillatorType::Kick808, 0.5f}, {2.0f, 38, OscillatorType::Snare808, 0.25f},
+    {4.0f, 36, OscillatorType::Kick808, 0.5f}, {6.0f, 38, OscillatorType::Snare808, 0.25f},
+    {0.5f, 42, OscillatorType::HiHat, 0.125f}, {1.5f, 42, OscillatorType::HiHat, 0.125f},
+    {2.5f, 42, OscillatorType::HiHat, 0.125f}, {3.5f, 42, OscillatorType::HiHat, 0.125f},
+    // Bass
+    {0.0f, 29, OscillatorType::SynthwaveBass, 0.5f}, {0.5f, 29, OscillatorType::SynthwaveBass, 0.5f},
+    {1.0f, 29, OscillatorType::SynthwaveBass, 0.5f}, {1.5f, 29, OscillatorType::SynthwaveBass, 0.5f},
+    {2.0f, 29, OscillatorType::SynthwaveBass, 0.5f}, {2.5f, 29, OscillatorType::SynthwaveBass, 0.5f},
+    // Brass
+    {0.0f, 60, OscillatorType::SynthBrass, 0.5f}, {0.0f, 64, OscillatorType::SynthBrass, 0.5f}, {0.0f, 67, OscillatorType::SynthBrass, 0.5f},
+    {2.0f, 60, OscillatorType::SynthBrass, 0.5f}, {2.0f, 64, OscillatorType::SynthBrass, 0.5f}, {2.0f, 67, OscillatorType::SynthBrass, 0.5f},
+    // Sax Lead
+    {0.0f, 72, OscillatorType::SynthLead, 1.5f}, {1.5f, 74, OscillatorType::SynthLead, 0.5f},
+    {2.0f, 76, OscillatorType::SynthLead, 2.0f}, {4.0f, 72, OscillatorType::SynthLead, 4.0f},
+};
+
 // Array of all sample tracks
 // fixedPosition=true means notes are placed at their exact beat positions (starting from beat 0)
 static const SampleTrack g_SampleTracks[] = {
@@ -1751,7 +2408,7 @@ static const SampleTrack g_SampleTracks[] = {
     {"Midnight Drive", "Synthwave", "Driving 80s retrowave", g_SynthwaveMidnightDrive, sizeof(g_SynthwaveMidnightDrive)/sizeof(TrackNote), 16, 110, true},
     {"Neon Dreams", "Synthwave", "Dreamy arpeggiated", g_SynthwaveNeonDreams, sizeof(g_SynthwaveNeonDreams)/sizeof(TrackNote), 16, 100, true},
     {"Retro Racer", "Synthwave", "Energetic driving", g_SynthwaveRetroRacer, sizeof(g_SynthwaveRetroRacer)/sizeof(TrackNote), 16, 118, true},
-    {"Nightcall", "Synthwave", "Kavinsky style pulsing", g_SynthwaveNightcall, sizeof(g_SynthwaveNightcall)/sizeof(TrackNote), 16, 98, true},
+    {"Nightcall", "Synthwave", "Kavinsky style pulsing", g_SynthwaveNightcall, sizeof(g_SynthwaveNightcall)/sizeof(TrackNote), 16, 92, true},
     {"Turbo Killer", "Synthwave", "Aggressive Carpenter Brut", g_SynthwaveTurboKiller, sizeof(g_SynthwaveTurboKiller)/sizeof(TrackNote), 8, 128, true},
     {"Endless Summer", "Synthwave", "The Midnight emotional", g_SynthwaveEndlessSummer, sizeof(g_SynthwaveEndlessSummer)/sizeof(TrackNote), 16, 105, true},
     {"Tech Noir", "Synthwave", "Gunship dark cyberpunk", g_SynthwaveTechNoir, sizeof(g_SynthwaveTechNoir)/sizeof(TrackNote), 16, 108, true},
@@ -1777,6 +2434,19 @@ static const SampleTrack g_SampleTracks[] = {
     {"Perreo", "Reggaeton", "Classic dembow beat", g_ReggaetonPerreo, sizeof(g_ReggaetonPerreo)/sizeof(TrackNote), 8, 95, true},
     {"Gasolina", "Reggaeton", "Energetic party dembow", g_ReggaetonGasolina, sizeof(g_ReggaetonGasolina)/sizeof(TrackNote), 8, 100, true},
     {"Noche", "Reggaeton", "Dark moody reggaeton", g_ReggaetonNoche, sizeof(g_ReggaetonNoche)/sizeof(TrackNote), 8, 90, true},
+    // Recreations
+    {"Resonance", "Synthwave", "HOME style pad & lead", g_SynthwaveResonance, sizeof(g_SynthwaveResonance)/sizeof(TrackNote), 16, 90, true},
+    {"Comfort Chain", "Hip Hop", "Instupendo lo-fi vibe", g_LofiComfortChain, sizeof(g_LofiComfortChain)/sizeof(TrackNote), 16, 85, true},
+    {"All Girls Same", "Trap", "Juice WRLD guitar trap", g_TrapAllGirls, sizeof(g_TrapAllGirls)/sizeof(TrackNote), 8, 140, true},
+    {"Broke Boi", "Trap", "Playboi Carti minimalism", g_HipHopBrokeBoi, sizeof(g_HipHopBrokeBoi)/sizeof(TrackNote), 8, 135, true},
+    {"Gypsy Woman", "House", "Crystal Waters organ", g_HouseGypsyWoman, sizeof(g_HouseGypsyWoman)/sizeof(TrackNote), 8, 120, true},
+    {"Hide", "Trap", "Juice WRLD melodic", g_TrapHide, sizeof(g_TrapHide)/sizeof(TrackNote), 8, 140, true},
+    {"Assumptions", "Future Bass", "Sam Gellaitry style", g_FutureBassAssumptions, sizeof(g_FutureBassAssumptions)/sizeof(TrackNote), 8, 130, true},
+    {"Let Go", "Ambient", "Ark Patrol atmospheric", g_ElectronicLetGo, sizeof(g_ElectronicLetGo)/sizeof(TrackNote), 8, 100, true},
+    {"METAMORPHOSIS", "Phonk", "INTERWORLD drift phonk", g_PhonkMetamorphosis, sizeof(g_PhonkMetamorphosis)/sizeof(TrackNote), 8, 125, true},
+    {"Memory Reboot", "Ambient", "Narvent lush synthwave", g_AmbientMemoryReboot, sizeof(g_AmbientMemoryReboot)/sizeof(TrackNote), 16, 95, true},
+    {"7 Weeks", "Hip Hop", "Lo-fi chill keys", g_Lofi7Weeks, sizeof(g_Lofi7Weeks)/sizeof(TrackNote), 8, 80, true},
+    {"Vampires", "Synthwave", "The Midnight sax/brass", g_SynthwaveVampires, sizeof(g_SynthwaveVampires)/sizeof(TrackNote), 8, 105, true},
 };
 static constexpr int g_NumSampleTracks = sizeof(g_SampleTracks) / sizeof(g_SampleTracks[0]);
 
@@ -3474,6 +4144,104 @@ inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& st
         project.masterVolume = masterPct / 100.0f;
     }
 
+    // Master Effects Section
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Master Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Loudness Presets
+        ImGui::Text("Target Platform:");
+        ImGui::SameLine();
+        const char* presets[] = { "Off", "Spotify", "Apple Music", "YouTube", "SoundCloud", "CD Master" };
+        static int currentPreset = 0;
+        if (ImGui::Combo("##masterPreset", &currentPreset, presets, 6)) {
+            MasterPresets::applyLoudnessPreset(seq.getMasterEffects(), presets[currentPreset]);
+            project.masterEQEnabled = seq.getMasterEffects().eqEnabled;
+            project.masterCompressorEnabled = seq.getMasterEffects().compressorEnabled;
+            project.masterLimiterEnabled = seq.getMasterEffects().limiterEnabled;
+            project.masterCompThreshold = seq.getMasterEffects().compressor.threshold;
+            project.masterCompRatio = seq.getMasterEffects().compressor.ratio;
+            project.masterCompMakeup = seq.getMasterEffects().compressor.makeupGain;
+            project.masterLimiterCeiling = seq.getMasterEffects().limiter.ceiling;
+            seq.updateMasterEffects();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-configure mastering for streaming platforms");
+
+        ImGui::Spacing();
+
+        // Master Limiter (most important - prevent clipping)
+        if (ImGui::Checkbox("Limiter", &project.masterLimiterEnabled)) {
+            seq.updateMasterEffects();
+        }
+        if (project.masterLimiterEnabled) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::SliderFloat("##limCeil", &project.masterLimiterCeiling, -1.0f, -0.1f, "%.1f dB")) {
+                seq.updateMasterEffects();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ceiling: prevents signal from exceeding this level");
+        }
+
+        // Master Compressor (glue compression)
+        if (ImGui::Checkbox("Compressor", &project.masterCompressorEnabled)) {
+            seq.updateMasterEffects();
+        }
+        if (project.masterCompressorEnabled) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::SliderFloat("##compThr", &project.masterCompThreshold, -24.0f, 0.0f, "%.0f dB")) {
+                seq.updateMasterEffects();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Threshold: compress signals above this level");
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            if (ImGui::SliderFloat("##compRat", &project.masterCompRatio, 1.0f, 8.0f, "%.1f:1")) {
+                seq.updateMasterEffects();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ratio: compression amount");
+        }
+
+        // Master EQ (tonal balance)
+        if (ImGui::Checkbox("EQ", &project.masterEQEnabled)) {
+            seq.updateMasterEffects();
+        }
+        if (project.masterEQEnabled) {
+            ImGui::Text("  Low:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::SliderFloat("##eqLow", &project.masterEQLowGain, -12.0f, 12.0f, "%.1f dB")) {
+                seq.updateMasterEffects();
+            }
+
+            ImGui::SameLine();
+            ImGui::Text("Mid:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::SliderFloat("##eqMid", &project.masterEQMidGain, -12.0f, 12.0f, "%.1f dB")) {
+                seq.updateMasterEffects();
+            }
+
+            ImGui::SameLine();
+            ImGui::Text("High:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::SliderFloat("##eqHigh", &project.masterEQHighGain, -12.0f, 12.0f, "%.1f dB")) {
+                seq.updateMasterEffects();
+            }
+        }
+
+        // LUFS Meter (loudness monitoring)
+        float lufs = seq.getMasterEffects().getLUFS();
+        ImGui::Text("Loudness: %.1f LUFS", lufs);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("LUFS (Loudness Units Full Scale)\n"
+                              "Streaming targets:\n"
+                              "  Spotify: -14 LUFS\n"
+                              "  Apple Music: -16 LUFS\n"
+                              "  YouTube: -13 LUFS\n"
+                              "  SoundCloud: -11 LUFS");
+        }
+    }
+
     ImGui::Separator();
 
     // Row 4: Swing/Groove settings
@@ -3642,6 +4410,27 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
         std::string tooltip = "Export to MP3 audio file\n" + getMp3EncoderStatus();
         ImGui::SetTooltip("%s", tooltip.c_str());
     }
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("MIDI", ImVec2(50, 25))) {
+        std::string path = saveFileDialog(
+            "MIDI Files (*.mid)\0*.mid\0",
+            "mid");
+        if (!path.empty()) {
+            // Ensure .mid extension
+            if (path.find(".mid") == std::string::npos) {
+                path += ".mid";
+            }
+            bool success = exportProjectToMIDI(project, path);
+            if (success) {
+                exportStatus = "MIDI exported successfully!";
+            } else {
+                exportStatus = "MIDI export failed!";
+            }
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export to MIDI file for use in other DAWs");
 
     // WAV Export popup
     if (showExportPopup) {
@@ -4967,46 +5756,387 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 GenreEffects genreFx = getGenreEffects(st.genre);
                 auto& channelConfig = project.channels[ui.selectedChannel];
 
-                // Store genre effects in channel config (applied by main loop)
+                // Apply ALL genre effects to channel config for authentic sound
+                // Reverb
                 channelConfig.reverbEnabled = genreFx.reverbEnabled;
                 channelConfig.reverbMix = genreFx.reverbMix;
                 channelConfig.reverbRoomSize = genreFx.reverbRoomSize;
                 channelConfig.reverbDamping = genreFx.reverbDamping;
+                // Chorus
                 channelConfig.chorusEnabled = genreFx.chorusEnabled;
                 channelConfig.chorusMix = genreFx.chorusMix;
                 channelConfig.chorusRate = genreFx.chorusRate;
+                // Delay
                 channelConfig.delayEnabled = genreFx.delayEnabled;
                 channelConfig.delayMix = genreFx.delayMix;
                 channelConfig.delayTime = genreFx.delayTime;
                 channelConfig.delayFeedback = genreFx.delayFeedback;
+                // Stereo Widener (essential for synthwave)
+                channelConfig.stereoWidenerEnabled = genreFx.stereoWidenerEnabled;
+                channelConfig.stereoWidenerWidth = genreFx.stereoWidenerWidth;
+                channelConfig.stereoWidenerHaas = genreFx.stereoWidenerHaas;
+                channelConfig.stereoWidenerMix = genreFx.stereoWidenerMix;
+                // Tape Saturation (analog warmth)
+                channelConfig.tapeSaturationEnabled = genreFx.tapeSaturationEnabled;
+                channelConfig.tapeDrive = genreFx.tapeDrive;
+                channelConfig.tapeWarmth = genreFx.tapeWarmth;
+                channelConfig.tapeCompression = genreFx.tapeCompression;
+                channelConfig.tapeMix = genreFx.tapeMix;
+                // Filter
+                channelConfig.filterEnabled = genreFx.filterEnabled;
+                channelConfig.filterType = genreFx.filterType;
+                channelConfig.filterCutoff = genreFx.filterCutoff;
+                channelConfig.filterResonance = genreFx.filterResonance;
+                // Distortion
+                channelConfig.distortionEnabled = genreFx.distortionEnabled;
+                channelConfig.distortionType = genreFx.distortionType;
+                channelConfig.distortionDrive = genreFx.distortionDrive;
+                channelConfig.distortionMix = genreFx.distortionMix;
+                // Bitcrusher
+                channelConfig.bitcrusherEnabled = genreFx.bitcrusherEnabled;
+                channelConfig.bitDepth = genreFx.bitDepth;
+                channelConfig.sampleRateDiv = genreFx.sampleRateDiv;
+                // Phaser
+                channelConfig.phaserEnabled = genreFx.phaserEnabled;
+                channelConfig.phaserRate = genreFx.phaserRate;
+                channelConfig.phaserDepth = genreFx.phaserDepth;
+                channelConfig.phaserFeedback = genreFx.phaserFeedback;
+                // Tremolo
+                channelConfig.tremoloEnabled = genreFx.tremoloEnabled;
+                channelConfig.tremoloRate = genreFx.tremoloRate;
+                channelConfig.tremoloDepth = genreFx.tremoloDepth;
+                // Sidechain
+                channelConfig.sidechainEnabled = genreFx.sidechainEnabled;
+                channelConfig.sidechainAmount = genreFx.sidechainAmount;
+                channelConfig.sidechainRelease = genreFx.sidechainRelease;
+                // === NEW: Advanced Effects ===
+                channelConfig.eqEnabled = genreFx.eqEnabled;
+                channelConfig.eqLow = genreFx.eqLow;
+                channelConfig.eqMid = genreFx.eqMid;
+                channelConfig.eqHigh = genreFx.eqHigh;
+                
+                channelConfig.compressorEnabled = genreFx.compressorEnabled;
+                channelConfig.compThreshold = genreFx.compThreshold;
+                channelConfig.compRatio = genreFx.compRatio;
+                channelConfig.compAttack = genreFx.compAttack;
+                channelConfig.compRelease = genreFx.compRelease;
+                channelConfig.compGain = genreFx.compGain;
+                
+                channelConfig.filterEnvEnabled = genreFx.filterEnvEnabled;
+                channelConfig.filterEnvAmount = genreFx.filterEnvAmount;
+                channelConfig.filterEnvAttack = genreFx.filterEnvAttack;
+                channelConfig.filterEnvDecay = genreFx.filterEnvDecay;
 
-                // Add all notes from the sample track
+                // Smart "Load Full Song" Logic
+                // 1. Clear existing project data to start fresh
+                project.patterns.clear();
+                project.arrangement.clear();
+                g_UndoHistory.clear();
+                
+                // 2. Setup Channels with meaningful names and defaults
+                // Channel 0: Drums (Beat)
+                project.channels[0].name = "Drums";
+                project.channels[0].volume = 0.9f;
+                project.channels[0].pan = 0.0f;
+                // Channel 1: Bass (Low End)
+                project.channels[1].name = "Bass";
+                project.channels[1].volume = 0.85f;
+                project.channels[1].pan = 0.0f;
+                // Channel 2: Lead (Melody)
+                project.channels[2].name = "Lead";
+                project.channels[2].volume = 0.8f;
+                project.channels[2].pan = 0.0f;
+                // Channel 3: Pad/Chords (Harmony)
+                project.channels[3].name = "Pad/Chords";
+                project.channels[3].volume = 0.7f;
+                project.channels[3].pan = 0.0f; // Wide stereo will be applied by effects
+                // Channel 4: Extra/FX
+                project.channels[4].name = "Extra";
+                
+                // 3. Create Patterns for each instrument group
+                project.patterns.resize(5);
+                project.patterns[0].name = "Drums Main";
+                project.patterns[1].name = "Bassline";
+                project.patterns[2].name = "Lead Melody";
+                project.patterns[3].name = "Chords/Pad";
+                project.patterns[4].name = "Extra";
+                
+                // 4. Apply Genre Effects to appropriate channels
+                // GenreEffects genreFx = getGenreEffects(st.genre); // Already declared above
+                
+                // Apply specific FX logic
+                // Drums (Ch 0): Compression, EQ
+                project.channels[0].compressorEnabled = true;
+                project.channels[0].compThreshold = 0.6f;
+                project.channels[0].compRatio = 4.0f;
+                project.channels[0].eqEnabled = true;
+                project.channels[0].eqLow = 1.2f; // Boost kick
+                project.channels[0].eqHigh = 1.1f; // Crisp hats
+                
+                // Bass (Ch 1): Mono, Sidechain from Drums
+                project.channels[1].stereoWidenerEnabled = false; // Keep bass centered
+                project.channels[1].sidechainEnabled = genreFx.sidechainEnabled;
+                project.channels[1].sidechainSource = 0; // Duck when Drums play
+                project.channels[1].sidechainAmount = genreFx.sidechainAmount;
+                project.channels[1].sidechainRelease = genreFx.sidechainRelease;
+                project.channels[1].eqEnabled = true;
+                project.channels[1].eqLow = 1.1f;
+                project.channels[1].filterEnvEnabled = genreFx.filterEnvEnabled;
+                project.channels[1].filterEnvAmount = genreFx.filterEnvAmount;
+                
+                // Lead (Ch 2): Delay, Reverb
+                applyGenreEffects(project.channels[2], genreFx); // Base genre FX
+                project.channels[2].delayEnabled = true; // Leads usually need delay
+                project.channels[2].sidechainEnabled = false; // Leads usually don't duck as hard
+                
+                // Pad (Ch 3): Stereo Width, Chorus, Reverb
+                applyGenreEffects(project.channels[3], genreFx);
+                project.channels[3].stereoWidenerEnabled = true;
+                project.channels[3].stereoWidenerWidth = 0.8f;
+                project.channels[3].sidechainEnabled = genreFx.sidechainEnabled; // Pads often duck
+                project.channels[3].sidechainSource = 0;
+
+                // === MASTERING: Specific Tweaks for "Nightcall" ===
+                if (strcmp(st.name, "Nightcall") == 0) {
+                    // 1. Drums: Tight and Punchy
+                    // Gated Reverb Snare trick
+                    project.channels[0].reverbEnabled = true;
+                    project.channels[0].reverbMix = 0.3f;
+                    project.channels[0].reverbRoomSize = 0.4f;
+                    project.channels[0].reverbDamping = 0.1f;
+                    project.channels[0].compThreshold = 0.5f;
+                    project.channels[0].compRatio = 4.0f;
+                    project.channels[0].compGain = 1.4f;
+                    
+                    // 2. Bass: Driving Analog Pluck (Sawtooth based)
+                    // Oscillator is now Sawtooth (set in loop below or default)
+                    // Use Filter Env to create the pluck
+                    project.channels[1].filterEnabled = true;
+                    project.channels[1].filterType = 0; // Lowpass
+                    project.channels[1].filterCutoff = 400.0f; // Low base
+                    project.channels[1].filterResonance = 0.6f; // Resonant squelch
+                    
+                    project.channels[1].filterEnvEnabled = true;
+                    project.channels[1].filterEnvAmount = 0.7f; // High modulation
+                    project.channels[1].filterEnvAttack = 0.01f; // Instant
+                    project.channels[1].filterEnvDecay = 0.25f; // Short pluck
+                    
+                    // Distortion for growl
+                    project.channels[1].distortionEnabled = true;
+                    project.channels[1].distortionType = 0; // Tanh
+                    project.channels[1].distortionDrive = 3.0f; // Heavy drive
+                    project.channels[1].distortionMix = 0.6f;
+                    
+                    // Sidechain
+                    project.channels[1].sidechainEnabled = true;
+                    project.channels[1].sidechainSource = 0;
+                    project.channels[1].sidechainAmount = 0.8f; // Heavy pump
+                    project.channels[1].sidechainRelease = 0.15f;
+
+                    // 3. Lead: Talkbox/Vocoder Simulation (Sawtooth based)
+                    // NEW: Use Formant Filter for authentic vowel sound
+                    project.channels[2].formantEnabled = true;
+                    project.channels[2].formantVowel = 3; // "O" sound (dark/hollow like Kavinsky)
+                    project.channels[2].formantResonance = 6.0f;
+                    
+                    // EQ to shape the vocoder tone
+                    project.channels[2].eqEnabled = true;
+                    project.channels[2].eqLow = 0.5f;   // Cut low mud
+                    project.channels[2].eqMid = 1.4f;   // Boost speech presence
+                    project.channels[2].eqHigh = 0.8f;  // Soften highs
+                    project.channels[2].eqMidFreq = 1000.0f;
+                    
+                    // Bitcrusher for digital grit
+                    project.channels[2].bitcrusherEnabled = true;
+                    project.channels[2].bitDepth = 12.0f;
+                    project.channels[2].sampleRateDiv = 1.0f; // High fidelity but crushed
+                    
+                    // Saturation for warmth
+                    project.channels[2].tapeSaturationEnabled = true;
+                    project.channels[2].tapeDrive = 2.0f;
+                    project.channels[2].tapeMix = 0.5f;
+                    
+                    // Distortion for edge
+                    project.channels[2].distortionEnabled = true;
+                    project.channels[2].distortionDrive = 2.0f;
+                    project.channels[2].distortionMix = 0.4f;
+                    
+                    // Chorus for width
+                    project.channels[2].chorusEnabled = true;
+                    project.channels[2].chorusMix = 0.4f;
+                    
+                    // Compressor to flatten it
+                    project.channels[2].compressorEnabled = true;
+                    project.channels[2].compRatio = 8.0f; // Limiting
+                    project.channels[2].compThreshold = 0.2f;
+                    project.channels[2].compGain = 1.5f;
+
+                    // 4. Pads: Background Atmosphere
+                    project.channels[3].volume = 0.5f;
+                    project.channels[3].reverbMix = 0.6f;
+                    project.channels[3].stereoWidenerWidth = 1.0f;
+                }
+                else if (strcmp(st.name, "Resonance") == 0) {
+                    // === HOME - Resonance (Chillwave/Synthwave) ===
+                    
+                    // 1. Drums: Lo-fi Crunch
+                    project.channels[0].bitcrusherEnabled = true;
+                    project.channels[0].bitDepth = 12.0f;
+                    project.channels[0].tapeSaturationEnabled = true;
+                    project.channels[0].tapeDrive = 1.5f;
+                    
+                    // 2. Bass: Resonant Squelch
+                    // Needs to be punchy but warm
+                    project.channels[1].filterEnabled = true;
+                    project.channels[1].filterType = 0; // Lowpass
+                    project.channels[1].filterCutoff = 600.0f;
+                    project.channels[1].filterResonance = 0.7f; // High resonance
+                    
+                    project.channels[1].filterEnvEnabled = true;
+                    project.channels[1].filterEnvAmount = 0.5f;
+                    project.channels[1].filterEnvDecay = 0.4f;
+                    
+                    project.channels[1].chorusEnabled = true; // Wide bass (unusual but fits Resonance style)
+                    project.channels[1].chorusMix = 0.3f;
+
+                    // 3. Lead: Plucky and Delayed
+                    project.channels[2].delayEnabled = true;
+                    project.channels[2].delayTime = 0.35f;
+                    project.channels[2].delayFeedback = 0.5f;
+                    project.channels[2].reverbEnabled = true;
+                    project.channels[2].reverbMix = 0.4f;
+                    
+                    // 4. Pads: Massive Phaser/Flanger wash
+                    project.channels[3].phaserEnabled = true;
+                    project.channels[3].phaserRate = 0.2f; // Slow sweep
+                    project.channels[3].phaserDepth = 0.8f;
+                    project.channels[3].stereoWidenerEnabled = true;
+                    project.channels[3].stereoWidenerWidth = 1.0f;
+                }
+                else if (strcmp(st.name, "Comfort Chain") == 0) {
+                    // === Instupendo - Comfort Chain (Lo-Fi) ===
+                    
+                    // Global Lo-Fi Vibe (simulated on channels)
+                    
+                    // Keys/Lead: The main focus - Warbly and muffled
+                    project.channels[2].filterEnabled = true;
+                    project.channels[2].filterCutoff = 1200.0f; // Muffled
+                    
+                    project.channels[2].vibratoEnabled = true; // Pitch warble (Tape wobble)
+                    // Note: Vibrato is per-note usually, but we can set defaults here if we had channel-strip vibrato.
+                    // Instead use Chorus with high depth/low rate for wobble
+                    project.channels[2].chorusEnabled = true;
+                    project.channels[2].chorusRate = 1.5f;
+                    project.channels[2].chorusDepth = 0.008f;
+                    project.channels[2].chorusMix = 1.0f; // Full wet for vibrato effect
+                    
+                    project.channels[2].tapeSaturationEnabled = true;
+                    project.channels[2].tapeDrive = 2.0f; // Driven
+                    project.channels[2].tapeWarmth = 0.8f; // Very warm/dark
+                    
+                    // Drums: Soft and distant
+                    project.channels[0].eqEnabled = true;
+                    project.channels[0].eqHigh = 0.5f; // Cut highs
+                    project.channels[0].reverbEnabled = true;
+                    project.channels[0].reverbMix = 0.3f;
+                }
+                else if (strcmp(st.genre, "Techno") == 0) {
+                    // === TECHNO MASTERING ===
+                    
+                    // Rumble Bass
+                    project.channels[1].reverbEnabled = true;
+                    project.channels[1].reverbRoomSize = 0.8f;
+                    project.channels[1].reverbDamping = 0.9f; // Dark rumble
+                    project.channels[1].reverbMix = 0.4f;
+                    project.channels[1].eqEnabled = true;
+                    project.channels[1].eqLow = 1.5f; // Huge low end
+                    
+                    // Drums: Aggressive Distortion
+                    project.channels[0].distortionEnabled = true;
+                    project.channels[0].distortionDrive = 2.5f;
+                    project.channels[0].distortionMix = 0.4f;
+                    project.channels[0].compressorEnabled = true;
+                    project.channels[0].compRatio = 8.0f;
+                }
+                else if (strcmp(st.genre, "Trap") == 0 || strcmp(st.genre, "Hip Hop") == 0) {
+                    // === TRAP/HIP HOP MASTERING ===
+                    
+                    // 808 Bass: Distortion is key
+                    project.channels[1].distortionEnabled = true;
+                    project.channels[1].distortionType = 1; // Hard clip
+                    project.channels[1].distortionDrive = 3.0f;
+                    project.channels[1].distortionMix = 0.5f;
+                    
+                    // Hi-Hats (Lead/Extra): Brightness
+                    project.channels[4].eqEnabled = true; // Extra often has hats in this mapping
+                    project.channels[4].eqHigh = 1.5f;
+                }
+                
+                // 5. Distribute Notes
                 for (int j = 0; j < st.noteCount; ++j) {
                     const TrackNote& tn = st.notes[j];
                     Note newNote;
                     newNote.pitch = tn.pitch;
-                    newNote.startTime = placeBeat + tn.beat;
+                    newNote.startTime = tn.beat;
                     newNote.oscillatorType = tn.osc;
                     newNote.duration = tn.duration;
-                    newNote.velocity = tn.velocity;  // Copy velocity from track note
-                    newNote.vibrato = tn.vibrato;    // Copy vibrato depth
-                    newNote.vibratoSpeed = tn.vibratoSpeed;  // Copy vibrato speed
-                    pattern.notes.push_back(newNote);
-                    ui.selectedNoteIndices.push_back(static_cast<int>(pattern.notes.size()) - 1);
-
-                    // Auto-extend pattern length if needed
-                    float noteEnd = newNote.startTime + newNote.duration;
-                    if (noteEnd > pattern.length) {
-                        pattern.length = static_cast<int>(std::ceil(noteEnd / project.beatsPerMeasure)) * project.beatsPerMeasure;
+                    newNote.velocity = tn.velocity;
+                    newNote.vibrato = tn.vibrato;
+                    newNote.vibratoSpeed = tn.vibratoSpeed;
+                    
+                    // Determine target pattern/channel based on instrument type
+                    int targetIdx = 4; // Default to Extra
+                    
+                    if (isDrumType(tn.osc)) {
+                        targetIdx = 0; // Drums
+                    } else if (tn.osc == OscillatorType::SynthBass || tn.osc == OscillatorType::SynthwaveBass || 
+                               tn.osc == OscillatorType::AcidBass || tn.osc == OscillatorType::SubBass808 || 
+                               tn.osc == OscillatorType::Reese || tn.osc == OscillatorType::ReggaetonBass ||
+                               tn.osc == OscillatorType::Triangle) { // Triangle often used as bass
+                        targetIdx = 1; // Bass
+                    } else if (tn.osc == OscillatorType::SynthPad || tn.osc == OscillatorType::SynthwavePad ||
+                               tn.osc == OscillatorType::SynthwaveChord || tn.osc == OscillatorType::GatedPad ||
+                               tn.osc == OscillatorType::SynthStrings || tn.osc == OscillatorType::RaveChord) {
+                        targetIdx = 3; // Pad/Chords
+                    } else {
+                        targetIdx = 2; // Lead (everything else)
+                    }
+                    
+                    // Add to specific pattern
+                    project.patterns[targetIdx].notes.push_back(newNote);
+                    
+                    // Configure channel oscillator based on the first note found for that channel
+                    // (Simple heuristic: assume channel uses one main sound, though notes can override)
+                    if (project.patterns[targetIdx].notes.size() == 1 && !isDrumType(tn.osc)) {
+                        project.channels[targetIdx].oscillator.type = tn.osc;
                     }
                 }
-
-                // Select the first placed note as primary
-                if (!ui.selectedNoteIndices.empty()) {
-                    ui.selectedNoteIndex = ui.selectedNoteIndices[0];
+                
+                // 6. Arrange Clips
+                // Add a clip for each non-empty pattern
+                for (int i = 0; i < 5; ++i) {
+                    if (!project.patterns[i].notes.empty()) {
+                        Clip clip;
+                        clip.patternIndex = i;
+                        clip.channelIndex = i; // Channel 0-4
+                        clip.startBeat = 0.0f;
+                        clip.lengthBeats = static_cast<float>(st.lengthBeats);
+                        project.arrangement.push_back(clip);
+                        
+                        // Set pattern length
+                        project.patterns[i].length = st.lengthBeats;
+                    }
                 }
-
-                // Exit sample track preview mode
+                
+                // Set Song Properties
+                project.bpm = static_cast<float>(st.bpm);
+                project.songLength = static_cast<float>(st.lengthBeats);
+                seq.setBPM(project.bpm);
+                
+                // Refresh view
+                ui.selectedPattern = 0; // Select Drums by default
+                ui.selectedChannel = 0;
+                
                 g_IsSampleTrackPreviewing = false;
                 g_PreviewSampleTrackIndex = -1;
             }
@@ -5952,7 +7082,7 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
     if (ImGui::CollapsingHeader("Oscillator", ImGuiTreeNodeFlags_DefaultOpen)) {
         const char* oscTypes[] = {"Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Custom"};
         int oscType = static_cast<int>(osc.type);
-        if (ImGui::Combo("Type", &oscType, oscTypes, IM_ARRAYSIZE(oscTypes))) {
+        if (ImGui::Combo("Type##osc", &oscType, oscTypes, IM_ARRAYSIZE(oscTypes))) {
             osc.type = static_cast<OscillatorType>(oscType);
             seq.updateChannelConfigs();
         }
@@ -5999,6 +7129,65 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         ImGui::SliderFloat("Release", &channel.envelope.release, 0.001f, 2.0f, "%.3f s");
     }
 
+    // Filter Envelope (Per-voice)
+    if (ImGui::CollapsingHeader("Filter Envelope")) {
+        ImGui::Checkbox("Enable Filter Env", &channel.filterEnvEnabled);
+        if (channel.filterEnvEnabled) {
+            ImGui::Indent();
+            ImGui::SliderFloat("Amount##fenv", &channel.filterEnvAmount, -1.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Modulation amount (negative for inverted)");
+            ImGui::SliderFloat("Attack##fenv", &channel.filterEnvAttack, 0.001f, 1.0f, "%.3f s");
+            ImGui::SliderFloat("Decay##fenv", &channel.filterEnvDecay, 0.001f, 2.0f, "%.3f s");
+            ImGui::Unindent();
+        }
+    }
+
+    // EQ
+    if (ImGui::CollapsingHeader("3-Band EQ")) {
+        ImGui::Checkbox("Enable EQ", &channel.eqEnabled);
+        if (channel.eqEnabled) {
+            ImGui::Indent();
+            ImGui::SliderFloat("Low Gain", &channel.eqLow, 0.0f, 2.0f, "%.2f x");
+            ImGui::SliderFloat("Mid Gain", &channel.eqMid, 0.0f, 2.0f, "%.2f x");
+            ImGui::SliderFloat("High Gain", &channel.eqHigh, 0.0f, 2.0f, "%.2f x");
+            
+            // Optional frequency controls (advanced)
+            if (ImGui::TreeNode("Frequencies")) {
+                ImGui::SliderFloat("Low Freq", &channel.eqLowFreq, 50.0f, 500.0f, "%.0f Hz");
+                ImGui::SliderFloat("Mid Freq", &channel.eqMidFreq, 200.0f, 2000.0f, "%.0f Hz");
+                ImGui::SliderFloat("High Freq", &channel.eqHighFreq, 1000.0f, 10000.0f, "%.0f Hz");
+                ImGui::TreePop();
+            }
+            ImGui::Unindent();
+        }
+    }
+
+    // Compressor
+    if (ImGui::CollapsingHeader("Compressor")) {
+        ImGui::Checkbox("Enable Compressor", &channel.compressorEnabled);
+        if (channel.compressorEnabled) {
+            ImGui::Indent();
+            ImGui::SliderFloat("Threshold##comp", &channel.compThreshold, 0.0f, 1.0f);
+            ImGui::SliderFloat("Ratio##comp", &channel.compRatio, 1.0f, 20.0f, "1:%.1f");
+            ImGui::SliderFloat("Attack##comp", &channel.compAttack, 0.001f, 0.1f, "%.3f s");
+            ImGui::SliderFloat("Release##comp", &channel.compRelease, 0.01f, 1.0f, "%.2f s");
+            ImGui::SliderFloat("Makeup Gain", &channel.compGain, 1.0f, 4.0f, "%.2f x");
+            ImGui::Unindent();
+        }
+    }
+    
+    // Formant Filter (Vocoder Effect)
+    if (ImGui::CollapsingHeader("Formant Filter (Vocoder)")) {
+        ImGui::Checkbox("Enable Formant", &channel.formantEnabled);
+        if (channel.formantEnabled) {
+            ImGui::Indent();
+            const char* vowels[] = {"A (ah)", "E (eh)", "I (ee)", "O (oh)", "U (oo)"};
+            ImGui::Combo("Vowel", &channel.formantVowel, vowels, IM_ARRAYSIZE(vowels));
+            ImGui::SliderFloat("Resonance##formant", &channel.formantResonance, 1.0f, 10.0f, "%.1f");
+            ImGui::Unindent();
+        }
+    }
+
     // Effects
     if (ImGui::CollapsingHeader("Effects")) {
         auto& fx = seq.getSynth(ui.selectedChannel).effects();
@@ -6018,10 +7207,10 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::Indent();
             const char* distTypes[] = {"Tanh", "Hard Clip", "Foldback", "Asymmetric"};
             int distType = static_cast<int>(fx.distortion.type);
-            ImGui::Combo("Type", &distType, distTypes, IM_ARRAYSIZE(distTypes));
+            ImGui::Combo("Type##dist", &distType, distTypes, IM_ARRAYSIZE(distTypes));
             fx.distortion.type = static_cast<DistortionType>(distType);
-            ImGui::SliderFloat("Drive", &fx.distortion.drive, 1.0f, 10.0f);
-            ImGui::SliderFloat("Mix", &fx.distortion.mix, 0.0f, 1.0f);
+            ImGui::SliderFloat("Drive##dist", &fx.distortion.drive, 1.0f, 10.0f);
+            ImGui::SliderFloat("Mix##dist", &fx.distortion.mix, 0.0f, 1.0f);
             ImGui::Unindent();
         }
 
@@ -6031,10 +7220,10 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::Indent();
             const char* filterTypes[] = {"Low Pass", "High Pass", "Band Pass"};
             int filterType = static_cast<int>(fx.filter.type);
-            ImGui::Combo("Type", &filterType, filterTypes, IM_ARRAYSIZE(filterTypes));
+            ImGui::Combo("Type##filter", &filterType, filterTypes, IM_ARRAYSIZE(filterTypes));
             fx.filter.type = static_cast<FilterType>(filterType);
-            ImGui::SliderFloat("Cutoff", &fx.filter.cutoff, 20.0f, 10000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic);
-            ImGui::SliderFloat("Resonance", &fx.filter.resonance, 0.0f, 1.0f);
+            ImGui::SliderFloat("Cutoff##filter", &fx.filter.cutoff, 20.0f, 10000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic);
+            ImGui::SliderFloat("Resonance##filter", &fx.filter.resonance, 0.0f, 1.0f);
             ImGui::Unindent();
         }
 
@@ -6042,8 +7231,8 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         ImGui::Checkbox("Delay", &fx.delayEnabled);
         if (fx.delayEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Time", &fx.delay.delayTime, 0.01f, 1.0f, "%.3f s");
-            ImGui::SliderFloat("Feedback", &fx.delay.feedback, 0.0f, 0.95f);
+            ImGui::SliderFloat("Time##delay", &fx.delay.delayTime, 0.01f, 1.0f, "%.3f s");
+            ImGui::SliderFloat("Feedback##delay", &fx.delay.feedback, 0.0f, 0.95f);
             ImGui::SliderFloat("Mix##delay", &fx.delay.mix, 0.0f, 1.0f);
             ImGui::Unindent();
         }
