@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**1727 checks across 25 groups.** Exit code 0 = pass, 1 = failure, and every
+**1752 checks across 26 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -79,6 +79,7 @@ failure names the field or parameter involved.
 | Noise generator | All sixteen NES periods render; they step from bright to dark; short mode is measurably periodic and normal mode is not; four voices are louder than one (they no longer share a clock); the period persists and out-of-range values are repaired. |
 | Euclidean generator | Every E(k,n) up to n=32 produces exactly k onsets; the tresillo's spacing is correct; rotation preserves the count; degenerate input is safe; generated notes are valid, ordered and audible; all nine presets match their stated pattern. |
 | Stem export | One file per non-silent channel, silent ones skipped, mute/solo state restored afterwards, unsafe characters stripped from filenames, real RIFF files on disk, and a bad duration refused. |
+| Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 
 ## Layer 2 — UI smoke test (`tools/ui-smoke-test.ps1`)
@@ -133,6 +134,13 @@ These need hands on a mouse. Run before tagging a release.
 - [ ] Resize the window small and large; nothing clips or escapes
 - [ ] Restart and confirm the layout persisted
 
+### Recovery
+- [ ] Kill the app from Task Manager mid-edit, relaunch, and confirm the
+      recovery prompt appears with a sensible "minutes ago"
+- [ ] Restore it, and confirm the notes, mix and arrangement all came back
+- [ ] Discard it, relaunch, and confirm the prompt does not reappear
+- [ ] Exit cleanly and relaunch; there must be no prompt
+
 ### Files and export
 - [ ] Save, close, reopen; confirm the mix and arrangement survive
 - [ ] Open a project saved by an older version
@@ -150,6 +158,9 @@ These need hands on a mouse. Run before tagging a release.
 
 Honest list of what nothing currently covers.
 
+0. **The recovery prompt itself.** The autosave *logic* is covered
+   headlessly, but the modal that offers the restore is skipped in capture
+   mode by design, so only the manual checklist exercises it.
 1. **Interactive UI logic.** Every mouse-driven path — dragging notes, box
    selection, clip dragging, knob sweeps — is exercised only by the manual
    checklist. The smoke test proves the screens *draw*, not that they

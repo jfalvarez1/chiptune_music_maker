@@ -20,6 +20,7 @@
 #include "Sequencer.h"
 #include "FileIO.h"
 #include "MIDIExport.h"
+#include "Autosave.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
 // ImGuiStyle, and a context can exist without a backend.
@@ -2938,6 +2939,180 @@ static void testThemeContrast() {
 }
 
 // ============================================================================
+// 26. Autosave and crash recovery
+// ============================================================================
+static void testAutosave() {
+    beginTest("Autosave and crash recovery");
+
+    const std::string dir = testPath("autosave_test");
+    ensureDirectoryExists(dir);
+
+    auto cleanUp = [&]() {
+        std::remove((dir + "/recovery.ctp").c_str());
+        std::remove((dir + "/recovery-previous.ctp").c_str());
+        std::remove((dir + "/recovery.ctp.tmp").c_str());
+    };
+    cleanUp();
+
+    auto projectWith = [](int noteCount, float bpm) {
+        Project p;
+        p.bpm = bpm;
+        Pattern pattern;
+        for (int i = 0; i < noteCount; ++i) {
+            Note n;
+            n.pitch = 48 + i;
+            n.startTime = float(i) * 0.25f;
+            pattern.notes.push_back(n);
+        }
+        p.patterns.clear();
+        p.patterns.push_back(pattern);
+        return p;
+    };
+
+    // ---- A clean start has nothing to recover ---------------------------
+    {
+        Autosave autosave;
+        autosave.setDirectory(dir);
+        check(!autosave.hasRecoverableSession(),
+              "a clean directory offers nothing to recover");
+        check(autosave.bestRecoveryPath().empty(),
+              "no recovery path when there is no recovery file");
+    }
+
+    // ---- Saving produces a loadable recovery ----------------------------
+    {
+        Autosave autosave;
+        autosave.setDirectory(dir);
+        Project original = projectWith(6, 133.0f);
+        autosave.save(original);
+
+        check(autosave.hasRecoverableSession(),
+              "after a save there is something to recover");
+        check(autosave.saveCount() == 1, "the save was counted");
+
+        Project restored;
+        check(loadProject(restored, autosave.bestRecoveryPath()),
+              "the recovery file loads");
+        check(std::fabs(restored.bpm - 133.0f) < 0.01f,
+              "the recovered project has the right tempo");
+        check(!restored.patterns.empty() && restored.patterns[0].notes.size() == 6,
+              "the recovered project has all its notes");
+    }
+
+    // ---- The previous generation is kept --------------------------------
+    //
+    // Writing straight over the only recovery file means a crash during the
+    // write destroys it. Two generations means there is always one intact.
+    {
+        Autosave autosave;
+        autosave.setDirectory(dir);
+        autosave.save(projectWith(3, 100.0f));
+        autosave.save(projectWith(9, 155.0f));
+
+        Project newest, previous;
+        check(loadProject(newest, dir + "/recovery.ctp"),
+              "the newest recovery loads");
+        check(loadProject(previous, dir + "/recovery-previous.ctp"),
+              "the previous generation was kept");
+
+        check(newest.patterns[0].notes.size() == 9, "newest holds the latest save");
+        check(previous.patterns[0].notes.size() == 3,
+              "previous holds the one before it");
+    }
+
+    // ---- A clean exit clears the evidence -------------------------------
+    //
+    // The recovery file surviving to the next launch IS the crash signal, so
+    // a tidy shutdown has to remove it or every start offers a stale restore.
+    {
+        Autosave autosave;
+        autosave.setDirectory(dir);
+        autosave.save(projectWith(4, 120.0f));
+        check(autosave.hasRecoverableSession(), "there is a recovery to clear");
+
+        autosave.clearOnCleanExit();
+        check(!autosave.hasRecoverableSession(),
+              "a clean exit leaves nothing to recover");
+    }
+
+    // ---- The timer only fires when something changed --------------------
+    {
+        Autosave autosave;
+        autosave.setDirectory(dir);
+        Project p = projectWith(5, 120.0f);
+
+        // Nothing marked dirty: an idle session must not churn the disk.
+        autosave.update(p, Autosave::INTERVAL_SECONDS + 1.0f);
+        check(autosave.saveCount() == 0,
+              "an idle session does not autosave");
+
+        autosave.markDirty();
+        autosave.update(p, 1.0f);
+        check(autosave.saveCount() == 0,
+              "a dirty project does not autosave before the interval elapses");
+
+        autosave.update(p, Autosave::INTERVAL_SECONDS);
+        check(autosave.saveCount() == 1,
+              "a dirty project autosaves once the interval elapses");
+
+        // And having saved, it is clean again
+        autosave.update(p, Autosave::INTERVAL_SECONDS + 1.0f);
+        check(autosave.saveCount() == 1,
+              "it does not save again with no further changes");
+
+        autosave.clearOnCleanExit();
+    }
+
+    // ---- Disabled means disabled -----------------------------------------
+    {
+        Autosave autosave;
+        autosave.setDirectory(dir);
+        autosave.setEnabled(false);
+        autosave.markDirty();
+        autosave.update(projectWith(2, 120.0f), Autosave::INTERVAL_SECONDS * 3.0f);
+        check(autosave.saveCount() == 0, "a disabled autosave never writes");
+        check(!autosave.hasRecoverableSession(), "and leaves no file behind");
+    }
+
+    // ---- An unwritable directory fails quietly ---------------------------
+    //
+    // A read-only or missing target must not crash or throw; losing the
+    // autosave is bad, taking the app down with it is worse.
+    {
+        Autosave autosave;
+        autosave.setDirectory(dir + "/does/not/exist");
+        autosave.save(projectWith(3, 120.0f));
+        check(autosave.saveCount() == 0,
+              "saving into a missing directory reports no save rather than crashing");
+        check(true, "an unwritable target did not throw");
+    }
+
+    // ---- A full round trip through everything ----------------------------
+    {
+        Autosave autosave;
+        autosave.setDirectory(dir);
+
+        Project rich = makeKitchenSinkProject();
+        autosave.save(rich);
+
+        Project restored;
+        check(loadProject(restored, autosave.bestRecoveryPath()),
+              "a fully populated project recovers");
+        check(restored.patterns.size() == rich.patterns.size(),
+              "recovered pattern count matches");
+        check(restored.arrangement.size() == rich.arrangement.size(),
+              "recovered arrangement matches - the mix is not lost in recovery");
+        check(std::fabs(restored.channels[0].filterCutoff -
+                        rich.channels[0].filterCutoff) < 0.1f,
+              "recovered channel effects match");
+
+        autosave.clearOnCleanExit();
+    }
+
+    cleanUp();
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -3002,6 +3177,7 @@ int main(int argc, char** argv) {
     testEuclideanGenerator();
     testStemExport();
     testThemeContrast();
+    testAutosave();
     testLongRunStability();
 
     std::printf("\n==========================\n");

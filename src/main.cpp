@@ -33,6 +33,8 @@
 #include "Version.h"
 #include "Layout.h"
 #include "Screenshot.h"
+#include "CrashHandler.h"
+#include "Autosave.h"
 
 #include <cstdio>
 #include <memory>
@@ -61,6 +63,10 @@ static std::atomic<ChiptuneTracker::Sequencer*> g_Sequencer{nullptr};
 static constexpr ma_uint32 MAX_AUDIO_FRAMES = 4096;
 static std::vector<float> g_AudioLeft;
 static std::vector<float> g_AudioRight;
+
+// Set when a layout was restored from imgui.ini, so it is worth checking
+// whether that layout actually docks anything. See the health check below.
+static bool g_CheckSavedLayout = false;
 
 // Screenshot state. F12 captures the rendered frame to screenshots/.
 static bool g_CaptureRequested = false;
@@ -95,6 +101,9 @@ void audioCallback(ma_device* pDevice, void* pOutput, const void* /*pInput*/, ma
 // WinMain Entry Point
 // ============================================================================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmdLine, int nCmdShow) {
+
+    // First thing, so a crash during startup still reports itself.
+    ChiptuneTracker::installCrashHandler();
 
     // Screenshot automation. Parsed first because it decides the window size.
     // See Screenshot.h for the flags.
@@ -264,6 +273,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     printf("Sequencer created\n");
     ChiptuneTracker::UIState uiState;
     bool showAboutDialog = false;
+
+    // Autosave writes beside the user's file, never over it. A recovery file
+    // surviving to the next launch is exactly the signal that the last
+    // session ended badly - a clean exit deletes it.
+    static ChiptuneTracker::Autosave autosave;
+    autosave.setDirectory(".");
+    bool showRecoveryPrompt = false;
+    std::string recoveryAge;
+    if (!captureRequest.enabled && autosave.hasRecoverableSession()) {
+        showRecoveryPrompt = true;
+        recoveryAge = autosave.describeRecoveryAge();
+        printf("Recovery file found from %s\n", recoveryAge.c_str());
+    }
     ChiptuneTracker::PlaybackState playbackState;
 
     sequencer.setSampleRate(44100.0f);
@@ -286,6 +308,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // repair path has something broken to repair.
         if (!hasSavedLayout || (captureRequest.enabled && !captureRequest.keepSavedLayout)) {
             uiState.pendingLayoutFrames = 3;
+        } else {
+            // A layout was loaded from disk and we are not overriding it, so
+            // it is worth checking whether it actually contains one. This is
+            // the only case the repair exists for; running it after we built
+            // the tree ourselves would be inspecting our own work.
+            g_CheckSavedLayout = true;
         }
     }
 
@@ -507,7 +535,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // Frame 2, because ImGui applies the ini during the first NewFrame
         // and the windows have to have been submitted once to be counted.
         static int layoutHealthCheckFrame = 0;
-        if (layoutHealthCheckFrame >= 0) {
+        if (g_CheckSavedLayout && layoutHealthCheckFrame >= 0) {
             if (++layoutHealthCheckFrame > 2) {
                 if (ChiptuneTracker::IsDockSpaceEmpty(dockspaceId)) {
                     printf("Saved layout has no docked panels - rebuilding.\n");
@@ -524,6 +552,65 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 static_cast<ChiptuneTracker::Workspace>(uiState.currentWorkspace),
                 ImGui::GetMainViewport()->WorkSize);
             uiState.pendingLayoutFrames = 0;
+        }
+
+        // Autosave. Only ticks when something changed, so an idle session
+        // does not churn the disk.
+        //
+        // Change detection is a cheap fingerprint rather than hooking every
+        // edit path: note counts, pattern and clip counts, and the tempo.
+        // It misses an edit that swaps one note for another in the same
+        // frame, which is a fair trade against threading a dirty flag
+        // through several hundred call sites in UI.h.
+        {
+            size_t fingerprint = project.patterns.size() * 1000003u +
+                                 project.arrangement.size() * 10007u +
+                                 static_cast<size_t>(project.bpm * 100.0f);
+            for (const auto& pattern : project.patterns) {
+                fingerprint = fingerprint * 31u + pattern.notes.size();
+            }
+            static size_t lastFingerprint = 0;
+            if (fingerprint != lastFingerprint) {
+                lastFingerprint = fingerprint;
+                autosave.markDirty();
+            }
+        }
+        autosave.update(project, io.DeltaTime);
+
+        if (showRecoveryPrompt) {
+            ImGui::OpenPopup("Recover unsaved work?");
+            showRecoveryPrompt = false;
+        }
+        ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("Recover unsaved work?", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped(
+                "The last session did not close normally. An autosave from %s "
+                "is available.",
+                recoveryAge.c_str());
+            ImGui::Spacing();
+            ImGui::TextDisabled("Restoring replaces the current project. "
+                                "Nothing is written to your own file either way.");
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            if (ImGui::Button("Restore it", ImVec2(150, 0))) {
+                const std::string path = autosave.bestRecoveryPath();
+                if (!path.empty() && ChiptuneTracker::loadProject(project, path)) {
+                    sequencer.setProject(&project);
+                    sequencer.updateChannelConfigs();
+                    uiState.selectedPattern = 0;
+                    printf("Restored autosave from %s\n", path.c_str());
+                }
+                autosave.clearOnCleanExit();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Discard", ImVec2(150, 0))) {
+                autosave.clearOnCleanExit();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         // About dialog
@@ -715,6 +802,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // ========================================================================
     // Cleanup
     // ========================================================================
+    // A clean shutdown clears the recovery files. Their presence at the
+    // next launch is what tells us the previous session crashed.
+    if (!captureRequest.enabled) {
+        autosave.clearOnCleanExit();
+    }
+
     // Order matters: stop the device before retiring the pointer, so no
     // callback can be in flight against state the main thread is dismantling.
     ma_device_uninit(&device);

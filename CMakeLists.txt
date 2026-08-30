@@ -20,6 +20,13 @@ endif()
 # ============================================================================
 if(MSVC)
     add_compile_options(/W4 /permissive-)
+
+    # Debug info in Release too. Costs nothing at runtime - the PDB sits
+    # beside the exe and is not loaded unless something asks for it - and it
+    # is the difference between a crash report naming a function and naming
+    # a hex address.
+    add_compile_options(/Zi)
+    add_link_options(/DEBUG /OPT:REF /OPT:ICF)
     # Fast floating point for audio performance
     add_compile_options(/fp:fast)
 

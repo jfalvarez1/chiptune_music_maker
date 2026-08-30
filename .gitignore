@@ -162,3 +162,10 @@ imgui.ini
 /recorded_pattern.ctp
 /*.mp3
 dist/
+
+# Autosave and crash diagnostics, written at runtime
+recovery.ctp
+recovery-previous.ctp
+recovery.ctp.tmp
+crash-log.txt
+*.pdb

@@ -78,8 +78,11 @@ drops data.
       on load, and the suite asserts finite output everywhere. Still wanted:
       a guard in the mixer itself, so a NaN arising at runtime is contained
       rather than poisoning the master bus.
-- [ ] **A6. Autosave and crash recovery.** Rolling autosave to a temp file;
-      offer to restore on next launch.
+- [x] **A6. Autosave and crash recovery.** Two-generation rolling autosave
+      beside the user's file, never over it; the recovery file surviving to
+      the next launch is itself the crash signal, and a clean exit clears it.
+      Paired with a crash handler that writes a symbolised stack trace to
+      `crash-log.txt`, so a crash arrives diagnosable rather than silent.
 - [x] **A7. Fix the `nul` file** and other stray artifacts in the repo
       root; tighten `.gitignore`.
 
