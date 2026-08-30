@@ -16,6 +16,8 @@
 #include "UndoHistory.h"
 #include "LoopRange.h"
 #include "Snap.h"
+#include "Scales.h"
+#include "NoteTransforms.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -2490,6 +2492,15 @@ static bool g_PaletteExpanded_ReggaetonTracks = false;
 inline SnapDivision effectiveSnap(const UIState& ui) {
     return ImGui::GetIO().KeyAlt ? SnapDivision::Off : ui.snapDivision;
 }
+
+// Scale state. These used to live beside the other Tools globals, several
+// thousand lines below the piano roll - which is precisely why the "Snap to
+// Scale" checkbox set a flag that nothing in the note-placement path could
+// read. Declared here, the placement code can actually honour it.
+static int g_ToolsScaleType = 0;       // 0=Major, 1=Minor, 2=Dorian, ...
+static int g_ToolsScaleRoot = 0;       // Root note, 0=C
+static bool g_ToolsScaleLock = false;  // Snap placed notes to the scale
+static bool g_ToolsScaleHighlight = true;
 
 static UndoHistory g_UndoHistory;
 
@@ -5680,6 +5691,65 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
     ImGui::SameLine();
 
+    // Transpose. Applies to the selection, or the whole pattern when
+    // nothing is selected, which is the common case for "move this idea".
+    {
+        auto targetIndices = [&]() {
+            std::vector<int> targets = ui.selectedNoteIndices;
+            if (targets.empty() && ui.selectedNoteIndex >= 0) {
+                targets.push_back(ui.selectedNoteIndex);
+            }
+            if (targets.empty()) {
+                targets.resize(pattern.notes.size());
+                for (size_t i = 0; i < pattern.notes.size(); ++i) {
+                    targets[i] = static_cast<int>(i);
+                }
+            }
+            return targets;
+        };
+
+        auto doTranspose = [&](int semitones) {
+            std::vector<int> targets = targetIndices();
+            if (targets.empty()) return;
+            g_UndoHistory.saveState(project, "Transpose");
+            transposeNotes(pattern.notes, targets, semitones, true);
+        };
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        if (ImGui::Button("-12##tr")) doTranspose(-12);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Down an octave");
+        ImGui::SameLine();
+        if (ImGui::Button("-1##tr")) doTranspose(-1);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Down a semitone.\n"
+                              "Shift+Down does the same, Ctrl+Shift+Down an octave.\n"
+                              "Applies to the selection, or the whole pattern.");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("+1##tr")) doTranspose(1);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Up a semitone");
+        ImGui::SameLine();
+        if (ImGui::Button("+12##tr")) doTranspose(12);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Up an octave");
+
+        ImGui::SameLine();
+        if (ImGui::Button("To Scale")) {
+            std::vector<int> targets = targetIndices();
+            if (!targets.empty()) {
+                g_UndoHistory.saveState(project, "Snap To Scale");
+                snapNotesToScale(pattern.notes, targets,
+                                 g_ToolsScaleRoot, g_ToolsScaleType);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Pull every note onto %s %s.\n"
+                              "Set the scale in the Tools panel.",
+                              noteName(g_ToolsScaleRoot), scaleName(g_ToolsScaleType));
+        }
+    }
+
     // Delete button - supports single and multi-selection
     if (!hasAnySelection) ImGui::BeginDisabled();
     if (ImGui::Button("Delete")) {
@@ -6389,6 +6459,29 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             } else {
                 ui.selectedNoteIndex = -1;
                 ui.selectedNoteIndices.clear();
+            }
+        }
+
+        // ---- Transpose -------------------------------------------------
+        //
+        // There was no transpose anywhere in this program - not on a
+        // selection, not on a pattern, not on the song. Shift moves by a
+        // semitone, Ctrl+Shift by an octave.
+        {
+            const bool shift = ImGui::GetIO().KeyShift;
+            int transposeBy = 0;
+            if (shift && ImGui::IsKeyPressed(ImGuiKey_UpArrow))   transposeBy = ctrl ? 12 : 1;
+            if (shift && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) transposeBy = ctrl ? -12 : -1;
+
+            if (transposeBy != 0) {
+                std::vector<int> targets = ui.selectedNoteIndices;
+                if (targets.empty() && ui.selectedNoteIndex >= 0) {
+                    targets.push_back(ui.selectedNoteIndex);
+                }
+                if (!targets.empty()) {
+                    g_UndoHistory.saveState(project, "Transpose");
+                    transposeNotes(pattern.notes, targets, transposeBy, true);
+                }
             }
         }
 
@@ -7239,6 +7332,15 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                             // Single note mode (original behavior)
                             Note newNote;
                             newNote.pitch = std::clamp(hoveredNote, lowestNote, highestNote - 1);
+
+                            // "Snap to Scale" set a flag that nothing read.
+                            // This is the thing it always claimed to do.
+                            if (g_ToolsScaleLock) {
+                                newNote.pitch = std::clamp(
+                                    snapToScale(newNote.pitch, g_ToolsScaleRoot, g_ToolsScaleType),
+                                    lowestNote, highestNote - 1);
+                            }
+
                             newNote.startTime = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
 
                             // Use selected palette item's oscillator type if one is selected
@@ -9100,6 +9202,25 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
         // ECxx note cut, Qxy retrigger - and they are how chiptune gets
         // flams and stutters without spending another channel.
         // ------------------------------------------------------------------
+        ImGui::Text("Chance this note plays:");
+        ImGui::SetNextItemWidth(120);
+        {
+            float percent = note.probability * 100.0f;
+            if (ImGui::SliderFloat("##Probability", &percent, 0.0f, 100.0f, "%.0f%%")) {
+                note.probability = std::clamp(percent / 100.0f, 0.0f, 1.0f);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Rolled fresh on every pass through the loop.\n"
+                              "A sixteen-step loop repeats a lot; this is the\n"
+                              "cheapest way to stop it sounding like one.");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("100%##prob")) note.probability = 1.0f;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("50%##prob")) note.probability = 0.5f;
+
+        ImGui::Separator();
         ImGui::TextDisabled("Timing");
 
         ImGui::Text("Delay (push the note later):");
@@ -9191,6 +9312,7 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
             note.sweepDirection = defaults.sweepDirection;
             note.sweepSpeed = defaults.sweepSpeed;
             note.sweepAmount = defaults.sweepAmount;
+            note.probability = defaults.probability;
         }
     }
 
@@ -11397,11 +11519,6 @@ static int g_ToolsBassStyle = 0;  // 0=Octave Pulse, 1=Root+Fifth, 2=Walking, 3=
 static int g_ToolsBassRoot = 0;  // Root note (0=C, 1=C#, etc.)
 static int g_ToolsBassOctave = 2;  // Base octave
 
-static int g_ToolsScaleType = 0;  // 0=Major, 1=Minor, 2=Dorian, 3=Phrygian, etc.
-static int g_ToolsScaleRoot = 0;  // Root note
-static bool g_ToolsScaleLock = false;  // Snap to scale
-static bool g_ToolsScaleHighlight = true;  // Highlight in-scale notes
-
 static int g_ToolsVelocityCurve = 0;  // 0=Linear, 1=Exp, 2=Log, 3=S-Curve
 static float g_ToolsVelocityStart = 0.5f;
 static float g_ToolsVelocityEnd = 1.0f;
@@ -11421,57 +11538,8 @@ static float g_ToolsLayerVelocity = 0.7f;  // Velocity of layer
 static float g_ToolsHumanizeTiming = 0.02f;  // Timing variation in beats
 static float g_ToolsHumanizeVelocity = 0.15f;  // Velocity variation (0-1)
 
-// Scale intervals (semitones from root)
-static const int SCALE_MAJOR[] = {0, 2, 4, 5, 7, 9, 11};
-static const int SCALE_MINOR[] = {0, 2, 3, 5, 7, 8, 10};
-static const int SCALE_DORIAN[] = {0, 2, 3, 5, 7, 9, 10};
-static const int SCALE_PHRYGIAN[] = {0, 1, 3, 5, 7, 8, 10};
-static const int SCALE_LYDIAN[] = {0, 2, 4, 6, 7, 9, 11};
-static const int SCALE_MIXOLYDIAN[] = {0, 2, 4, 5, 7, 9, 10};
-static const int SCALE_LOCRIAN[] = {0, 1, 3, 5, 6, 8, 10};
-static const int SCALE_HARMONIC_MINOR[] = {0, 2, 3, 5, 7, 8, 11};
-static const int SCALE_PENTATONIC_MAJOR[] = {0, 2, 4, 7, 9, -1, -1};  // -1 = unused
-static const int SCALE_PENTATONIC_MINOR[] = {0, 3, 5, 7, 10, -1, -1};
-static const int SCALE_BLUES[] = {0, 3, 5, 6, 7, 10, -1};
-
-// Helper: Check if note is in current scale
-inline bool isNoteInScale(int pitch, int scaleRoot, int scaleType) {
-    const int* scale = nullptr;
-    int scaleSize = 7;
-
-    switch (scaleType) {
-        case 0: scale = SCALE_MAJOR; break;
-        case 1: scale = SCALE_MINOR; break;
-        case 2: scale = SCALE_DORIAN; break;
-        case 3: scale = SCALE_PHRYGIAN; break;
-        case 4: scale = SCALE_LYDIAN; break;
-        case 5: scale = SCALE_MIXOLYDIAN; break;
-        case 6: scale = SCALE_LOCRIAN; break;
-        case 7: scale = SCALE_HARMONIC_MINOR; break;
-        case 8: scale = SCALE_PENTATONIC_MAJOR; scaleSize = 5; break;
-        case 9: scale = SCALE_PENTATONIC_MINOR; scaleSize = 5; break;
-        case 10: scale = SCALE_BLUES; scaleSize = 6; break;
-        default: scale = SCALE_MAJOR; break;
-    }
-
-    int noteInOctave = (pitch - scaleRoot + 120) % 12;  // +120 to handle negatives
-    for (int i = 0; i < scaleSize; ++i) {
-        if (scale[i] == noteInOctave) return true;
-    }
-    return false;
-}
-
-// Helper: Snap pitch to nearest in-scale note
-inline int snapToScale(int pitch, int scaleRoot, int scaleType) {
-    if (isNoteInScale(pitch, scaleRoot, scaleType)) return pitch;
-
-    // Try semitone up and down
-    for (int offset = 1; offset <= 6; ++offset) {
-        if (isNoteInScale(pitch + offset, scaleRoot, scaleType)) return pitch + offset;
-        if (isNoteInScale(pitch - offset, scaleRoot, scaleType)) return pitch - offset;
-    }
-    return pitch;  // Fallback
-}
+// The scale tables and helpers now live in Scales.h, out of ImGui's reach
+// and testable on their own.
 
 // Helper: Generate drum pattern based on genre and density
 inline void generateDrumPattern(Pattern& pattern, int genre, float density, bool addCrash, float bpm) {

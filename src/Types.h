@@ -240,6 +240,11 @@ struct Note {
     float    tremolo = 0.0f;        // Tremolo depth (0.0-1.0)
     float    tremoloSpeed = 4.0f;   // Tremolo speed (Hz)
 
+    // Chance this note sounds on any given pass, 0..1. A sixteen-step loop
+    // repeats a great deal; this is the cheapest way to stop it sounding
+    // like a loop, and it is one float. 1.0 means always, as it always did.
+    float    probability = 1.0f;
+
     bool isValid() const { return pitch >= 0 && pitch < 128; }
 };
 

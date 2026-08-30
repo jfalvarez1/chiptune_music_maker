@@ -112,6 +112,11 @@ public:
         m_state.loopRangeActive = false;
     }
 
+    // Which time round the loop we are on. Probabilistic notes hash against
+    // it, so they re-roll on every repeat rather than freezing into a fixed
+    // pattern the first time through.
+    uint32_t loopPass() const { return m_loopPass; }
+
     // The span playback actually repeats over: the user's range if they drew
     // one, otherwise the extent of the content, which is the old behaviour.
     LoopWindow currentLoopWindow() const {
@@ -164,6 +169,8 @@ public:
                         // block, or a range shortened mid-playback, can leave
                         // the playhead more than one window past the end.
                         m_state.currentBeat = wrapIntoWindow(m_state.currentBeat, window);
+                        // Every repeat re-rolls probabilistic notes.
+                        ++m_loopPass;
                         allNotesOff();
                     } else {
                         // Stop playback when the last note ends
@@ -444,6 +451,13 @@ private:
                 const int triggerCount =
                     expandNote(note, clip.startBeat, triggers, MAX_NOTE_TRIGGERS);
 
+                // Rolled once for the whole note rather than per hit, so a
+                // retriggered note either stutters or stays silent, never half.
+                if (!noteShouldSound(note, clip.startBeat + note.startTime,
+                                     m_loopPass)) {
+                    continue;
+                }
+
                 for (int t = 0; t < triggerCount; ++t) {
                     const NoteTrigger& trigger = triggers[t];
 
@@ -502,6 +516,8 @@ private:
 
     void processPatternNotes(const Pattern& pattern, float fromBeat, float toBeat) {
         for (const auto& note : pattern.notes) {
+            if (!noteShouldSound(note, note.startTime, m_loopPass)) continue;
+
             NoteTrigger triggers[MAX_NOTE_TRIGGERS];
             const int triggerCount =
                 expandNote(note, 0.0f, triggers, MAX_NOTE_TRIGGERS);
@@ -776,6 +792,7 @@ private:
     float m_sampleRate = 44100.0f;
     Project* m_project = nullptr;
     PlaybackState m_state;
+    uint32_t m_loopPass = 0;
 
     std::array<Synthesizer, MAX_CHANNELS> m_synths;
 

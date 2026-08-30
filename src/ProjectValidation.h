@@ -112,6 +112,9 @@ inline void clampNoteToValidRanges(Note& note) {
 
     note.tremolo = sanitizeFloat(note.tremolo, 0.0f, 1.0f, 0.0f);
     note.tremoloSpeed = sanitizeFloat(note.tremoloSpeed, 0.0f, 100.0f, 4.0f);
+    // Outside 0..1 a note would silently never fire, or always fire while
+    // claiming otherwise. Both read as the feature being broken.
+    note.probability = sanitizeFloat(note.probability, 0.0f, 1.0f, 1.0f);
 
     // sampleID is an index into the sample pool; -1 means "use the oscillator"
     if (note.sampleID < -1) note.sampleID = -1;

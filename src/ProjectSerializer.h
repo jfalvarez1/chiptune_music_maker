@@ -203,6 +203,7 @@ inline constexpr FloatField<Note> NOTE_FLOATS[] = {
     {"ndl",   &Note::noteDelay},
     {"trm",   &Note::tremolo},
     {"trms",  &Note::tremoloSpeed},
+    {"prb",   &Note::probability},
 };
 
 inline constexpr IntField<Note> NOTE_INTS[] = {

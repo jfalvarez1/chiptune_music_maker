@@ -24,6 +24,8 @@
 #include "Snap.h"
 #include "LoopRange.h"
 #include "NoteEvents.h"
+#include "Scales.h"
+#include "NoteTransforms.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -3744,6 +3746,314 @@ static void testLoopAndEffectsReachAudio() {
 }
 
 // ============================================================================
+// 31. Scales, transpose and note probability
+// ============================================================================
+static void testScalesAndTransforms() {
+    beginTest("Scales, transpose and probability");
+
+    // ---- Scales -----------------------------------------------------------
+    //
+    // The tables were right all along; they were simply unreachable from the
+    // piano roll, so the "Snap to Scale" checkbox set a flag nothing read.
+    {
+        // C major: C D E F G A B, no accidentals.
+        check(isNoteInScale(60, 0, 0), "C is in C major");
+        check(isNoteInScale(62, 0, 0), "D is in C major");
+        check(!isNoteInScale(61, 0, 0), "C# is not in C major");
+        check(!isNoteInScale(66, 0, 0), "F# is not in C major");
+
+        // A minor is the relative minor, so the same seven pitch classes.
+        check(isNoteInScale(69, 9, 1), "A is in A minor");
+        check(!isNoteInScale(70, 9, 1), "A# is not in A minor");
+
+        // Pentatonic drops the fourth and the seventh.
+        check(isNoteInScale(60, 0, 8), "C is in C pentatonic major");
+        check(!isNoteInScale(65, 0, 8), "F is not in C pentatonic major");
+        check(!isNoteInScale(71, 0, 8), "B is not in C pentatonic major");
+
+        // The blues scale keeps its flat fifth.
+        check(isNoteInScale(66, 0, 10), "the flat fifth is in C blues");
+
+        // A pitch below the root must not produce a negative modulus.
+        check(isNoteInScale(0, 9, 1), "a very low pitch classifies correctly");
+        check(isNoteInScale(48, 9, 1), "C two octaves down is still in A minor");
+    }
+
+    // ---- Snapping to a scale ---------------------------------------------
+    {
+        check(snapToScale(60, 0, 0) == 60, "a note already in scale is left alone");
+        const int snapped = snapToScale(61, 0, 0);
+        check(snapped == 60 || snapped == 62,
+              "C# snaps to an adjacent scale tone (got " + std::to_string(snapped) + ")");
+        check(isNoteInScale(snapToScale(66, 0, 0), 0, 0),
+              "whatever F# snaps to is genuinely in the scale");
+
+        // Every pitch must land somewhere valid, in every scale.
+        for (int scaleType = 0; scaleType < SCALE_COUNT; ++scaleType) {
+            for (int pitch = 0; pitch < 128; ++pitch) {
+                const int result = snapToScale(pitch, 0, scaleType);
+                if (!isNoteInScale(result, 0, scaleType)) {
+                    check(false, std::string("snapToScale left pitch ") +
+                          std::to_string(pitch) + " outside scale " +
+                          std::to_string(scaleType));
+                    scaleType = SCALE_COUNT;
+                    break;
+                }
+            }
+        }
+        check(true, "every pitch snaps into every scale");
+    }
+
+    // ---- Transpose --------------------------------------------------------
+    //
+    // This did not exist anywhere in the program before.
+    {
+        auto notesAt = [](std::initializer_list<int> pitches) {
+            std::vector<Note> v;
+            for (int pitch : pitches) {
+                Note n; n.pitch = pitch; v.push_back(n);
+            }
+            return v;
+        };
+        auto allIndices = [](const std::vector<Note>& v) {
+            std::vector<int> idx(v.size());
+            for (size_t i = 0; i < v.size(); ++i) idx[i] = int(i);
+            return idx;
+        };
+
+        {
+            std::vector<Note> notes = notesAt({60, 64, 67});
+            const TransformResult r = transposeNotes(notes, allIndices(notes), 5);
+            check(r.changed == 3 && r.blocked == 0, "every note transposed");
+            check(notes[0].pitch == 65 && notes[1].pitch == 69 && notes[2].pitch == 72,
+                  "transpose adds the interval to each pitch");
+        }
+
+        {
+            std::vector<Note> notes = notesAt({60, 64, 67});
+            transposeNotes(notes, allIndices(notes), -12);
+            check(notes[0].pitch == 48, "a negative interval moves down an octave");
+        }
+
+        // Safe mode leaves unplayable results alone rather than clamping.
+        // Clamping looks like it worked and quietly collapses a chord onto
+        // one pitch.
+        {
+            std::vector<Note> notes = notesAt({120, 60});
+            const TransformResult r = transposeNotes(notes, allIndices(notes), 24, true);
+            check(r.blocked == 1, "safe mode reports the note it refused to move");
+            check(notes[0].pitch == 120, "the out-of-range note is untouched");
+            check(notes[1].pitch == 84, "the in-range note still moves");
+        }
+
+        {
+            std::vector<Note> notes = notesAt({120});
+            transposeNotes(notes, allIndices(notes), 24, false);
+            check(notes[0].pitch == MAX_PITCH,
+                  "with safe mode off the pitch clamps instead");
+        }
+
+        // A chord transposed by an octave must stay a chord.
+        {
+            std::vector<Note> notes = notesAt({60, 64, 67});
+            transposeNotes(notes, allIndices(notes), 12, true);
+            check(notes[1].pitch - notes[0].pitch == 4 &&
+                  notes[2].pitch - notes[1].pitch == 3,
+                  "transposing preserves the intervals inside a chord");
+        }
+
+        {
+            std::vector<Note> notes = notesAt({60});
+            const TransformResult r = transposeNotes(notes, allIndices(notes), 0);
+            check(!r.didAnything(), "transposing by zero is a no-op");
+        }
+
+        // Bad indices are survivable - a selection can outlive its notes.
+        {
+            std::vector<Note> notes = notesAt({60});
+            std::vector<int> bogus = {-1, 5, 99};
+            const TransformResult r = transposeNotes(notes, bogus, 3);
+            check(r.changed == 0, "out-of-range indices are ignored, not crashed on");
+            check(notes[0].pitch == 60, "and no note is touched");
+        }
+
+        {
+            Pattern pattern;
+            for (int i = 0; i < 4; ++i) { Note n; n.pitch = 60 + i; pattern.notes.push_back(n); }
+            transposePattern(pattern, 7);
+            check(pattern.notes[0].pitch == 67, "a whole pattern transposes");
+        }
+    }
+
+    // ---- Snapping a selection to a scale ---------------------------------
+    {
+        std::vector<Note> notes;
+        for (int pitch : {60, 61, 66, 70}) { Note n; n.pitch = pitch; notes.push_back(n); }
+        std::vector<int> idx = {0, 1, 2, 3};
+
+        const TransformResult r = snapNotesToScale(notes, idx, 0, 0);
+        check(r.changed == 3, "the three out-of-key notes moved (got " +
+              std::to_string(r.changed) + ")");
+        for (const Note& n : notes) {
+            if (!isNoteInScale(n.pitch, 0, 0)) {
+                check(false, "a note survived snapping while still out of key");
+                break;
+            }
+        }
+        check(true, "every note ends up in the scale");
+    }
+
+    // ---- Mirror and reverse ----------------------------------------------
+    {
+        std::vector<Note> notes;
+        for (int pitch : {60, 64, 67}) { Note n; n.pitch = pitch; notes.push_back(n); }
+        std::vector<int> idx = {0, 1, 2};
+
+        invertNotes(notes, idx, 60);
+        check(notes[0].pitch == 60, "the centre note is its own mirror");
+        check(notes[1].pitch == 56 && notes[2].pitch == 53,
+              "pitches reflect around the centre");
+    }
+
+    {
+        std::vector<Note> notes;
+        for (int i = 0; i < 3; ++i) {
+            Note n; n.pitch = 60 + i; n.startTime = float(i); n.duration = 1.0f;
+            notes.push_back(n);
+        }
+        std::vector<int> idx = {0, 1, 2};
+
+        reverseNotesInTime(notes, idx);
+        check(std::fabs(notes[0].startTime - 2.0f) < 1e-5f,
+              "the first note becomes the last");
+        check(std::fabs(notes[2].startTime - 0.0f) < 1e-5f,
+              "the last note becomes the first");
+        check(notes[0].pitch == 60, "reversing time does not change pitch");
+    }
+
+    // ---- Probability ------------------------------------------------------
+    {
+        Note always;
+        always.probability = 1.0f;
+        check(noteShouldSound(always, 0.0f, 0), "a probability of 1 always sounds");
+        check(noteShouldSound(always, 3.5f, 77), "and on every pass");
+
+        Note never;
+        never.probability = 0.0f;
+        check(!noteShouldSound(never, 0.0f, 0), "a probability of 0 never sounds");
+        check(!noteShouldSound(never, 3.5f, 77), "and never on any pass");
+
+        // The note-on and the note-off are handled in different calls
+        // thousands of samples apart. If they disagreed, a note would start
+        // and never stop.
+        Note half;
+        half.probability = 0.5f;
+        for (int pass = 0; pass < 50; ++pass) {
+            if (noteShouldSound(half, 2.0f, uint32_t(pass)) !=
+                noteShouldSound(half, 2.0f, uint32_t(pass))) {
+                check(false, "the same note and pass gave two different answers");
+                break;
+            }
+        }
+        check(true, "the roll is stable for a given note and pass, so note-on and "
+                    "note-off cannot disagree");
+
+        // It has to actually vary between passes, or it is not random at all.
+        int sounded = 0;
+        for (uint32_t pass = 0; pass < 1000; ++pass) {
+            if (noteShouldSound(half, 2.0f, pass)) ++sounded;
+        }
+        check(sounded > 350 && sounded < 650,
+              "a 50% note sounds roughly half the time over 1000 passes (got " +
+              std::to_string(sounded) + ")");
+
+        // Two notes on the same step must not share a fate.
+        Note a; a.probability = 0.5f; a.pitch = 60;
+        Note b; b.probability = 0.5f; b.pitch = 67;
+        int differed = 0;
+        for (uint32_t pass = 0; pass < 200; ++pass) {
+            if (noteShouldSound(a, 0.0f, pass) != noteShouldSound(b, 0.0f, pass)) {
+                ++differed;
+            }
+        }
+        check(differed > 20,
+              "two notes on the same beat roll independently (differed " +
+              std::to_string(differed) + " times in 200)");
+
+        Note broken;
+        broken.probability = std::numeric_limits<float>::quiet_NaN();
+        check(noteShouldSound(broken, 0.0f, 0),
+              "a NaN probability falls back to always sounding, not never");
+    }
+
+    // ---- Probability survives a save/load round trip -----------------------
+    {
+        Project original;
+        Pattern pattern;
+        Note n;
+        n.pitch = 64;
+        n.probability = 0.35f;
+        pattern.notes.push_back(n);
+        original.patterns.clear();
+        original.patterns.push_back(pattern);
+
+        const std::string path = testPath("probability_roundtrip.ctp");
+        check(saveProjectFile(original, path), "a project with probability saves");
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "and loads again");
+        check(!loaded.patterns.empty() && !loaded.patterns[0].notes.empty() &&
+              std::fabs(loaded.patterns[0].notes[0].probability - 0.35f) < 0.01f,
+              "note probability survives the round trip - a field the loader "
+              "forgot would silently make every note certain again");
+        std::remove(path.c_str());
+    }
+
+    // ---- A note that never plays is silent --------------------------------
+    {
+        auto renderWithProbability = [](float probability) {
+            Project p;
+            p.bpm = 120.0f;
+            Pattern pat;
+            Note n;
+            n.pitch = 69;
+            n.startTime = 0.0f;
+            n.duration = 1.0f;
+            n.oscillatorType = OscillatorType::Pulse;
+            n.probability = probability;
+            pat.notes.push_back(n);
+            p.patterns.clear();
+            p.patterns.push_back(pat);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            Sequencer& seq = *seqPtr;
+            seq.setSampleRate(44100.0f);
+            seq.setProject(&p);
+            seq.play();
+
+            std::vector<float> l(512), r(512);
+            double energy = 0.0;
+            for (int b = 0; b < 60; ++b) {
+                seq.process(l.data(), r.data(), 512);
+                for (float v : l) energy += double(v) * double(v);
+            }
+            return energy;
+        };
+
+        const double certain = renderWithProbability(1.0f);
+        const double never = renderWithProbability(0.0f);
+
+        check(certain > 1.0, "a certain note sounds (energy " +
+              std::to_string(certain) + ")");
+        check(never < certain * 0.01,
+              "a note with zero probability is silent - probability reaches the "
+              "audio, not just the file (energy " + std::to_string(never) + ")");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -3813,6 +4123,7 @@ int main(int argc, char** argv) {
     testLoopRange();
     testNoteExpansion();
     testLoopAndEffectsReachAudio();
+    testScalesAndTransforms();
     testLongRunStability();
 
     std::printf("\n==========================\n");

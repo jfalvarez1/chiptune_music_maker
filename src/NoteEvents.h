@@ -21,6 +21,8 @@
 #include "Types.h"
 
 #include <cmath>
+#include <cstring>
+#include <cstdint>
 
 namespace ChiptuneTracker {
 
@@ -126,6 +128,37 @@ inline int expandNote(const Note& note, float originBeat,
     }
 
     return count;
+}
+
+// Does this note sound on this pass through the loop?
+//
+// The result has to be identical for the note-on and the note-off, which
+// happen in different calls several thousand samples apart - so this is a
+// hash rather than a running RNG. Feeding it the loop pass counter re-rolls
+// every repeat, which is the entire point; feeding it the pitch and the
+// beat keeps two notes on the same step independent of each other.
+inline bool noteShouldSound(const Note& note, float absStartBeat, uint32_t pass) {
+    // Checked on the bits rather than with a comparison: this project builds
+    // with fast floating point, which lets the compiler fold !(x < 1.0f) into
+    // x >= 1.0f - false for NaN, so a NaN probability would silence the note
+    // instead of playing it. A silent note with no visible cause is the worst
+    // possible failure here.
+    uint32_t bits = 0;
+    std::memcpy(&bits, &note.probability, sizeof(bits));
+    const bool isNaN = ((bits & 0x7F800000u) == 0x7F800000u) && (bits & 0x007FFFFFu);
+    if (isNaN) return true;
+
+    if (note.probability >= 1.0f) return true;
+    if (note.probability <= 0.0f) return false;
+
+    uint32_t h = static_cast<uint32_t>(static_cast<int32_t>(absStartBeat * 256.0f));
+    h ^= static_cast<uint32_t>(note.pitch) * 2654435761u;
+    h ^= pass + 0x9E3779B9u + (h << 6) + (h >> 2);
+    h ^= h >> 15; h *= 0x2C1B3C6Du;
+    h ^= h >> 12; h *= 0x297A2D39u;
+    h ^= h >> 15;
+
+    return static_cast<float>(h & 0xFFFFu) / 65535.0f < note.probability;
 }
 
 // True when a note needs expanding at all. The overwhelming majority do not,
