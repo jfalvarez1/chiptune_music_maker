@@ -14,6 +14,7 @@
 #include "imgui.h"
 #include "Types.h"
 #include "Sequencer.h"
+#include "Widgets.h"
 #include "FileIO.h"
 #include <algorithm>
 #include <cstdio>
@@ -2511,12 +2512,47 @@ inline void ApplyTheme(Theme theme) {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    // Common style settings
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 2.0f;
-    style.ScrollbarRounding = 3.0f;
-    style.GrabRounding = 2.0f;
-    style.FrameBorderSize = 1.0f;
+    // ------------------------------------------------------------------
+    // Shared geometry, applied under every theme.
+    //
+    // Stock ImGui reads as "a debug overlay" mostly because of its metrics,
+    // not its colours: tight padding, square corners, hairline borders on
+    // everything. Generous padding and consistent rounding do more for the
+    // feel of the app than any palette, and doing it here means every
+    // theme - including ones added later - inherits it.
+    // ------------------------------------------------------------------
+    style.WindowRounding      = 8.0f;
+    style.ChildRounding       = 6.0f;
+    style.PopupRounding       = 6.0f;
+    style.FrameRounding       = 5.0f;
+    style.ScrollbarRounding   = 8.0f;
+    style.GrabRounding        = 5.0f;
+    style.TabRounding         = 6.0f;
+
+    style.WindowPadding       = ImVec2(12.0f, 10.0f);
+    style.FramePadding        = ImVec2(9.0f, 5.0f);
+    style.CellPadding         = ImVec2(7.0f, 4.0f);
+    style.ItemSpacing         = ImVec2(9.0f, 7.0f);
+    style.ItemInnerSpacing    = ImVec2(7.0f, 5.0f);
+    style.IndentSpacing       = 21.0f;
+
+    style.ScrollbarSize       = 13.0f;
+    style.GrabMinSize         = 11.0f;
+
+    // Borders only where they separate things, not around every widget
+    style.WindowBorderSize    = 1.0f;
+    style.ChildBorderSize     = 1.0f;
+    style.PopupBorderSize     = 1.0f;
+    style.FrameBorderSize     = 0.0f;
+    style.TabBorderSize       = 0.0f;
+
+    // Titles and headings centred left with breathing room
+    style.WindowTitleAlign    = ImVec2(0.02f, 0.5f);
+    style.ButtonTextAlign     = ImVec2(0.5f, 0.5f);
+    style.SelectableTextAlign = ImVec2(0.0f, 0.5f);
+
+    style.AntiAliasedLines    = true;
+    style.AntiAliasedFill     = true;
 
     switch (theme) {
         case Theme::Stock:
@@ -2829,6 +2865,88 @@ inline void ApplyTheme(Theme theme) {
             g_PianoRollColors.noteSelected = IM_COL32(255, 230, 150, 255);
             g_PianoRollColors.playhead = IM_COL32(255, 200, 80, 255);
             g_PianoRollColors.background = IM_COL32(8, 5, 0, 255);
+            break;
+
+        case Theme::GameBoy:
+            // Game Boy DMG - the original four-shade green LCD. The whole
+            // palette is those four values and nothing else, which is the
+            // point: the constraint is the character.
+            //   darkest 15,56,15  dark 48,98,48  light 139,172,15  lightest 155,188,15
+            colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.22f, 0.06f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.04f, 0.16f, 0.04f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.26f, 0.08f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.54f, 0.67f, 0.06f, 0.50f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.19f, 0.38f, 0.19f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.28f, 0.48f, 0.20f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.38f, 0.58f, 0.16f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.06f, 0.22f, 0.06f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.19f, 0.38f, 0.19f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.28f, 0.10f, 1.00f);
+            colors[ImGuiCol_Header] = ImVec4(0.28f, 0.48f, 0.16f, 0.85f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.42f, 0.60f, 0.12f, 0.90f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.54f, 0.67f, 0.06f, 1.00f);
+            colors[ImGuiCol_Button] = ImVec4(0.28f, 0.48f, 0.16f, 1.00f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.42f, 0.60f, 0.12f, 1.00f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.54f, 0.67f, 0.06f, 1.00f);
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.61f, 0.74f, 0.06f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.68f, 0.80f, 0.10f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.61f, 0.74f, 0.06f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.61f, 0.74f, 0.06f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.32f, 0.46f, 0.12f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.13f, 0.30f, 0.13f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.42f, 0.60f, 0.12f, 1.00f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.28f, 0.48f, 0.16f, 1.00f);
+
+            g_PianoRollColors.keyWhite = IM_COL32(48, 98, 48, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(15, 56, 15, 255);
+            g_PianoRollColors.gridLine = IM_COL32(30, 72, 30, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(80, 130, 40, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(139, 172, 15, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(139, 172, 15, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(155, 188, 15, 255);
+            g_PianoRollColors.playhead = IM_COL32(155, 188, 15, 255);
+            g_PianoRollColors.background = IM_COL32(15, 56, 15, 255);
+            break;
+
+        case Theme::Daylight:
+            // A genuine light theme. Every other theme here is dark, which
+            // is unusable next to a window on a bright afternoon. Warm
+            // greys rather than pure white, and a blue accent that stays
+            // legible against them.
+            colors[ImGuiCol_WindowBg] = ImVec4(0.94f, 0.94f, 0.95f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.97f, 0.97f, 0.98f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.99f, 0.99f, 1.00f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.76f, 0.76f, 0.80f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.88f, 0.88f, 0.91f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.83f, 0.85f, 0.92f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.78f, 0.82f, 0.93f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.88f, 0.88f, 0.90f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.80f, 0.84f, 0.92f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.91f, 0.91f, 0.93f, 1.00f);
+            colors[ImGuiCol_Header] = ImVec4(0.36f, 0.55f, 0.86f, 0.70f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.32f, 0.51f, 0.84f, 0.85f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.24f, 0.45f, 0.80f, 1.00f);
+            colors[ImGuiCol_Button] = ImVec4(0.36f, 0.55f, 0.86f, 0.90f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.30f, 0.50f, 0.84f, 1.00f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.22f, 0.43f, 0.78f, 1.00f);
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.28f, 0.48f, 0.82f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.20f, 0.40f, 0.76f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.20f, 0.42f, 0.78f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.13f, 0.14f, 0.17f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.52f, 0.53f, 0.57f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.84f, 0.85f, 0.88f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.72f, 0.79f, 0.92f, 1.00f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.80f, 0.85f, 0.94f, 1.00f);
+
+            g_PianoRollColors.keyWhite = IM_COL32(250, 250, 252, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(196, 198, 206, 255);
+            g_PianoRollColors.gridLine = IM_COL32(214, 216, 222, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(168, 172, 182, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(214, 132, 132, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(72, 122, 208, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(40, 92, 190, 255);
+            g_PianoRollColors.playhead = IM_COL32(214, 78, 78, 255);
+            g_PianoRollColors.background = IM_COL32(238, 239, 243, 255);
             break;
     }
 }
@@ -4049,6 +4167,44 @@ inline void DrawRetroTerminal(ImDrawList* drawList, ImVec2 screenSize, float del
 }
 
 // Draw theme background effects
+// Game Boy DMG dot matrix. The original LCD had a visible pixel grid and a
+// faint vertical banding; both are what makes a screenshot read instantly
+// as a Game Boy rather than as "something green".
+inline void DrawGameBoyDotMatrix(ImDrawList* drawList, ImVec2 screenSize, float deltaTime) {
+    static float scanPhase = 0.0f;
+    scanPhase += deltaTime * 0.35f;
+    if (scanPhase > 1.0f) scanPhase -= 1.0f;
+
+    const ImU32 background = IM_COL32(15, 56, 15, 255);
+    drawList->AddRectFilled(ImVec2(0, 0), screenSize, background);
+
+    // Dot grid
+    const float spacing = 4.0f;
+    const ImU32 dot = IM_COL32(30, 74, 30, 90);
+    for (float y = 0.0f; y < screenSize.y; y += spacing) {
+        for (float x = 0.0f; x < screenSize.x; x += spacing) {
+            drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + 1.0f, y + 1.0f), dot);
+        }
+    }
+
+    // A slow band drifting down the panel, like an LCD refresh
+    const float bandY = scanPhase * screenSize.y;
+    drawList->AddRectFilledMultiColor(
+        ImVec2(0.0f, bandY - 60.0f), ImVec2(screenSize.x, bandY + 60.0f),
+        IM_COL32(139, 172, 15, 0), IM_COL32(139, 172, 15, 0),
+        IM_COL32(139, 172, 15, 14), IM_COL32(139, 172, 15, 14));
+}
+
+// Daylight keeps the background almost plain - a light theme earns its
+// keep by being calm, and an animated effect would undo that. Just a very
+// soft vertical wash so the window does not read as flat paper.
+inline void DrawDaylightBackground(ImDrawList* drawList, ImVec2 screenSize, float /*deltaTime*/) {
+    drawList->AddRectFilledMultiColor(
+        ImVec2(0, 0), screenSize,
+        IM_COL32(242, 244, 249, 255), IM_COL32(242, 244, 249, 255),
+        IM_COL32(228, 231, 240, 255), IM_COL32(228, 231, 240, 255));
+}
+
 inline void DrawThemeBackground(Theme theme, float deltaTime) {
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     ImVec2 screenSize = ImGui::GetIO().DisplaySize;
@@ -4074,6 +4230,12 @@ inline void DrawThemeBackground(Theme theme, float deltaTime) {
             break;
         case Theme::RetroTerminal:
             DrawRetroTerminal(drawList, screenSize, deltaTime);
+            break;
+        case Theme::GameBoy:
+            DrawGameBoyDotMatrix(drawList, screenSize, deltaTime);
+            break;
+        case Theme::Daylight:
+            DrawDaylightBackground(drawList, screenSize, deltaTime);
             break;
         case Theme::Stock:
         default:
@@ -5001,10 +5163,12 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     float gridHeight = (highestNote - lowestNote) * noteHeight;
     float gridWidth = dynamicLength * beatWidth;
 
-    // Background
+    // Background. Every colour in the roll comes from the active theme's
+    // palette - hardcoding them here is why the editor used to look identical
+    // under all ten themes while only the window chrome changed.
     drawList->AddRectFilled(canvasPos,
         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
-        IM_COL32(30, 30, 35, 255));
+        g_PianoRollColors.background);
 
     // Piano keys (clip to effective area above scrollbar)
     for (int note = lowestNote; note < highestNote; ++note) {
@@ -5015,7 +5179,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         bool isBlack = (noteInOctave == 1 || noteInOctave == 3 || noteInOctave == 6 ||
                        noteInOctave == 8 || noteInOctave == 10);
 
-        ImU32 keyColor = isBlack ? IM_COL32(40, 40, 45, 255) : IM_COL32(60, 60, 65, 255);
+        ImU32 keyColor = isBlack ? g_PianoRollColors.keyBlack : g_PianoRollColors.keyWhite;
         drawList->AddRectFilled(
             ImVec2(canvasPos.x, y),
             ImVec2(canvasPos.x + keyWidth, y + noteHeight),
@@ -5031,7 +5195,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         drawList->AddLine(
             ImVec2(canvasPos.x + keyWidth, y),
             ImVec2(canvasPos.x + keyWidth + gridWidth, y),
-            IM_COL32(50, 50, 55, 255));
+            g_PianoRollColors.gridLine);
     }
 
     // Beat grid lines with subdivisions (use dynamic length for extended grid)
@@ -5052,16 +5216,16 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         float beatFrac = beatPos - beatInt;
 
         if (beatInt == pattern.length && beatFrac < 0.01f) {
-            // Pattern end - bright red, thick
-            lineColor = IM_COL32(200, 60, 60, 255);
+            // Pattern end marker
+            lineColor = g_PianoRollColors.gridLinePattern;
             lineThickness = 3.0f;
         } else if (beatFrac < 0.01f && beatInt % project.beatsPerMeasure == 0) {
-            // Measure line (beat 0, 4, 8, etc.) - brightest, thickest
-            lineColor = IM_COL32(140, 140, 160, 255);
+            // Measure line (beat 0, 4, 8, ...) - brightest, thickest
+            lineColor = g_PianoRollColors.gridLineMeasure;
             lineThickness = 2.0f;
         } else if (beatFrac < 0.01f) {
-            // Whole beat (quarter note) - bright, medium thickness
-            lineColor = IM_COL32(90, 90, 100, 255);
+            // Whole beat (quarter note)
+            lineColor = g_PianoRollColors.gridLine;
             lineThickness = 1.5f;
         } else if (std::abs(beatFrac - 0.5f) < 0.01f) {
             // Half beat (8th note) - medium brightness
@@ -7002,53 +7166,99 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
 inline void DrawMixer(Project& project, UIState& ui, Sequencer& seq) {
     // Set initial window position on first use (bottom center)
     ImGui::SetNextWindowPos(ImVec2(220, 645), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(700, 180), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(760, 260), ImGuiCond_FirstUseEver);
     ImGui::Begin("Mixer", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
-    for (int ch = 0; ch < 8; ++ch) {
+    // Meter state has to persist between frames for the peak hold and the
+    // release slope, so it lives here rather than in UIState - nothing else
+    // needs it, and it is purely presentational.
+    static widgets::MeterState channelMeters[Project::MAX_CHANNELS];
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    bool configChanged = false;
+
+    for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
         auto& channel = project.channels[ch];
+        const bool isSelected = (ch == ui.selectedChannel);
 
-        ImGui::BeginGroup();
         ImGui::PushID(ch);
+        ImGui::BeginGroup();
 
-        // Channel label
-        ImVec4 labelColor(
+        const ImVec2 stripOrigin = ImGui::GetCursorScreenPos();
+        const float stripWidth = 86.0f;
+
+        // The selected strip gets a tinted panel behind it, so which channel
+        // the editors are pointed at is obvious without reading anything.
+        if (isSelected) {
+            draw->AddRectFilled(
+                ImVec2(stripOrigin.x - 4.0f, stripOrigin.y - 4.0f),
+                ImVec2(stripOrigin.x + stripWidth, stripOrigin.y + 218.0f),
+                widgets::withAlpha(widgets::accentColor(), 0.13f), 6.0f);
+            draw->AddRect(
+                ImVec2(stripOrigin.x - 4.0f, stripOrigin.y - 4.0f),
+                ImVec2(stripOrigin.x + stripWidth, stripOrigin.y + 218.0f),
+                widgets::withAlpha(widgets::accentColor(), 0.55f), 6.0f);
+        }
+
+        // Channel name, in that channel's identity colour
+        const ImVec4 labelColor(
             ((CHANNEL_COLORS[ch] >> 0) & 0xFF) / 255.0f,
             ((CHANNEL_COLORS[ch] >> 8) & 0xFF) / 255.0f,
             ((CHANNEL_COLORS[ch] >> 16) & 0xFF) / 255.0f,
             1.0f);
-        ImGui::TextColored(labelColor, "%s", channel.name.c_str());
+        ImGui::TextColored(labelColor, "%.10s", channel.name.c_str());
 
-        // Volume fader (vertical)
-        ImGui::VSliderFloat("##vol", ImVec2(30, 150), &channel.volume, 0.0f, 1.0f, "");
+        // Fader and meter side by side, the way a console lays them out
+        ImGui::BeginGroup();
+        if (ImGui::VSliderFloat("##vol", ImVec2(26, 132), &channel.volume, 0.0f, 1.0f, "")) {
+            configChanged = true;
+        }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Volume: %.0f%%", channel.volume * 100.0f);
         }
-
-        // Pan knob
-        ImGui::SetNextItemWidth(50);
-        ImGui::SliderFloat("##pan", &channel.pan, -1.0f, 1.0f, "");
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Pan: %.0f", channel.pan * 100.0f);
-        }
-
-        // Mute/Solo
-        if (ImGui::Checkbox("M", &channel.muted)) {}
-        ImGui::SameLine();
-        if (ImGui::Checkbox("S", &channel.solo)) {}
-
-        // Select button
-        bool isSelected = (ch == ui.selectedChannel);
-        if (isSelected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f, 0.6f, 0.4f, 1.0f));
-        if (ImGui::Button("SEL", ImVec2(50, 20))) {
-            ui.selectedChannel = ch;
-        }
-        if (isSelected) ImGui::PopStyleColor();
-
-        ImGui::PopID();
         ImGui::EndGroup();
 
-        if (ch < 7) ImGui::SameLine();
+        ImGui::SameLine(0.0f, 5.0f);
+        widgets::LevelMeter("##meter", seq.getChannelLevel(ch), channelMeters[ch],
+                            ImVec2(11.0f, 132.0f));
+
+        // Pan as a real knob rather than a slider that looks like volume
+        if (widgets::Knob("Pan", &channel.pan, -1.0f, 1.0f, 0.0f, 17.0f, "%.2f")) {
+            configChanged = true;
+        }
+
+        // Mute and solo, unmistakably on or off
+        if (widgets::ToggleSwitch("##mute", &channel.muted, 30.0f)) configChanged = true;
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(channel.muted ? ImVec4(1.0f, 0.45f, 0.40f, 1.0f)
+                                         : ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
+                           "M");
+        ImGui::SameLine(0.0f, 6.0f);
+        if (widgets::ToggleSwitch("##solo", &channel.solo, 30.0f)) configChanged = true;
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(channel.solo ? ImVec4(1.0f, 0.85f, 0.35f, 1.0f)
+                                        : ImGui::GetStyle().Colors[ImGuiCol_TextDisabled],
+                           "S");
+
+        if (isSelected) {
+            ImGui::TextDisabled("editing");
+        } else if (ImGui::Button("Select", ImVec2(72, 0))) {
+            ui.selectedChannel = ch;
+        }
+
+        ImGui::EndGroup();
+        ImGui::PopID();
+
+        if (ch < Project::MAX_CHANNELS - 1) ImGui::SameLine(0.0f, 12.0f);
+    }
+
+    // Volume, pan, mute and solo are read straight from the Project by the
+    // mixer, but everything else routes through the synth - keep the sync
+    // honest rather than relying on which happens to be which.
+    if (configChanged) {
+        seq.updateChannelConfigs();
     }
 
     ImGui::End();

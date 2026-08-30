@@ -1181,7 +1181,9 @@ enum class Theme : uint8_t {
     FrutigerAero,   // Glossy bubbles, glass effects, sky blue gradients
     Minimal,        // Clean flat design, subtle geometric patterns
     Vaporwave,      // Pink/cyan aesthetic, floating shapes
-    RetroTerminal   // Amber CRT phosphor, scanlines, vintage computer
+    RetroTerminal,  // Amber CRT phosphor, scanlines, vintage computer
+    GameBoy,        // DMG four-shade green, dot-matrix grid
+    Daylight        // Light theme for working in a bright room
 };
 
 // Piano roll edit modes
@@ -1254,6 +1256,20 @@ struct UIState {
     // Instrument macro editor (see MacroEditorUI.h)
     bool showMacroEditor = false;
     int macroEditorTab = 0;         // 0=volume, 1=arpeggio, 2=duty, 3=pitch
+
+    // Optional panels. These used to be drawn unconditionally, which meant
+    // four extra windows piled on top of the editor from the moment the app
+    // opened. They are useful, but only when you have asked for them.
+    bool showSpectrumAnalyzer = false;
+    bool showMIDIInput = false;
+    bool showAutomation = false;
+    bool showWavetableEditor = false;
+
+    // Workspace layout (see Layout.h). pendingLayoutFrames counts down; the
+    // layout has to be applied after the windows exist, and for two frames
+    // so size changes settle before anything is drawn at the new size.
+    int currentWorkspace = 0;       // index into Workspace
+    int pendingLayoutFrames = 0;
 
     // Pad Controller state
     PadControllerState padController;

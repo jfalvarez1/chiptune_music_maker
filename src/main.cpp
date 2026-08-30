@@ -30,6 +30,8 @@
 #include "Sequencer.h"
 #include "UI.h"
 #include "MacroEditorUI.h"
+#include "Layout.h"
+#include "Screenshot.h"
 
 #include <cstdio>
 #include <memory>
@@ -45,6 +47,10 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 // Global state
 static bool g_Running = true;
 static ChiptuneTracker::Sequencer* g_Sequencer = nullptr;
+
+// Screenshot state. F12 captures the rendered frame to screenshots/.
+static bool g_CaptureRequested = false;
+static int g_CaptureCounter = 0;
 
 // ============================================================================
 // Miniaudio Callback
@@ -70,7 +76,13 @@ void audioCallback(ma_device* pDevice, void* pOutput, const void* /*pInput*/, ma
 // ============================================================================
 // WinMain Entry Point
 // ============================================================================
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*/, int nCmdShow) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmdLine, int nCmdShow) {
+
+    // Screenshot automation. Parsed first because it decides the window size.
+    // See Screenshot.h for the flags.
+    const ChiptuneTracker::CaptureRequest captureRequest =
+        ChiptuneTracker::parseCaptureArgs(ChiptuneTracker::splitCommandLine(lpCmdLine));
+    int captureFrameCounter = 0;
 
     // Allocate console for debugging
     AllocConsole();
@@ -105,7 +117,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         "Chiptune Tracker DAW v0.2",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
-        1600, 900,
+        captureRequest.enabled ? captureRequest.windowWidth : 1600,
+        captureRequest.enabled ? captureRequest.windowHeight : 900,
         nullptr,
         nullptr,
         hInstance,
@@ -175,6 +188,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    // Screenshots must not inherit whatever window layout this machine
+    // happens to have saved. Disabling the ini file makes capture mode use
+    // the app's own default positions, so a gallery shot looks the same
+    // wherever it is generated.
+    if (captureRequest.enabled) {
+        io.IniFilename = nullptr;
+    }
+
     // Apply default theme
     ImGui::StyleColorsDark();
 
@@ -224,6 +245,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     // Start with empty pattern (no demo noise)
     uiState.selectedPattern = 0;
     uiState.selectedChannel = 0;
+
+    // Lay the windows out on first run. Without this the app opens with
+    // nineteen windows at their individual defaults, overlapping each other
+    // and spilling off the bottom of the display.
+    {
+        const bool hasSavedLayout = (io.IniFilename != nullptr) &&
+                                    (GetFileAttributesA(io.IniFilename) != INVALID_FILE_ATTRIBUTES);
+        if (!hasSavedLayout || captureRequest.enabled) {
+            uiState.pendingLayoutFrames = 3;
+        }
+    }
+
+    // Screenshot automation: put the app into the requested state before the
+    // first frame, so a gallery shot is reproducible from the command line
+    // rather than depending on someone clicking the right menus.
+    if (captureRequest.enabled) {
+        ChiptuneTracker::applyCaptureState(captureRequest, project, uiState);
+    }
 
     // Apply the current visual theme (Stock by default)
     ChiptuneTracker::ApplyTheme(uiState.currentTheme);
@@ -328,8 +367,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                     uiState.currentView = ChiptuneTracker::ViewMode::Mixer;
                 }
                 ImGui::Separator();
+                if (ImGui::BeginMenu("Workspace")) {
+                    const char* names[] = { "Compose", "Sound Design", "Mix" };
+                    for (int i = 0; i < 3; ++i) {
+                        if (ImGui::MenuItem(names[i], nullptr, uiState.currentWorkspace == i)) {
+                            uiState.currentWorkspace = i;
+                            uiState.pendingLayoutFrames = 2;
+                        }
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Reset layout", "Ctrl+0")) {
+                        uiState.pendingLayoutFrames = 2;
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Instrument Macros", "F4", uiState.showMacroEditor)) {
                     uiState.showMacroEditor = !uiState.showMacroEditor;
+                }
+                if (ImGui::MenuItem("Wavetable Editor", nullptr, uiState.showWavetableEditor)) {
+                    uiState.showWavetableEditor = !uiState.showWavetableEditor;
+                }
+                if (ImGui::MenuItem("Spectrum Analyzer", nullptr, uiState.showSpectrumAnalyzer)) {
+                    uiState.showSpectrumAnalyzer = !uiState.showSpectrumAnalyzer;
+                }
+                if (ImGui::MenuItem("Automation", nullptr, uiState.showAutomation)) {
+                    uiState.showAutomation = !uiState.showAutomation;
+                }
+                if (ImGui::MenuItem("MIDI Input", nullptr, uiState.showMIDIInput)) {
+                    uiState.showMIDIInput = !uiState.showMIDIInput;
                 }
                 ImGui::Separator();
                 if (ImGui::BeginMenu("Theme")) {
@@ -364,6 +430,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                     }
                     if (ImGui::MenuItem("Retro Terminal", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::RetroTerminal)) {
                         uiState.currentTheme = ChiptuneTracker::Theme::RetroTerminal;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    if (ImGui::MenuItem("Game Boy (DMG)", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::GameBoy)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::GameBoy;
+                        ChiptuneTracker::ApplyTheme(uiState.currentTheme);
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Daylight (light)", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::Daylight)) {
+                        uiState.currentTheme = ChiptuneTracker::Theme::Daylight;
                         ChiptuneTracker::ApplyTheme(uiState.currentTheme);
                     }
                     ImGui::EndMenu();
@@ -407,21 +482,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         // Tools panel (always visible)
         ChiptuneTracker::DrawToolsPanel(project, uiState, sequencer);
 
-        // Instrument macro editor (see MacroEditorUI.h)
-        ChiptuneTracker::DrawMacroEditor(project, uiState, sequencer);
-
-        // Spectrum Analyzer (always visible)
-        ChiptuneTracker::renderSpectrumAnalyzer(sequencer);
-
-        // MIDI Input (always visible)
-        ChiptuneTracker::renderMIDIInput(sequencer, uiState);
-
-        // Automation Editor (always visible)
-        ChiptuneTracker::renderAutomation(project, uiState, sequencer.getState());
-
-        // Wavetable Editor (always visible)
-        ChiptuneTracker::renderWavetableEditor(project, uiState);
-
         // Main editor view (based on current mode)
         switch (uiState.currentView) {
             case ChiptuneTracker::ViewMode::PianoRoll:
@@ -441,7 +501,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                 break;
         }
 
+        // Floating tool windows are submitted AFTER the main editor view.
+        // ImGui draw order is z-order: submitted first means drawn behind,
+        // and a tool window that opens behind the editor looks like it did
+        // not open at all.
+        //
+        // These are opened from the View menu rather than shown
+        // unconditionally - four extra windows stacked over the editor on
+        // launch is not a workspace.
+        ChiptuneTracker::DrawMacroEditor(project, uiState, sequencer);
+
+        if (uiState.showSpectrumAnalyzer) {
+            ChiptuneTracker::renderSpectrumAnalyzer(sequencer);
+        }
+        if (uiState.showMIDIInput) {
+            ChiptuneTracker::renderMIDIInput(sequencer, uiState);
+        }
+        if (uiState.showAutomation) {
+            ChiptuneTracker::renderAutomation(project, uiState, sequencer.getState());
+        }
+        if (uiState.showWavetableEditor) {
+            ChiptuneTracker::renderWavetableEditor(project, uiState);
+        }
+
         // Keyboard shortcuts
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0)) {
+            uiState.pendingLayoutFrames = 2;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_F12) && !ImGui::GetIO().WantTextInput) {
+            g_CaptureRequested = true;
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_F4) && !ImGui::GetIO().WantTextInput) {
             uiState.showMacroEditor = !uiState.showMacroEditor;
         }
@@ -484,6 +573,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
             }
         }
 
+        // Workspace layout. Applied after every window has been submitted,
+        // because SetWindowPos-by-name can only find a window that exists.
+        // The new position takes effect on the following frame, which is why
+        // this runs for two frames rather than one.
+        if (uiState.pendingLayoutFrames > 0) {
+            ChiptuneTracker::ApplyWorkspaceLayout(
+                static_cast<ChiptuneTracker::Workspace>(uiState.currentWorkspace),
+                io.DisplaySize);
+            --uiState.pendingLayoutFrames;
+        }
+
         // Reset layout update flag after all windows have been positioned
         uiState.needsLayoutUpdate = false;
 
@@ -499,6 +599,40 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         glClear(GL_COLOR_BUFFER_BIT);
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        // Framebuffer capture has to happen after rendering and before the
+        // swap - reading the back buffer after a swap gets undefined
+        // contents on most drivers.
+        const int frameWidth = rect.right - rect.left;
+        const int frameHeight = rect.bottom - rect.top;
+
+        if (g_CaptureRequested) {
+            g_CaptureRequested = false;
+            char path[512];
+            std::snprintf(path, sizeof(path), "screenshots/shot_%03d.bmp", g_CaptureCounter++);
+            CreateDirectoryA("screenshots", nullptr);
+            if (ChiptuneTracker::captureFramebuffer(path, frameWidth, frameHeight)) {
+                printf("Screenshot written to %s\n", path);
+            } else {
+                printf("Screenshot failed\n");
+            }
+        }
+
+        if (captureRequest.enabled) {
+            // Render a few frames first so animated backgrounds, meters and
+            // the spectrum analyser look like themselves rather than like a
+            // cold start.
+            if (++captureFrameCounter >= captureRequest.framesToWait) {
+                if (ChiptuneTracker::captureFramebuffer(captureRequest.outputPath,
+                                                        frameWidth, frameHeight)) {
+                    printf("Captured %dx%d to %s\n", frameWidth, frameHeight,
+                           captureRequest.outputPath.c_str());
+                } else {
+                    printf("Capture failed for %s\n", captureRequest.outputPath.c_str());
+                }
+                g_Running = false;
+            }
+        }
 
         SwapBuffers(hdc);
     }

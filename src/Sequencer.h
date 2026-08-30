@@ -197,6 +197,16 @@ public:
                 // The stereo widener is the one effect that cannot live in the
                 // mono EffectsChain - it turns one sample into two. This is the
                 // only point where a channel becomes stereo, so it belongs here.
+                // Per-channel level for the mixer meters. A decaying peak
+                // rather than an instantaneous value: at 44.1kHz the raw
+                // sample is meaningless to the eye, and the UI reads this
+                // at whatever rate it happens to redraw.
+                {
+                    const float magnitude = std::fabs(sample) * volume;
+                    float& peak = m_channelPeaks[ch];
+                    peak = (magnitude > peak) ? magnitude : peak * 0.9995f;
+                }
+
                 auto& fx = m_synths[ch].effects();
                 if (fx.stereoWidenerEnabled) {
                     auto [wideL, wideR] = fx.stereoWidener.process(sample);
@@ -268,6 +278,15 @@ public:
     // ========================================================================
     // Channel Access
     // ========================================================================
+    // Current output level of one channel, for the mixer meters.
+    // Written by the audio thread and read by the UI; a float read that is
+    // one frame stale is exactly as good for a meter as a locked one.
+    float getChannelLevel(int channel) const {
+        if (channel < 0 || channel >= MAX_CHANNELS) return 0.0f;
+        const float level = m_channelPeaks[channel];
+        return std::isfinite(level) ? level : 0.0f;
+    }
+
     Synthesizer& getSynth(int channel) {
         return m_synths[channel % MAX_CHANNELS];
     }
@@ -689,6 +708,9 @@ private:
     PlaybackState m_state;
 
     std::array<Synthesizer, MAX_CHANNELS> m_synths;
+
+    // Decaying peak level per channel, for the mixer meters
+    std::array<float, MAX_CHANNELS> m_channelPeaks = {};
 
     // Master bus effects (post-mixer processing)
     MasterEffects m_masterEffects;

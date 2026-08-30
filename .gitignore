@@ -147,3 +147,7 @@ graph_info.json
 coverage/
 *.profdata
 *.profraw
+
+# Screenshot output from the in-app F12 capture
+screenshots/
+*.bmp

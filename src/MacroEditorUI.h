@@ -221,6 +221,9 @@ inline void DrawMacroEditor(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::TextDisabled("|");
     ImGui::SameLine();
 
+    // Fixed width, or the combo eats the row and pushes Clear all off the
+    // edge of the window.
+    ImGui::SetNextItemWidth(160.0f);
     if (ImGui::BeginCombo("##preset", "Load preset...")) {
         for (const MacroPreset& preset : macroPresets()) {
             if (ImGui::Selectable(preset.name)) {
@@ -239,8 +242,8 @@ inline void DrawMacroEditor(Project& project, UIState& ui, Sequencer& seq) {
     }
 
     // ---- Rate ------------------------------------------------------------
-    ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::SliderFloat("Macro rate", &macros.rateHz, 1.0f, 240.0f, "%.0f steps/sec")) {
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::SliderFloat("Macro rate", &macros.rateHz, 1.0f, 240.0f, "%.0f/sec")) {
         changed = true;
     }
     if (ImGui::IsItemHovered()) {
