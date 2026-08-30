@@ -270,6 +270,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // rather than depending on someone clicking the right menus.
     if (captureRequest.enabled) {
         ChiptuneTracker::applyCaptureState(captureRequest, project, uiState);
+        // The demo song is built after setProject(), so the synths need
+        // re-syncing before anything is rendered or heard.
+        sequencer.updateChannelConfigs();
+        if (captureRequest.startPlaying) {
+            sequencer.play();
+        }
     }
 
     // Apply the current visual theme (Stock by default)

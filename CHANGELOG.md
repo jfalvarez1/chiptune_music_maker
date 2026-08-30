@@ -7,6 +7,92 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.2.0] - 2026-08-30 - "Palette"
+
+A full pass over the ten themes, driven by an audit that turned up one
+finding bigger than any individual theme.
+
+### Fixed
+
+- **39 of ImGui's 63 colour slots were never assigned by any theme.**
+  Scrollbars, separators, resize grips, table headers and row striping,
+  plot lines, text selection, the modal dim layer, dimmed tabs and the nav
+  cursor kept ImGui's dark defaults - identically in all ten themes. On a
+  dark theme that read as unfinished; on Frutiger Aero, a genuinely light
+  theme, it was broken: dark grey scrollbars on a pale blue window.
+
+  They are derived now, once, from what each theme already chose -
+  scrollbars from the button family, separators from the border, plots from
+  the accent - branching on the perceptual luminance of the window
+  background so light and dark both come out right. A theme added later
+  gets complete styling for free, and can still override any slot
+  explicitly.
+
+- **A clip could index the synth array out of bounds.** `processNoteEvents`
+  validated a clip's pattern index but not its channel index, then used it
+  to index eight 35 KB synths - so a clip naming channel 99 wrote megabytes
+  past the array from the audio thread. It only crashed under some
+  launchers, because whether an out-of-bounds write faults depends on the
+  process memory layout.
+
+- **The animated backgrounds became invisible when docking landed.** Docking
+  tiles the viewport exactly, so the Matrix rain and the Synthwave sun and
+  grid had nowhere to appear. The dock space is inset now and panels have
+  visible gutters, so the animation frames the workspace and runs between
+  panels - never underneath text.
+
+- **Stock's Header and Button were byte-identical**, so nothing indicated
+  what was pressable. Same defect in Game Boy and Daylight.
+
+- **Minimal's accent was red.** In a DAW red means record, and also
+  destructive and error - so record, delete, error and an ordinary OK
+  button were one colour. The accent is teal now, and red is reserved: it
+  appears nowhere in the theme except the playhead.
+
+- **Cyberpunk's body text was pure saturated cyan**, which shimmers on
+  subpixel layouts and leaves no way to emphasise anything. Near-white with
+  a cyan cast now, with pure cyan reserved for accents.
+
+- **Interactive surfaces were translucent over animated backgrounds.**
+  Buttons at 0.40-0.70 alpha meant labels were read against moving colour
+  in Cyberpunk, Synthwave, Vaporwave, Matrix, Retro Terminal and Daylight.
+  All interactive surfaces are now at least 0.85.
+
+- **The piano roll ignored its own theme colours.** Every theme defines
+  `noteDefault` and `noteSelected`; nothing read them, so notes were the
+  same eight channel colours under all ten themes. Notes now take the theme
+  colour, tinted toward the channel identity.
+
+- **The sound palette's category headers were hardcoded** - maroon and
+  purple groups sitting inside the Game Boy's four-shade green. The
+  category hue is a tint over the theme's own header colour now.
+
+- The active edit-mode button used a hardcoded fill, which on Matrix was
+  green text on a green button. It takes the theme accent with a label
+  colour chosen against it.
+
+### Changed
+
+- **Synthwave and Vaporwave were two shades of the same purple.** They are
+  split deliberately now: Synthwave is saturated neon on near-black,
+  Vaporwave is pastel and hazy on a lifted, mid-toned ground.
+- **Every theme has its own geometry**, not just its own colours - corner
+  radius, border weight and grab size. A Game Boy is square with heavy
+  borders; Frutiger Aero is all bubbles; the terminals are hard-edged.
+  Spacing and padding stay uniform, because those are about usability.
+- Body text now reaches at least 4.5:1 against the window background in all
+  ten themes; the lowest is Game Boy at 6.06:1.
+
+### Added
+
+- The screenshot gallery covers **features and modes**, not just views: the
+  three piano-roll edit modes, an active note selection with the Note
+  Editor populated, both macro editor tabs, and each analysis panel.
+  New capture flags: `--mode`, `--select`, `--playing`, `--macro-tab`, and
+  `--show` extended to every optional panel.
+
+---
+
 ## [3.1.0] — 2026-08-30 — "Dockyard"
 
 Panels dock. Tests grew a second layer and a written plan. One more silent

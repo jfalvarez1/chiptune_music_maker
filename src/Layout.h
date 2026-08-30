@@ -68,8 +68,19 @@ inline constexpr const char* EDITOR_VIEWS[] = {
 inline ImGuiID BeginDockSpace() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
 
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    // Inset from the viewport edges. Docking tiles its area exactly, so a
+    // full-bleed dock space left the animated theme backgrounds - the Matrix
+    // rain, the Synthwave sun and grid - with nowhere to appear at all.
+    //
+    // The margin turns them into a frame around the workspace, and the
+    // separator gutters let them run between panels. They stay where they
+    // belong: behind and around the work, never underneath the text.
+    constexpr float MARGIN = 16.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + MARGIN,
+                                   viewport->WorkPos.y + MARGIN));
+    ImGui::SetNextWindowSize(ImVec2(std::max(64.0f, viewport->WorkSize.x - MARGIN * 2.0f),
+                                    std::max(64.0f, viewport->WorkSize.y - MARGIN * 2.0f)));
     ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
@@ -100,9 +111,15 @@ inline ImGuiID BeginDockSpace() {
 // carved off.
 // ============================================================================
 inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec2 size) {
+    // Must match the inset in BeginDockSpace, or the tree is built at the
+    // wrong size and every panel is laid out slightly off.
+    constexpr float MARGIN = 16.0f;
+    const ImVec2 inner(std::max(64.0f, size.x - MARGIN * 2.0f),
+                       std::max(64.0f, size.y - MARGIN * 2.0f));
+
     ImGui::DockBuilderRemoveNode(dockspaceId);
     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspaceId, size);
+    ImGui::DockBuilderSetNodeSize(dockspaceId, inner);
 
     // The toolbars are short and wide; they get a strip across the top in
     // every workspace, because transport and file actions are always

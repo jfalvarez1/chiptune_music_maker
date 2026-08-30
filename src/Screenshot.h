@@ -139,7 +139,11 @@ struct CaptureRequest {
     std::string themeName;
     std::string viewName;
     std::string workspaceName;
+    std::string editMode;        // draw | select | erase
+    std::string macroTab;        // volume | arpeggio | duty | pitch
     std::vector<std::string> showWindows;
+    bool selectNotes = false;    // pre-select notes, so selection styling shows
+    bool startPlaying = false;   // run the transport, so meters and playhead move
     int framesToWait = 90;      // ~1.5s at 60fps, enough for meters to settle
     int windowWidth = 1600;
     int windowHeight = 900;
@@ -175,6 +179,14 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             next(request.viewName);
         } else if (arg == "--workspace") {
             next(request.workspaceName);
+        } else if (arg == "--mode") {
+            next(request.editMode);
+        } else if (arg == "--macro-tab") {
+            next(request.macroTab);
+        } else if (arg == "--select") {
+            request.selectNotes = true;
+        } else if (arg == "--playing") {
+            request.startPlaying = true;
         } else if (arg == "--show") {
             std::string window;
             if (next(window)) request.showWindows.push_back(window);
@@ -252,9 +264,24 @@ inline void applyCaptureState(const CaptureRequest& request,
         }
     }
 
+    // --- Piano roll edit mode ---
+    if (request.editMode == "draw")   ui.pianoRollMode = PianoRollMode::Draw;
+    if (request.editMode == "select") ui.pianoRollMode = PianoRollMode::Select;
+    if (request.editMode == "erase")  ui.pianoRollMode = PianoRollMode::Erase;
+
+    // --- Macro editor tab ---
+    if (request.macroTab == "volume")   ui.macroEditorTab = 0;
+    if (request.macroTab == "arpeggio") ui.macroEditorTab = 1;
+    if (request.macroTab == "duty")     ui.macroEditorTab = 2;
+    if (request.macroTab == "pitch")    ui.macroEditorTab = 3;
+
     // --- Extra windows ---
     for (const std::string& window : request.showWindows) {
-        if (window == "macros") ui.showMacroEditor = true;
+        if (window == "macros")    ui.showMacroEditor = true;
+        if (window == "spectrum")  ui.showSpectrumAnalyzer = true;
+        if (window == "automation") ui.showAutomation = true;
+        if (window == "midi")      ui.showMIDIInput = true;
+        if (window == "wavetable") ui.showWavetableEditor = true;
     }
 
     // --- Demo content ---
@@ -313,6 +340,17 @@ inline void applyCaptureState(const CaptureRequest& request,
         // Give the first channel a macro so the macro editor screenshot has
         // something in it
         project.channels[0].macros = makeMajorChordArp();
+    }
+
+    // Selecting a few notes makes the Note Editor populate and the selected
+    // note styling visible - both invisible in an untouched screenshot.
+    if (request.selectNotes && !project.patterns.empty()) {
+        const int noteCount = static_cast<int>(project.patterns[0].notes.size());
+        ui.selectedNoteIndices.clear();
+        for (int i = 0; i < noteCount && i < 4; ++i) {
+            ui.selectedNoteIndices.push_back(i);
+        }
+        if (noteCount > 0) ui.selectedNoteIndex = 0;
     }
 }
 

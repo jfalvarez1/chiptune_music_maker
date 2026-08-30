@@ -45,6 +45,21 @@ const ImU32 CHANNEL_COLORS[] = {
     IM_COL32(180, 100, 255, 255),  // Custom - Purple
 };
 
+// Linear blend between two packed colours. `t` = 0 keeps `a`, 1 gives `b`.
+inline ImU32 blendColors(ImU32 a, ImU32 b, float t) {
+    t = (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t);
+    auto lerp8 = [&](int shift) {
+        const int ca = (a >> shift) & 0xFF;
+        const int cb = (b >> shift) & 0xFF;
+        return static_cast<ImU32>(ca + static_cast<int>((cb - ca) * t)) & 0xFFu;
+    };
+    return (lerp8(IM_COL32_R_SHIFT) << IM_COL32_R_SHIFT) |
+           (lerp8(IM_COL32_G_SHIFT) << IM_COL32_G_SHIFT) |
+           (lerp8(IM_COL32_B_SHIFT) << IM_COL32_B_SHIFT) |
+           (lerp8(IM_COL32_A_SHIFT) << IM_COL32_A_SHIFT);
+}
+
+
 // Global clipboard for copy/paste notes (stores relative positions)
 static std::vector<Note> g_NoteClipboard;
 static float g_ClipboardBaseTime = 0.0f;
@@ -2696,6 +2711,74 @@ inline void DeriveRemainingThemeColors(ImGuiStyle& style) {
     }
 }
 
+// ============================================================================
+// Per-theme geometry
+//
+// Colour alone leaves every theme looking like the same widgets repainted,
+// because shape is what the eye reads first. A Game Boy has square pixel
+// blocks; Frutiger Aero is all glossy bubbles; a terminal has hard corners
+// and heavy rules. Those are different *shapes*, not different palettes.
+//
+// This layers a per-theme delta on top of the shared metrics block rather
+// than replacing it - spacing and padding stay uniform, because those are
+// about usability and should not change when you switch theme. Only the
+// character does: corner radius, border weight, grab size.
+// ============================================================================
+inline void ApplyThemeGeometry(ImGuiStyle& style, Theme theme) {
+    // rounding, borderSize, grabMinSize
+    struct Geometry { float rounding; float border; float grab; };
+
+    Geometry g{5.0f, 1.0f, 11.0f};   // the shared default
+
+    switch (theme) {
+        // Hard edges. Cyberpunk and the two terminals are angular by
+        // definition - a rounded corner reads as friendly, which is wrong
+        // for all three.
+        case Theme::Cyberpunk:     g = {0.0f, 1.6f, 12.0f}; break;
+        case Theme::Matrix:        g = {0.0f, 1.0f, 10.0f}; break;
+        case Theme::RetroTerminal: g = {0.0f, 1.4f, 10.0f}; break;
+
+        // A DMG has no curves and no thin lines: it has pixels. Square
+        // corners and a heavy border read as an LCD cell.
+        case Theme::GameBoy:       g = {0.0f, 2.0f, 14.0f}; break;
+
+        // Neon signs are tubes - slightly rounded, never soft.
+        case Theme::Synthwave:     g = {2.0f, 1.2f, 12.0f}; break;
+
+        // Frutiger Aero is bubbles and lozenges. This is the one theme
+        // where a large radius is the entire point.
+        case Theme::FrutigerAero:  g = {12.0f, 1.0f, 13.0f}; break;
+
+        // Vaporwave is hazy and soft-edged, but less glossy than Aero.
+        case Theme::Vaporwave:     g = {9.0f, 1.0f, 12.0f}; break;
+
+        // Minimal: almost square, hairline borders. Restraint in shape as
+        // well as in colour.
+        case Theme::Minimal:       g = {2.0f, 1.0f, 10.0f}; break;
+
+        case Theme::Daylight:      g = {6.0f, 1.0f, 11.0f}; break;
+        case Theme::Stock:
+        default:                   break;
+    }
+
+    style.WindowRounding    = g.rounding;
+    style.ChildRounding     = g.rounding * 0.75f;
+    style.PopupRounding     = g.rounding * 0.75f;
+    style.FrameRounding     = g.rounding * 0.62f;
+    style.GrabRounding      = g.rounding * 0.62f;
+    style.TabRounding       = g.rounding * 0.75f;
+    style.ScrollbarRounding = g.rounding;
+
+    style.WindowBorderSize  = g.border;
+    style.ChildBorderSize   = g.border;
+    style.PopupBorderSize   = g.border;
+    style.GrabMinSize       = g.grab;
+
+    // A visible frame border suits the hard-edged themes and muddies the
+    // soft ones, where the fill already defines the shape.
+    style.FrameBorderSize = (g.rounding <= 0.5f) ? 1.0f : 0.0f;
+}
+
 // Apply a theme to ImGui style
 inline void ApplyTheme(Theme theme) {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -2747,122 +2830,179 @@ inline void ApplyTheme(Theme theme) {
     style.AntiAliasedLines    = true;
     style.AntiAliasedFill     = true;
 
+    // Gutters between docked panels.
+    //
+    // Docking tiles the viewport exactly, so with flush panels the animated
+    // theme backgrounds - the Matrix rain, the Synthwave sun and grid - had
+    // nowhere to show and were invisible. A visible separator lets them run
+    // between the panels, which is where they belong: behind and around the
+    // work, never underneath the text.
+    style.DockingSeparatorSize = 7.0f;
+
     switch (theme) {
         case Theme::Stock:
-            // Default dark theme
-            colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
-            colors[ImGuiCol_ChildBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
-            colors[ImGuiCol_PopupBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
-            colors[ImGuiCol_Border] = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
-            colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.15f, 0.18f, 1.00f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.22f, 0.22f, 0.26f, 1.00f);
-            colors[ImGuiCol_FrameBgActive] = ImVec4(0.28f, 0.28f, 0.33f, 1.00f);
-            colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(0.20f, 0.35f, 0.55f, 1.00f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.45f, 0.70f, 1.00f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.30f, 0.52f, 0.80f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(0.20f, 0.35f, 0.55f, 1.00f);
-            colors[ImGuiCol_ButtonHovered] = ImVec4(0.26f, 0.45f, 0.70f, 1.00f);
-            colors[ImGuiCol_ButtonActive] = ImVec4(0.30f, 0.52f, 0.80f, 1.00f);
-            colors[ImGuiCol_SliderGrab] = ImVec4(0.30f, 0.52f, 0.80f, 1.00f);
-            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.40f, 0.62f, 0.90f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.40f, 0.70f, 1.00f, 1.00f);
-            colors[ImGuiCol_Text] = ImVec4(0.90f, 0.90f, 0.92f, 1.00f);
-            colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.50f, 0.52f, 1.00f);
-            colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.25f, 0.40f, 1.00f);
-            colors[ImGuiCol_TabHovered] = ImVec4(0.26f, 0.45f, 0.70f, 1.00f);
-            colors[ImGuiCol_TabActive] = ImVec4(0.20f, 0.38f, 0.60f, 1.00f);
+            // The neutral default. Restraint is the point - it has to still
+            // look sober sitting next to Cyberpunk.
+            //
+            // Header and Button used to be the same colour, so nothing told
+            // you what was pressable. Headers are now a quiet raised neutral
+            // that groups content; the saturated accent belongs to buttons
+            // alone. Greys are warmed very slightly, because an app people
+            // sit in front of for hours should not feel clinical.
+            colors[ImGuiCol_ChildBg] = ImVec4(0.092f, 0.088f, 0.085f, 1.00f);
+            colors[ImGuiCol_WindowBg] = ImVec4(0.132f, 0.127f, 0.122f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.180f, 0.174f, 0.167f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.222f, 0.215f, 0.206f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.232f, 0.226f, 0.218f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.280f, 0.272f, 0.262f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.335f, 0.325f, 0.315f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.104f, 0.100f, 0.096f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.165f, 0.172f, 0.196f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.150f, 0.145f, 0.139f, 1.00f);
 
-            // Piano roll colors
-            g_PianoRollColors.keyWhite = IM_COL32(60, 60, 65, 255);
-            g_PianoRollColors.keyBlack = IM_COL32(40, 40, 45, 255);
-            g_PianoRollColors.gridLine = IM_COL32(50, 50, 55, 255);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(100, 100, 110, 255);
-            g_PianoRollColors.gridLinePattern = IM_COL32(150, 80, 80, 255);
-            g_PianoRollColors.noteDefault = IM_COL32(80, 140, 200, 255);
-            g_PianoRollColors.noteSelected = IM_COL32(100, 200, 255, 255);
-            g_PianoRollColors.playhead = IM_COL32(255, 100, 100, 255);
-            g_PianoRollColors.background = IM_COL32(30, 30, 35, 255);
+            // Headers: a raised neutral-blue surface, not the accent.
+            colors[ImGuiCol_Header] = ImVec4(0.235f, 0.245f, 0.278f, 1.00f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.292f, 0.306f, 0.348f, 1.00f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.342f, 0.360f, 0.408f, 1.00f);
+
+            // Buttons: the one saturated thing on screen.
+            colors[ImGuiCol_Button] = ImVec4(0.235f, 0.450f, 0.720f, 1.00f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.295f, 0.530f, 0.815f, 1.00f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.180f, 0.375f, 0.640f, 1.00f);
+
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.300f, 0.520f, 0.800f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.400f, 0.620f, 0.900f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.420f, 0.690f, 1.000f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.905f, 0.900f, 0.912f, 1.00f);
+            // Nudged up from 0.50: disabled should read as quiet, not absent.
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.560f, 0.552f, 0.568f, 1.00f);
+            // The selected tab leans on TabSelectedOverline (derived from the
+            // accent) rather than on fill brightness alone.
+            colors[ImGuiCol_Tab] = ImVec4(0.150f, 0.155f, 0.175f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.270f, 0.330f, 0.430f, 1.00f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.225f, 0.290f, 0.395f, 1.00f);
+
+            // Piano roll - blue note identity kept
+            g_PianoRollColors.keyWhite = IM_COL32(62, 60, 66, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(38, 37, 41, 255);
+            g_PianoRollColors.gridLine = IM_COL32(52, 51, 56, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(104, 102, 112, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(158, 86, 86, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(66, 126, 196, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(126, 212, 255, 255);
+            g_PianoRollColors.playhead = IM_COL32(255, 96, 96, 255);
+            g_PianoRollColors.background = IM_COL32(30, 29, 33, 255);
             break;
 
         case Theme::Cyberpunk:
-            // Cyberpunk 2077 inspired - neon yellow, hot pink, electric blue
-            colors[ImGuiCol_WindowBg] = ImVec4(0.04f, 0.04f, 0.07f, 1.00f);
-            colors[ImGuiCol_ChildBg] = ImVec4(0.03f, 0.03f, 0.05f, 1.00f);
-            colors[ImGuiCol_PopupBg] = ImVec4(0.06f, 0.06f, 0.10f, 1.00f);
-            colors[ImGuiCol_Border] = ImVec4(0.99f, 0.93f, 0.04f, 0.50f);  // Neon yellow
-            colors[ImGuiCol_FrameBg] = ImVec4(0.08f, 0.08f, 0.12f, 1.00f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.15f, 0.08f, 0.20f, 1.00f);
-            colors[ImGuiCol_FrameBgActive] = ImVec4(0.20f, 0.10f, 0.25f, 1.00f);
-            colors[ImGuiCol_TitleBg] = ImVec4(0.06f, 0.02f, 0.10f, 1.00f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.50f, 0.05f, 0.30f, 1.00f);  // Hot pink
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.08f, 0.04f, 0.12f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(1.00f, 0.16f, 0.43f, 0.60f);  // Hot pink
-            colors[ImGuiCol_HeaderHovered] = ImVec4(1.00f, 0.16f, 0.43f, 0.80f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(1.00f, 0.16f, 0.43f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(0.02f, 0.85f, 0.91f, 0.40f);  // Cyan
-            colors[ImGuiCol_ButtonHovered] = ImVec4(0.02f, 0.85f, 0.91f, 0.70f);
-            colors[ImGuiCol_ButtonActive] = ImVec4(0.99f, 0.93f, 0.04f, 0.90f);  // Yellow on click
-            colors[ImGuiCol_SliderGrab] = ImVec4(0.99f, 0.93f, 0.04f, 1.00f);  // Neon yellow
-            colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.16f, 0.43f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.99f, 0.93f, 0.04f, 1.00f);
-            colors[ImGuiCol_Text] = ImVec4(0.00f, 1.00f, 0.98f, 1.00f);  // Cyan text
-            colors[ImGuiCol_TextDisabled] = ImVec4(0.40f, 0.40f, 0.50f, 1.00f);
-            colors[ImGuiCol_Tab] = ImVec4(0.30f, 0.05f, 0.20f, 1.00f);
-            colors[ImGuiCol_TabHovered] = ImVec4(1.00f, 0.16f, 0.43f, 0.80f);
-            colors[ImGuiCol_TabActive] = ImVec4(0.50f, 0.10f, 0.35f, 1.00f);
+            // Near-black ground, cyan / hot-pink / neon-yellow triad.
+            //
+            // The rule, so it survives the next edit: cyan is STRUCTURAL
+            // (borders, checkmarks, active states), hot pink is the
+            // INTERACTIVE accent (buttons), neon yellow is RARE emphasis
+            // (playhead, slider active). Previously all three ran at full
+            // saturation with no dominant, which is why it read as noise.
+            //
+            // Body text was pure saturated cyan. That shimmers on subpixel
+            // layouts and, worse, left no way to emphasise anything - if all
+            // text is neon, nothing stands out. Near-white with a cyan cast
+            // instead, and pure cyan reserved for accents.
+            colors[ImGuiCol_ChildBg] = ImVec4(0.030f, 0.032f, 0.048f, 1.00f);
+            colors[ImGuiCol_WindowBg] = ImVec4(0.058f, 0.060f, 0.086f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.098f, 0.102f, 0.140f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.130f, 0.134f, 0.180f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.150f, 0.110f, 0.190f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.210f, 0.130f, 0.260f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.100f, 0.850f, 0.900f, 0.55f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.075f, 0.030f, 0.095f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.420f, 0.060f, 0.260f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.085f, 0.048f, 0.115f, 1.00f);
 
-            // Piano roll colors - Cyberpunk
-            g_PianoRollColors.keyWhite = IM_COL32(30, 30, 50, 255);
-            g_PianoRollColors.keyBlack = IM_COL32(15, 15, 30, 255);
-            g_PianoRollColors.gridLine = IM_COL32(60, 20, 80, 255);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(255, 40, 110, 200);  // Hot pink
-            g_PianoRollColors.gridLinePattern = IM_COL32(252, 238, 10, 255);  // Yellow
-            g_PianoRollColors.noteDefault = IM_COL32(5, 217, 232, 255);  // Cyan
-            g_PianoRollColors.noteSelected = IM_COL32(252, 238, 10, 255);  // Yellow
-            g_PianoRollColors.playhead = IM_COL32(255, 42, 109, 255);  // Hot pink
-            g_PianoRollColors.background = IM_COL32(10, 10, 18, 255);
+            // Headers: a cyan-tinted surface, so they are not mistaken for
+            // the pink buttons. Opaque, because the glitch animates behind.
+            colors[ImGuiCol_Header] = ImVec4(0.100f, 0.260f, 0.320f, 0.92f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.140f, 0.350f, 0.420f, 0.96f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.180f, 0.450f, 0.540f, 1.00f);
+
+            colors[ImGuiCol_Button] = ImVec4(0.920f, 0.160f, 0.450f, 0.92f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(1.000f, 0.280f, 0.550f, 0.96f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(1.000f, 0.420f, 0.650f, 1.00f);
+
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.100f, 0.850f, 0.920f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.990f, 0.930f, 0.150f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.100f, 0.900f, 0.950f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.880f, 0.970f, 0.975f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.480f, 0.520f, 0.600f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.140f, 0.120f, 0.220f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.620f, 0.140f, 0.340f, 0.95f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.400f, 0.100f, 0.260f, 1.00f);
+
+            // Piano roll - emissive notes on a very dark grid
+            g_PianoRollColors.keyWhite = IM_COL32(34, 34, 54, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(16, 16, 30, 255);
+            g_PianoRollColors.gridLine = IM_COL32(44, 26, 62, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(255, 40, 110, 210);
+            g_PianoRollColors.gridLinePattern = IM_COL32(252, 238, 10, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(5, 217, 232, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(255, 90, 160, 255);
+            g_PianoRollColors.playhead = IM_COL32(252, 238, 10, 255);
+            g_PianoRollColors.background = IM_COL32(10, 10, 20, 255);
             break;
 
         case Theme::Synthwave:
-            // 80s Synthwave - sunset colors, neon pink/purple/cyan
-            colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.05f, 0.15f, 1.00f);
-            colors[ImGuiCol_ChildBg] = ImVec4(0.08f, 0.04f, 0.12f, 1.00f);
-            colors[ImGuiCol_PopupBg] = ImVec4(0.12f, 0.06f, 0.18f, 1.00f);
-            colors[ImGuiCol_Border] = ImVec4(1.00f, 0.00f, 1.00f, 0.50f);  // Magenta
-            colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.05f, 0.20f, 1.00f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.10f, 0.35f, 1.00f);
-            colors[ImGuiCol_FrameBgActive] = ImVec4(0.35f, 0.15f, 0.45f, 1.00f);
-            colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.02f, 0.12f, 1.00f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.40f, 0.00f, 0.50f, 1.00f);
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.12f, 0.04f, 0.18f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(0.60f, 0.00f, 0.80f, 0.60f);  // Purple
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.80f, 0.00f, 1.00f, 0.80f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(1.00f, 0.00f, 1.00f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(1.00f, 0.00f, 0.60f, 0.50f);  // Hot pink
-            colors[ImGuiCol_ButtonHovered] = ImVec4(1.00f, 0.20f, 0.80f, 0.70f);
-            colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 1.00f, 1.00f, 0.90f);  // Cyan
-            colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);  // Cyan
-            colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.00f, 1.00f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-            colors[ImGuiCol_Text] = ImVec4(1.00f, 0.90f, 1.00f, 1.00f);  // Soft pink-white
-            colors[ImGuiCol_TextDisabled] = ImVec4(0.60f, 0.40f, 0.60f, 1.00f);
-            colors[ImGuiCol_Tab] = ImVec4(0.30f, 0.00f, 0.40f, 1.00f);
-            colors[ImGuiCol_TabHovered] = ImVec4(0.80f, 0.00f, 1.00f, 0.80f);
-            colors[ImGuiCol_TabActive] = ImVec4(0.50f, 0.00f, 0.65f, 1.00f);
+            // Outrun: deep indigo sky, magenta and cyan horizon, hard edges.
+            //
+            // This theme and Vaporwave were two shades of the same purple.
+            // They are split deliberately now: Synthwave takes the
+            // saturated, high-contrast, neon-on-near-black lane; Vaporwave
+            // takes pastel and hazy. Deepening the ground is what lets the
+            // neon actually glow against it.
+            //
+            // Axis: magenta is interactive (buttons, active states), cyan is
+            // informational (checkmarks, selection, plots). Purple is the
+            // SURFACE colour, not an accent - that was the missing bit.
+            colors[ImGuiCol_ChildBg] = ImVec4(0.038f, 0.020f, 0.070f, 1.00f);
+            colors[ImGuiCol_WindowBg] = ImVec4(0.055f, 0.030f, 0.095f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.105f, 0.055f, 0.165f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.125f, 0.070f, 0.190f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.175f, 0.090f, 0.250f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.245f, 0.125f, 0.330f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.950f, 0.200f, 0.850f, 0.55f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.055f, 0.020f, 0.085f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.380f, 0.050f, 0.500f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.075f, 0.035f, 0.115f, 1.00f);
 
-            // Piano roll colors - Synthwave
-            g_PianoRollColors.keyWhite = IM_COL32(40, 20, 60, 255);
-            g_PianoRollColors.keyBlack = IM_COL32(25, 10, 40, 255);
-            g_PianoRollColors.gridLine = IM_COL32(80, 0, 120, 150);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(255, 0, 255, 200);  // Magenta
-            g_PianoRollColors.gridLinePattern = IM_COL32(0, 255, 255, 255);  // Cyan
-            g_PianoRollColors.noteDefault = IM_COL32(255, 0, 150, 255);  // Hot pink
-            g_PianoRollColors.noteSelected = IM_COL32(0, 255, 255, 255);  // Cyan
-            g_PianoRollColors.playhead = IM_COL32(255, 100, 0, 255);  // Orange
-            g_PianoRollColors.background = IM_COL32(20, 10, 35, 255);
+            // Purple surfaces, opaque so the chasers animate between panels
+            // rather than through the button labels.
+            colors[ImGuiCol_Header] = ImVec4(0.320f, 0.100f, 0.460f, 0.92f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.420f, 0.140f, 0.580f, 0.96f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.520f, 0.180f, 0.700f, 1.00f);
+
+            // No channel pinned at 0.00 or 1.00 on the base state, so hover
+            // and press have somewhere to go.
+            colors[ImGuiCol_Button] = ImVec4(0.880f, 0.120f, 0.550f, 0.92f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.960f, 0.280f, 0.680f, 0.96f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(1.000f, 0.420f, 0.780f, 1.00f);
+
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.100f, 0.900f, 0.950f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.350f, 1.000f, 1.000f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.100f, 0.920f, 0.960f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(1.000f, 0.900f, 1.000f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.620f, 0.450f, 0.660f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.200f, 0.050f, 0.300f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.620f, 0.140f, 0.800f, 0.95f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.420f, 0.100f, 0.560f, 1.00f);
+
+            // Piano roll - the measure line is the horizon
+            g_PianoRollColors.keyWhite = IM_COL32(44, 22, 68, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(26, 11, 42, 255);
+            g_PianoRollColors.gridLine = IM_COL32(62, 20, 96, 170);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(255, 45, 235, 220);
+            g_PianoRollColors.gridLinePattern = IM_COL32(35, 245, 245, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(255, 40, 150, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(60, 250, 250, 255);
+            g_PianoRollColors.playhead = IM_COL32(255, 165, 40, 255);
+            g_PianoRollColors.background = IM_COL32(14, 7, 26, 255);
             break;
 
         case Theme::Matrix:
@@ -2877,11 +3017,12 @@ inline void ApplyTheme(Theme theme) {
             colors[ImGuiCol_TitleBg] = ImVec4(0.00f, 0.04f, 0.00f, 1.00f);
             colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 0.20f, 0.00f, 1.00f);
             colors[ImGuiCol_MenuBarBg] = ImVec4(0.00f, 0.06f, 0.00f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(0.00f, 0.40f, 0.00f, 0.60f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.55f, 0.00f, 0.80f);
+            // Opaque enough to read a label against the falling code
+            colors[ImGuiCol_Header] = ImVec4(0.00f, 0.34f, 0.02f, 0.92f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.46f, 0.03f, 0.96f);
             colors[ImGuiCol_HeaderActive] = ImVec4(0.00f, 0.70f, 0.00f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(0.00f, 0.30f, 0.00f, 0.60f);
-            colors[ImGuiCol_ButtonHovered] = ImVec4(0.00f, 0.50f, 0.00f, 0.80f);
+            colors[ImGuiCol_Button] = ImVec4(0.00f, 0.46f, 0.00f, 0.92f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.00f, 0.60f, 0.00f, 0.96f);
             colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 0.70f, 0.00f, 1.00f);
             colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 0.80f, 0.00f, 1.00f);
             colors[ImGuiCol_SliderGrabActive] = ImVec4(0.00f, 1.00f, 0.00f, 1.00f);
@@ -2905,120 +3046,170 @@ inline void ApplyTheme(Theme theme) {
             break;
 
         case Theme::FrutigerAero:
-            // Frutiger Aero - Glossy, bubbly, glass-like Web 2.0 aesthetic
-            colors[ImGuiCol_WindowBg] = ImVec4(0.85f, 0.92f, 0.98f, 0.95f);
-            colors[ImGuiCol_ChildBg] = ImVec4(0.90f, 0.95f, 1.00f, 0.90f);
-            colors[ImGuiCol_PopupBg] = ImVec4(0.95f, 0.98f, 1.00f, 0.98f);
-            colors[ImGuiCol_Border] = ImVec4(0.50f, 0.70f, 0.90f, 0.50f);
-            colors[ImGuiCol_FrameBg] = ImVec4(1.00f, 1.00f, 1.00f, 0.80f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.80f, 0.92f, 1.00f, 0.90f);
-            colors[ImGuiCol_FrameBgActive] = ImVec4(0.70f, 0.88f, 1.00f, 1.00f);
-            colors[ImGuiCol_TitleBg] = ImVec4(0.40f, 0.65f, 0.90f, 0.90f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.30f, 0.55f, 0.85f, 1.00f);
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.75f, 0.88f, 0.98f, 0.95f);
-            colors[ImGuiCol_Header] = ImVec4(0.50f, 0.75f, 0.95f, 0.70f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.45f, 0.70f, 0.95f, 0.85f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.40f, 0.65f, 0.90f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(0.45f, 0.72f, 0.95f, 0.85f);
-            colors[ImGuiCol_ButtonHovered] = ImVec4(0.35f, 0.65f, 0.95f, 0.95f);
-            colors[ImGuiCol_ButtonActive] = ImVec4(0.25f, 0.55f, 0.90f, 1.00f);
-            colors[ImGuiCol_SliderGrab] = ImVec4(0.30f, 0.60f, 0.95f, 1.00f);
-            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.20f, 0.50f, 0.90f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.20f, 0.50f, 0.85f, 1.00f);
-            colors[ImGuiCol_Text] = ImVec4(0.15f, 0.25f, 0.40f, 1.00f);
-            colors[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.55f, 0.65f, 1.00f);
-            colors[ImGuiCol_Tab] = ImVec4(0.65f, 0.82f, 0.95f, 0.90f);
-            colors[ImGuiCol_TabHovered] = ImVec4(0.50f, 0.75f, 0.95f, 1.00f);
-            colors[ImGuiCol_TabActive] = ImVec4(0.40f, 0.68f, 0.92f, 1.00f);
+            // Glossy Web 2.0: sky blue, aqua secondary, light from above.
+            //
+            // WindowBg is opaque now. It was 0.95, which put dark navy body
+            // text over a moving background - translucency belongs on chrome
+            // that does not hold text, so it moved to title bars, popups and
+            // inactive tabs.
+            //
+            // Elevation is inverted for a light theme: inset surfaces are
+            // DARKER than the window, raised ones lighter. Brighter on top is
+            // what implies a light source, and that inversion is most of what
+            // sells a light theme.
+            colors[ImGuiCol_WindowBg] = ImVec4(0.880f, 0.930f, 0.972f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.845f, 0.905f, 0.958f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.800f, 0.872f, 0.940f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.755f, 0.845f, 0.935f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.705f, 0.815f, 0.930f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.970f, 0.985f, 1.000f, 0.97f);
+            // Glass, but only where it costs no legibility
+            colors[ImGuiCol_TitleBg] = ImVec4(0.620f, 0.800f, 0.930f, 0.90f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.430f, 0.705f, 0.920f, 0.95f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.780f, 0.890f, 0.968f, 1.00f);
+            // On a pale window a widget without a defined edge dissolves.
+            colors[ImGuiCol_Border] = ImVec4(0.420f, 0.600f, 0.800f, 0.85f);
 
-            // Piano roll colors - Frutiger Aero (glossy, bright)
-            g_PianoRollColors.keyWhite = IM_COL32(240, 248, 255, 255);
-            g_PianoRollColors.keyBlack = IM_COL32(70, 100, 140, 255);
-            g_PianoRollColors.gridLine = IM_COL32(180, 200, 220, 255);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(100, 150, 200, 255);
-            g_PianoRollColors.gridLinePattern = IM_COL32(50, 120, 200, 255);
-            g_PianoRollColors.noteDefault = IM_COL32(80, 160, 255, 255);
-            g_PianoRollColors.noteSelected = IM_COL32(255, 180, 50, 255);
-            g_PianoRollColors.playhead = IM_COL32(50, 200, 100, 255);
-            g_PianoRollColors.background = IM_COL32(230, 240, 250, 255);
+            // Buttons stay light: labels are drawn in ImGuiCol_Text, which is
+            // dark navy here, so a dark button would bury its own label.
+            colors[ImGuiCol_Header] = ImVec4(0.600f, 0.800f, 0.955f, 0.90f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.510f, 0.750f, 0.950f, 0.94f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.420f, 0.685f, 0.930f, 1.00f);
+            colors[ImGuiCol_Button] = ImVec4(0.635f, 0.822f, 0.960f, 0.95f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.530f, 0.770f, 0.960f, 1.00f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.425f, 0.690f, 0.935f, 1.00f);
+
+            // Aqua secondary against the sky blue
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.110f, 0.620f, 0.600f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.060f, 0.520f, 0.500f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.090f, 0.420f, 0.780f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.100f, 0.180f, 0.300f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.430f, 0.510f, 0.600f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.720f, 0.860f, 0.960f, 0.92f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.580f, 0.800f, 0.960f, 1.00f);
+            // The selected tab is the LIGHTEST, matching light-from-above
+            colors[ImGuiCol_TabActive] = ImVec4(0.945f, 0.975f, 1.000f, 1.00f);
+
+            // Piano roll - the only light-ground roll, so every value here is
+            // chosen against white rather than inherited from a dark theme.
+            g_PianoRollColors.keyWhite = IM_COL32(250, 253, 255, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(148, 176, 204, 255);
+            g_PianoRollColors.gridLine = IM_COL32(206, 220, 233, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(146, 174, 202, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(52, 124, 196, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(38, 116, 202, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(232, 138, 16, 255);
+            g_PianoRollColors.playhead = IM_COL32(206, 36, 62, 255);
+            g_PianoRollColors.background = IM_COL32(236, 243, 250, 255);
             break;
 
         case Theme::Minimal:
-            // Minimal - Clean, flat, modern design
-            colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
-            colors[ImGuiCol_ChildBg] = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
-            colors[ImGuiCol_PopupBg] = ImVec4(0.14f, 0.14f, 0.16f, 1.00f);
-            colors[ImGuiCol_Border] = ImVec4(0.25f, 0.25f, 0.28f, 0.50f);
-            colors[ImGuiCol_FrameBg] = ImVec4(0.18f, 0.18f, 0.20f, 1.00f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.22f, 0.22f, 0.25f, 1.00f);
-            colors[ImGuiCol_FrameBgActive] = ImVec4(0.28f, 0.28f, 0.32f, 1.00f);
-            colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.10f, 0.12f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(0.20f, 0.20f, 0.22f, 1.00f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.28f, 0.28f, 0.32f, 1.00f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.35f, 0.35f, 0.40f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(0.95f, 0.30f, 0.35f, 1.00f);  // Red accent
-            colors[ImGuiCol_ButtonHovered] = ImVec4(1.00f, 0.40f, 0.45f, 1.00f);
-            colors[ImGuiCol_ButtonActive] = ImVec4(0.85f, 0.25f, 0.30f, 1.00f);
-            colors[ImGuiCol_SliderGrab] = ImVec4(0.95f, 0.30f, 0.35f, 1.00f);
-            colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.40f, 0.45f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.95f, 0.30f, 0.35f, 1.00f);
-            colors[ImGuiCol_Text] = ImVec4(0.92f, 0.92f, 0.94f, 1.00f);
-            colors[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.50f, 0.52f, 1.00f);
-            colors[ImGuiCol_Tab] = ImVec4(0.15f, 0.15f, 0.17f, 1.00f);
-            colors[ImGuiCol_TabHovered] = ImVec4(0.28f, 0.28f, 0.32f, 1.00f);
-            colors[ImGuiCol_TabActive] = ImVec4(0.22f, 0.22f, 0.25f, 1.00f);
+            // Restraint in the NUMBER of colours, not weakness in them.
+            //
+            // The accent was red. In a DAW red means record, and also
+            // destructive and error - so record, delete, error and an
+            // ordinary OK button were all one colour. The accent is teal
+            // now: unambiguous here, and it leaves red free to mean red.
+            // After this nothing in the theme is red except the playhead.
+            //
+            // Contrast goes UP, not down. Minimal earns calm through the
+            // spacing the shared metrics block already provides; washed-out
+            // greys just read as murky.
+            colors[ImGuiCol_ChildBg] = ImVec4(0.075f, 0.075f, 0.085f, 1.00f);
+            colors[ImGuiCol_WindowBg] = ImVec4(0.105f, 0.105f, 0.116f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.165f, 0.165f, 0.180f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.205f, 0.205f, 0.222f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.225f, 0.225f, 0.244f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.285f, 0.285f, 0.308f, 1.00f);
+            // Borders do the delimiting, since FrameBorderSize is 0.
+            colors[ImGuiCol_Border] = ImVec4(0.300f, 0.300f, 0.330f, 0.75f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.075f, 0.075f, 0.085f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.135f, 0.135f, 0.148f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.090f, 0.090f, 0.100f, 1.00f);
 
-            // Piano roll colors - Minimal (clean, subtle)
-            g_PianoRollColors.keyWhite = IM_COL32(35, 35, 40, 255);
-            g_PianoRollColors.keyBlack = IM_COL32(20, 20, 24, 255);
-            g_PianoRollColors.gridLine = IM_COL32(50, 50, 55, 255);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(70, 70, 78, 255);
-            g_PianoRollColors.gridLinePattern = IM_COL32(242, 77, 89, 255);  // Red accent
-            g_PianoRollColors.noteDefault = IM_COL32(242, 77, 89, 255);
-            g_PianoRollColors.noteSelected = IM_COL32(255, 255, 255, 255);
-            g_PianoRollColors.playhead = IM_COL32(255, 100, 110, 255);
-            g_PianoRollColors.background = IM_COL32(28, 28, 32, 255);
+            // Header sits ~11% above the window now instead of 8%, so a
+            // collapsing section actually registers as a surface.
+            colors[ImGuiCol_Header] = ImVec4(0.215f, 0.215f, 0.235f, 1.00f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.285f, 0.285f, 0.310f, 1.00f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.145f, 0.560f, 0.530f, 1.00f);
+
+            colors[ImGuiCol_Button] = ImVec4(0.135f, 0.620f, 0.580f, 1.00f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.180f, 0.720f, 0.680f, 1.00f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.100f, 0.500f, 0.470f, 1.00f);
+
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.160f, 0.680f, 0.640f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.220f, 0.800f, 0.750f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.200f, 0.780f, 0.720f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.950f, 0.950f, 0.960f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.550f, 0.550f, 0.578f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.135f, 0.135f, 0.148f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.240f, 0.240f, 0.262f, 1.00f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.190f, 0.190f, 0.210f, 1.00f);
+
+            // Piano roll - near-monochrome, accent for notes, and red is now
+            // free for the one thing that should be red.
+            g_PianoRollColors.keyWhite = IM_COL32(42, 42, 48, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(24, 24, 28, 255);
+            g_PianoRollColors.gridLine = IM_COL32(54, 54, 60, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(82, 82, 90, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(122, 122, 132, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(40, 180, 168, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(236, 240, 244, 255);
+            g_PianoRollColors.playhead = IM_COL32(236, 70, 70, 255);
+            g_PianoRollColors.background = IM_COL32(26, 26, 30, 255);
             break;
 
         case Theme::Vaporwave:
-            // Vaporwave - Pink/cyan aesthetic, floating shapes, retro-futurism
-            colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.02f, 0.12f, 1.00f);
-            colors[ImGuiCol_ChildBg] = ImVec4(0.06f, 0.01f, 0.10f, 1.00f);
-            colors[ImGuiCol_PopupBg] = ImVec4(0.10f, 0.03f, 0.15f, 1.00f);
-            colors[ImGuiCol_Border] = ImVec4(0.90f, 0.40f, 0.80f, 0.40f);
-            colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.05f, 0.20f, 1.00f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.10f, 0.35f, 1.00f);
-            colors[ImGuiCol_FrameBgActive] = ImVec4(0.35f, 0.15f, 0.45f, 1.00f);
-            colors[ImGuiCol_TitleBg] = ImVec4(0.20f, 0.05f, 0.25f, 1.00f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.50f, 0.15f, 0.60f, 1.00f);
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.12f, 0.03f, 0.18f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(0.70f, 0.20f, 0.80f, 0.50f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.80f, 0.30f, 0.90f, 0.70f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.90f, 0.40f, 1.00f, 0.90f);
-            colors[ImGuiCol_Button] = ImVec4(0.00f, 0.80f, 0.90f, 0.80f);  // Cyan
-            colors[ImGuiCol_ButtonHovered] = ImVec4(0.20f, 0.90f, 1.00f, 0.90f);
-            colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 0.70f, 0.80f, 1.00f);
-            colors[ImGuiCol_SliderGrab] = ImVec4(1.00f, 0.40f, 0.80f, 1.00f);  // Pink
-            colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.50f, 0.90f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 1.00f, 1.00f, 1.00f);
-            colors[ImGuiCol_Text] = ImVec4(1.00f, 0.85f, 0.95f, 1.00f);
-            colors[ImGuiCol_TextDisabled] = ImVec4(0.60f, 0.40f, 0.55f, 1.00f);
-            colors[ImGuiCol_Tab] = ImVec4(0.30f, 0.10f, 0.40f, 1.00f);
-            colors[ImGuiCol_TabHovered] = ImVec4(0.60f, 0.20f, 0.70f, 0.90f);
-            colors[ImGuiCol_TabActive] = ImVec4(0.50f, 0.15f, 0.60f, 1.00f);
+            // Sun-bleached poster: dusty rose, pale lilac, powder cyan.
+            //
+            // The opposite lane from Synthwave, deliberately. Synthwave is
+            // saturated neon on near-black; this is pastel, hazy, mid-toned.
+            // Lifting the ground from near-black to a dusty purple is the
+            // single change that separates them at a glance.
+            //
+            // Pastel does not mean pale here - the accents are muted
+            // mid-tones, because near-white text still has to read on them.
+            colors[ImGuiCol_ChildBg] = ImVec4(0.165f, 0.120f, 0.225f, 1.00f);
+            colors[ImGuiCol_WindowBg] = ImVec4(0.200f, 0.150f, 0.270f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.255f, 0.195f, 0.335f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.285f, 0.220f, 0.375f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.310f, 0.240f, 0.400f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.365f, 0.285f, 0.465f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.780f, 0.580f, 0.740f, 0.50f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.240f, 0.165f, 0.305f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.440f, 0.285f, 0.520f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.220f, 0.158f, 0.288f, 1.00f);
 
-            // Piano roll colors - Vaporwave (pink/cyan contrast)
-            g_PianoRollColors.keyWhite = IM_COL32(30, 15, 40, 255);
-            g_PianoRollColors.keyBlack = IM_COL32(15, 5, 25, 255);
-            g_PianoRollColors.gridLine = IM_COL32(80, 30, 100, 255);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(150, 50, 180, 255);
-            g_PianoRollColors.gridLinePattern = IM_COL32(0, 220, 220, 255);
-            g_PianoRollColors.noteDefault = IM_COL32(255, 100, 200, 255);
-            g_PianoRollColors.noteSelected = IM_COL32(0, 255, 255, 255);
-            g_PianoRollColors.playhead = IM_COL32(255, 180, 220, 255);
-            g_PianoRollColors.background = IM_COL32(20, 5, 30, 255);
+            // Hue does as much level-signalling as luminance here, because a
+            // soft palette cannot afford large brightness steps.
+            colors[ImGuiCol_Header] = ImVec4(0.480f, 0.330f, 0.560f, 0.92f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.560f, 0.400f, 0.640f, 0.96f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.640f, 0.470f, 0.720f, 1.00f);
+
+            colors[ImGuiCol_Button] = ImVec4(0.620f, 0.340f, 0.500f, 0.92f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.720f, 0.430f, 0.590f, 0.96f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.800f, 0.520f, 0.670f, 1.00f);
+
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.520f, 0.800f, 0.820f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.640f, 0.880f, 0.900f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.560f, 0.840f, 0.860f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(0.960f, 0.900f, 0.940f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.680f, 0.600f, 0.700f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.300f, 0.210f, 0.380f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.500f, 0.350f, 0.580f, 0.95f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.400f, 0.280f, 0.480f, 1.00f);
+
+            // Piano roll - selection separates from default by HUE, since
+            // both are soft; the playhead is the one saturated thing.
+            g_PianoRollColors.keyWhite = IM_COL32(62, 48, 78, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(40, 30, 54, 255);
+            g_PianoRollColors.gridLine = IM_COL32(84, 66, 104, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(140, 110, 166, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(190, 150, 210, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(226, 150, 180, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(150, 220, 222, 255);
+            g_PianoRollColors.playhead = IM_COL32(255, 186, 88, 255);
+            g_PianoRollColors.background = IM_COL32(40, 30, 54, 255);
             break;
 
         case Theme::RetroTerminal:
@@ -3033,11 +3224,12 @@ inline void ApplyTheme(Theme theme) {
             colors[ImGuiCol_TitleBg] = ImVec4(0.05f, 0.04f, 0.00f, 1.00f);
             colors[ImGuiCol_TitleBgActive] = ImVec4(0.20f, 0.14f, 0.00f, 1.00f);
             colors[ImGuiCol_MenuBarBg] = ImVec4(0.06f, 0.04f, 0.00f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(0.40f, 0.28f, 0.00f, 0.60f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.55f, 0.38f, 0.00f, 0.80f);
+            // Opaque enough to read a label against the scanlines
+            colors[ImGuiCol_Header] = ImVec4(0.34f, 0.23f, 0.02f, 0.92f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.46f, 0.31f, 0.02f, 0.96f);
             colors[ImGuiCol_HeaderActive] = ImVec4(0.70f, 0.48f, 0.00f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(0.35f, 0.24f, 0.00f, 0.70f);
-            colors[ImGuiCol_ButtonHovered] = ImVec4(0.50f, 0.35f, 0.00f, 0.85f);
+            colors[ImGuiCol_Button] = ImVec4(0.50f, 0.34f, 0.00f, 0.92f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.64f, 0.44f, 0.02f, 0.96f);
             colors[ImGuiCol_ButtonActive] = ImVec4(0.65f, 0.45f, 0.00f, 1.00f);
             colors[ImGuiCol_SliderGrab] = ImVec4(0.90f, 0.62f, 0.00f, 1.00f);
             colors[ImGuiCol_SliderGrabActive] = ImVec4(1.00f, 0.72f, 0.10f, 1.00f);
@@ -3075,9 +3267,12 @@ inline void ApplyTheme(Theme theme) {
             colors[ImGuiCol_TitleBg] = ImVec4(0.06f, 0.22f, 0.06f, 1.00f);
             colors[ImGuiCol_TitleBgActive] = ImVec4(0.19f, 0.38f, 0.19f, 1.00f);
             colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.28f, 0.10f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(0.28f, 0.48f, 0.16f, 0.85f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.42f, 0.60f, 0.12f, 0.90f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.54f, 0.67f, 0.06f, 1.00f);
+            // Header was identical to Button, so nothing marked what was
+            // pressable. It takes the darkest of the four DMG shades now -
+            // separating them without inventing a fifth colour.
+            colors[ImGuiCol_Header] = ImVec4(0.13f, 0.30f, 0.13f, 0.95f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.19f, 0.38f, 0.19f, 1.00f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.24f, 0.44f, 0.18f, 1.00f);
             colors[ImGuiCol_Button] = ImVec4(0.28f, 0.48f, 0.16f, 1.00f);
             colors[ImGuiCol_ButtonHovered] = ImVec4(0.42f, 0.60f, 0.12f, 1.00f);
             colors[ImGuiCol_ButtonActive] = ImVec4(0.54f, 0.67f, 0.06f, 1.00f);
@@ -3116,9 +3311,11 @@ inline void ApplyTheme(Theme theme) {
             colors[ImGuiCol_TitleBg] = ImVec4(0.88f, 0.88f, 0.90f, 1.00f);
             colors[ImGuiCol_TitleBgActive] = ImVec4(0.80f, 0.84f, 0.92f, 1.00f);
             colors[ImGuiCol_MenuBarBg] = ImVec4(0.91f, 0.91f, 0.93f, 1.00f);
-            colors[ImGuiCol_Header] = ImVec4(0.36f, 0.55f, 0.86f, 0.70f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.32f, 0.51f, 0.84f, 0.85f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.24f, 0.45f, 0.80f, 1.00f);
+            // Header was the same blue as Button. It becomes a light
+            // neutral surface so the accent belongs to buttons alone.
+            colors[ImGuiCol_Header] = ImVec4(0.82f, 0.85f, 0.91f, 1.00f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.75f, 0.80f, 0.89f, 1.00f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.67f, 0.75f, 0.87f, 1.00f);
             colors[ImGuiCol_Button] = ImVec4(0.36f, 0.55f, 0.86f, 0.90f);
             colors[ImGuiCol_ButtonHovered] = ImVec4(0.30f, 0.50f, 0.84f, 1.00f);
             colors[ImGuiCol_ButtonActive] = ImVec4(0.22f, 0.43f, 0.78f, 1.00f);
@@ -3145,6 +3342,10 @@ inline void ApplyTheme(Theme theme) {
 
     // Derived last, because it reads the palette the theme just chose.
     DeriveRemainingThemeColors(style);
+
+    // Shape after colour. Layers a per-theme delta over the shared metrics
+    // block above; spacing and padding are deliberately left alone.
+    ApplyThemeGeometry(style, theme);
 }
 
 // Initialize Matrix rain effect
@@ -4988,19 +5189,39 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     bool isDraw = (ui.pianoRollMode == PianoRollMode::Draw);
     bool isErase = (ui.pianoRollMode == PianoRollMode::Erase);
 
-    if (isSelect) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
+    // The active mode is marked with the theme's own accent rather than a
+    // hardcoded green/blue, so the toolbar belongs to whatever theme is on.
+    // Erase keeps red: it is the destructive mode, and red earns its meaning
+    // by being reserved for exactly that.
+    //
+    // The label needs a colour picked against the fill, not the theme's Text.
+    // On Matrix the accent and the text are both bright green, so an active
+    // button was a green rectangle with an invisible label.
+    auto pushActiveMode = [](const ImVec4& fill) {
+        ImGui::PushStyleColor(ImGuiCol_Button, fill);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, fill);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, fill);
+        const float lum = 0.2126f * fill.x + 0.7152f * fill.y + 0.0722f * fill.z;
+        ImGui::PushStyleColor(ImGuiCol_Text, lum > 0.55f ? ImVec4(0.05f, 0.05f, 0.07f, 1.0f)
+                                                         : ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    };
+
+    const ImVec4 modeAccent = ImGui::GetStyle().Colors[ImGuiCol_CheckMark];
+    const ImVec4 eraseRed(0.80f, 0.22f, 0.22f, 1.0f);
+
+    if (isSelect) pushActiveMode(modeAccent);
     if (ImGui::Button("Select (S)")) ui.pianoRollMode = PianoRollMode::Select;
-    if (isSelect) ImGui::PopStyleColor();
+    if (isSelect) ImGui::PopStyleColor(4);
 
     ImGui::SameLine();
-    if (isDraw) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.4f, 0.8f, 1.0f));
+    if (isDraw) pushActiveMode(modeAccent);
     if (ImGui::Button("Draw (D)")) ui.pianoRollMode = PianoRollMode::Draw;
-    if (isDraw) ImGui::PopStyleColor();
+    if (isDraw) ImGui::PopStyleColor(4);
 
     ImGui::SameLine();
-    if (isErase) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+    if (isErase) pushActiveMode(eraseRed);
     if (ImGui::Button("Erase (E)")) ui.pianoRollMode = PianoRollMode::Erase;
-    if (isErase) ImGui::PopStyleColor();
+    if (isErase) ImGui::PopStyleColor(4);
 
     // ========================================================================
     // Toolbar Row 2: Actions
@@ -5464,11 +5685,16 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 }
             }
         }
-        ImU32 noteColor = CHANNEL_COLORS[ui.selectedChannel % 8];
+        // Notes take the theme's note colour, tinted toward the channel's
+        // identity colour. Every theme defines noteDefault/noteSelected and
+        // nothing was reading them, so notes stayed the same eight colours
+        // under all ten themes - jarring on Game Boy, invisible on the light
+        // ones. The channel tint keeps multi-channel work legible.
+        ImU32 noteColor = blendColors(g_PianoRollColors.noteDefault,
+                                      CHANNEL_COLORS[ui.selectedChannel % 8], 0.35f);
 
-        // Darken/lighten based on selection
         if (isSelected) {
-            noteColor = IM_COL32(255, 255, 255, 255);  // White for selected
+            noteColor = g_PianoRollColors.noteSelected;
         }
 
         // Note rectangle
@@ -9076,14 +9302,40 @@ inline void DrawDrumVariant(ImDrawList* drawList, int oscIndex, const char* name
 }
 
 // Helper to draw a drum category with expandable variations
+// ============================================================================
+// Category-tinted headers
+//
+// The sound palette colour-codes its groups - drums, oscillators, synths,
+// chords - which genuinely helps you find things. It used to do that with
+// hardcoded colours, so the palette ignored the theme completely: maroon and
+// purple headers sitting inside the Game Boy's four-shade green.
+//
+// The category hue is kept, but only as a tint over the theme's own Header
+// colour. Groups stay distinguishable; the panel stays on-theme.
+// ============================================================================
+inline void PushCategoryHeaderStyle(const ImVec4& tint) {
+    const ImVec4* colors = ImGui::GetStyle().Colors;
+
+    auto blend = [&](ImGuiCol slot, float amount) {
+        const ImVec4 base = colors[slot];
+        return ImVec4(base.x + (tint.x - base.x) * amount,
+                      base.y + (tint.y - base.y) * amount,
+                      base.z + (tint.z - base.z) * amount,
+                      base.w);
+    };
+
+    // Enough tint to tell groups apart, not enough to leave the palette.
+    ImGui::PushStyleColor(ImGuiCol_Header, blend(ImGuiCol_Header, 0.38f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, blend(ImGuiCol_HeaderHovered, 0.32f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, blend(ImGuiCol_HeaderActive, 0.26f));
+}
+
 inline void DrawDrumCategory(const char* categoryName, bool& expanded,
                              const int* oscIndices, const char** names, const char** descs, int count,
                              Project& project, UIState& ui, Sequencer& seq) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.2f, 0.2f, 0.8f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.4f, 0.25f, 0.25f, 0.9f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.3f, 0.3f, 1.0f));
+    PushCategoryHeaderStyle(ImVec4(1.00f, 0.67f, 0.67f, 1.0f));
 
     if (ImGui::CollapsingHeader(categoryName, expanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
         expanded = true;
@@ -9186,9 +9438,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // ========== OSCILLATORS (Collapsible) ==========
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.3f, 0.2f, 0.8f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.4f, 0.25f, 0.9f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.3f, 0.5f, 0.3f, 1.0f));
+    PushCategoryHeaderStyle(ImVec4(0.67f, 1.00f, 0.67f, 1.0f));
 
     if (ImGui::CollapsingHeader("Oscillators", g_PaletteExpanded_Oscillators ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
         g_PaletteExpanded_Oscillators = true;
@@ -9234,9 +9484,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::PopStyleColor(3);
 
     // ========== SYNTHS (Collapsible) ==========
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.25f, 0.2f, 0.35f, 0.8f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.35f, 0.25f, 0.45f, 0.9f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.3f, 0.55f, 1.0f));
+    PushCategoryHeaderStyle(ImVec4(0.71f, 0.57f, 1.00f, 1.0f));
 
     if (ImGui::CollapsingHeader("Synths", g_PaletteExpanded_Synths ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
         g_PaletteExpanded_Synths = true;
@@ -9283,9 +9531,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::PopStyleColor(3);
 
     // ========== RECREATIONS (High-accuracy signature sounds) ==========
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.35f, 0.2f, 0.3f, 0.8f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.45f, 0.25f, 0.4f, 0.9f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.55f, 0.3f, 0.5f, 1.0f));
+    PushCategoryHeaderStyle(ImVec4(1.00f, 0.57f, 0.86f, 1.0f));
 
     if (ImGui::CollapsingHeader("Recreations", g_PaletteExpanded_Recreations ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
         g_PaletteExpanded_Recreations = true;
@@ -9336,9 +9582,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // Helper lambda to draw chord buttons for a genre
     auto DrawChordGenre = [&](const char* genre, bool& expanded, const char* headerLabel) {
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.2f, 0.4f, 0.8f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.4f, 0.3f, 0.5f, 0.9f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.4f, 0.6f, 1.0f));
+        PushCategoryHeaderStyle(ImVec4(0.75f, 0.50f, 1.00f, 1.0f));
 
         if (ImGui::CollapsingHeader(headerLabel, expanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
             expanded = true;
@@ -9488,9 +9732,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "PATTERNS (click to insert)");
 
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.2f, 0.3f, 0.4f, 0.8f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.3f, 0.4f, 0.5f, 0.9f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.4f, 0.5f, 0.6f, 1.0f));
+    PushCategoryHeaderStyle(ImVec4(0.50f, 0.75f, 1.00f, 1.0f));
 
     if (ImGui::CollapsingHeader("Drum Patterns", g_PaletteExpanded_Patterns ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
         g_PaletteExpanded_Patterns = true;
@@ -9589,9 +9831,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1.0f), "SAMPLE TRACKS (full songs)");
 
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.3f, 0.2f, 0.4f, 0.8f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.4f, 0.3f, 0.5f, 0.9f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.5f, 0.4f, 0.6f, 1.0f));
+    PushCategoryHeaderStyle(ImVec4(0.75f, 0.50f, 1.00f, 1.0f));
 
     if (ImGui::CollapsingHeader("Sample Tracks", g_PaletteExpanded_SampleTracks ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
         g_PaletteExpanded_SampleTracks = true;
