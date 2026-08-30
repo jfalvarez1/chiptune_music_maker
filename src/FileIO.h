@@ -9,6 +9,7 @@
 #include "Types.h"
 #include "Sequencer.h"
 #include "MIDIExport.h"
+#include "ProjectValidation.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -311,6 +312,12 @@ inline bool loadProject(Project& project, const std::string& filepath) {
         project.patterns[0].name = "Pattern 1";
     }
 
+    // A project file is untrusted input: it may be truncated, hand-edited or
+    // written by an older version. Anything that reaches the audio thread has
+    // to be inside a range the mixer and sequencer can actually work with,
+    // otherwise a bad number becomes silence, a hang, or a crash later on.
+    clampProjectToValidRanges(project);
+
     file.close();
     return true;
 }
@@ -342,10 +349,27 @@ inline bool renderToBuffer(Project& project, Sequencer& seq,
                            std::vector<float>& leftBuffer,
                            std::vector<float>& rightBuffer,
                            float durationBeats) {
-    float sampleRate = 44100.0f;
+    const float sampleRate = 44100.0f;
+
+    // Guard the inputs before they reach a size_t cast. A non-positive or
+    // non-finite duration used to produce a negative float, and casting that
+    // to size_t is undefined - in practice a colossal length that took the
+    // process down inside resize().
+    if (!std::isfinite(durationBeats) || durationBeats <= 0.0f) return false;
+
     float bpm = project.bpm;
-    float durationSeconds = durationBeats * 60.0f / bpm;
-    size_t totalSamples = static_cast<size_t>(durationSeconds * sampleRate) + 44100; // Extra second for release
+    if (!std::isfinite(bpm) || bpm <= 0.0f) bpm = 120.0f;
+
+    const float durationSeconds = durationBeats * 60.0f / bpm;
+
+    // Cap the render so a runaway song length cannot exhaust memory.
+    // 2 hours of stereo float at 44.1kHz is already far beyond any real use.
+    constexpr size_t MAX_RENDER_SAMPLES = static_cast<size_t>(44100) * 60 * 60 * 2;
+    const double requested = double(durationSeconds) * double(sampleRate) + 44100.0;
+    if (!(requested > 0.0)) return false;
+
+    size_t totalSamples = static_cast<size_t>(std::min(requested, double(MAX_RENDER_SAMPLES)));
+    if (totalSamples == 0) return false;
 
     leftBuffer.resize(totalSamples);
     rightBuffer.resize(totalSamples);

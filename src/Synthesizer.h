@@ -342,6 +342,9 @@ public:
         m_effects.phaser.feedback = config.phaserFeedback;
         
         m_effects.sidechainEnabled = config.sidechainEnabled;
+        // Without the source channel the sequencer's sidechain pass is skipped
+        // entirely, so the whole effect silently does nothing.
+        m_effects.sidechainSource = config.sidechainSource;
         m_effects.sidechain.amount = config.sidechainAmount;
         m_effects.sidechain.release = config.sidechainRelease;
         
@@ -567,7 +570,15 @@ public:
             }
 
             // Update phase increment with modified frequency (skip for drums - they manage their own)
+            //
+            // Clamp below Nyquist first. Vibrato, slide and the sweep unit all
+            // multiply the frequency, and stacking them can push a note far
+            // past the sample rate - which is both musically meaningless and
+            // numerically hostile to the PolyBLEP anti-aliasing below.
             if (!isDrum) {
+                if (!std::isfinite(effectFreq)) effectFreq = voice.baseFrequency;
+                const float nyquist = m_sampleRate * 0.5f;
+                effectFreq = std::max(0.0f, std::min(effectFreq, nyquist));
                 voice.phaseIncrement = effectFreq / m_sampleRate;
             }
 
@@ -937,9 +948,18 @@ private:
         }
 
         // Advance phase (use voice.phaseIncrement, not captured dt, so drums' late-set values work)
+        //
+        // Wrap with a loop, not a single subtraction. If phaseIncrement ever
+        // exceeds 1.0 (a note swept above the sample rate), subtracting 1.0
+        // once leaves phase > 1 and it grows without bound - which then feeds
+        // a huge t into polyBlep's (t-1)/dt and squares it. That produced
+        // peaks in the millions from an extreme pitch sweep.
         voice.phase += voice.phaseIncrement;
-        if (voice.phase >= 1.0f) {
-            voice.phase -= 1.0f;
+        if (voice.phase >= 1.0f || voice.phase < 0.0f) {
+            voice.phase -= std::floor(voice.phase);
+        }
+        if (!std::isfinite(voice.phase)) {
+            voice.phase = 0.0f;
         }
 
         return sample;

@@ -223,5 +223,43 @@ install(TARGETS DebugAnalyzer
     RUNTIME DESTINATION bin
 )
 
+# ============================================================================
+# Headless Test Suite
+#
+# Console app - no window, no audio device. Exercises the synth, sequencer,
+# effects, file I/O and exporters so wiring gaps and bad audio values are
+# caught automatically instead of by ear.
+#
+#   cmake --build build --config Release --target ChiptuneTests
+#   build/bin/Release/ChiptuneTests.exe
+# ============================================================================
+add_executable(ChiptuneTests
+    tests/ChiptuneTests.cpp
+    tests/TestMiniaudioImpl.cpp
+)
+
+target_include_directories(ChiptuneTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/vendor/libremidi/include
+)
+
+target_link_libraries(ChiptuneTests PRIVATE
+    miniaudio
+    midifile
+)
+
+if(WIN32)
+    target_link_libraries(ChiptuneTests PRIVATE winmm comdlg32 shell32)
+elseif(UNIX AND NOT APPLE)
+    target_link_libraries(ChiptuneTests PRIVATE Threads::Threads dl m)
+endif()
+
+set_target_properties(ChiptuneTests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+enable_testing()
+add_test(NAME chiptune_tests COMMAND ChiptuneTests)
+
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")

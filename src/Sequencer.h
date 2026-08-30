@@ -194,8 +194,18 @@ public:
                 float leftGain = std::cos((pan + 1.0f) * 0.25f * PI) * volume;
                 float rightGain = std::sin((pan + 1.0f) * 0.25f * PI) * volume;
 
-                left += sample * leftGain;
-                right += sample * rightGain;
+                // The stereo widener is the one effect that cannot live in the
+                // mono EffectsChain - it turns one sample into two. This is the
+                // only point where a channel becomes stereo, so it belongs here.
+                auto& fx = m_synths[ch].effects();
+                if (fx.stereoWidenerEnabled) {
+                    auto [wideL, wideR] = fx.stereoWidener.process(sample);
+                    left += wideL * leftGain;
+                    right += wideR * rightGain;
+                } else {
+                    left += sample * leftGain;
+                    right += sample * rightGain;
+                }
             }
 
             // Apply master volume

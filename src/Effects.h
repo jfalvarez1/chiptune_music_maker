@@ -883,14 +883,25 @@ public:
             m_envelope = releaseCoef * m_envelope + (1.0f - releaseCoef) * absInput;
         }
 
-        // Gain reduction
+        // Gain reduction.
+        //
+        // threshold is a linear level (0..1) and ratio is >= 1. Guard both:
+        // a zero or negative threshold makes target negative, so gain comes
+        // out negative and the "compressor" inverts and amplifies instead.
+        const float safeThreshold = std::max(1e-4f, threshold);
+        const float safeRatio = std::max(1.0f, ratio);
+
         float gain = 1.0f;
-        if (m_envelope > threshold) {
-            float over = m_envelope - threshold;
-            float compressed = over / ratio;
-            float target = threshold + compressed;
+        if (m_envelope > safeThreshold) {
+            float over = m_envelope - safeThreshold;
+            float compressed = over / safeRatio;
+            float target = safeThreshold + compressed;
             gain = target / m_envelope;
         }
+
+        // A compressor only ever attenuates. Never let the computed gain go
+        // negative or above unity, whatever the parameters say.
+        gain = std::max(0.0f, std::min(gain, 1.0f));
 
         return input * gain * makeupGain;
     }
