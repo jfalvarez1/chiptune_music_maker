@@ -2507,10 +2507,203 @@ struct ThemePianoRollColors {
 
 static ThemePianoRollColors g_PianoRollColors;
 
+// ============================================================================
+// Derived theme colours
+//
+// ImGui has 63 distinct colour slots. Every theme here sets the same 24, so
+// the remaining 39 - scrollbars, separators, resize grips, table headers and
+// row striping, plot lines, text selection, the modal dim layer, dimmed tabs
+// and the nav cursor - kept whatever ImGui's dark default left behind, in all
+// ten themes.
+//
+// On a dark theme that reads as slightly unfinished. On a light one it is
+// simply broken: dark grey scrollbars and dark table headers on a pale
+// window. Writing 39 more lines into each of ten cases would be 390 lines of
+// near-duplicate colour, and the eleventh theme would forget half of them.
+//
+// So derive them instead, once, from the colours the theme already chose.
+// Any theme added later gets complete styling for free.
+// ============================================================================
+namespace themederive {
+
+// Sentinel written into the derived slots before the switch runs. No real
+// colour has a negative component, so anything still holding it afterwards
+// is a slot the theme did not set - and a theme that *does* set one keeps
+// its own value. Explicit always beats derived.
+inline constexpr float UNSET_MARKER = -1.0f;
+
+inline bool isUnset(const ImVec4& c) { return c.x < 0.0f; }
+
+inline ImVec4 mix(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(a.x + (b.x - a.x) * t,
+                  a.y + (b.y - a.y) * t,
+                  a.z + (b.z - a.z) * t,
+                  a.w + (b.w - a.w) * t);
+}
+
+inline ImVec4 withAlpha(const ImVec4& c, float alpha) {
+    return ImVec4(c.x, c.y, c.z, alpha);
+}
+
+// Shift toward white for a positive amount, toward black for a negative one.
+inline ImVec4 shift(const ImVec4& c, float amount) {
+    const float target = amount >= 0.0f ? 1.0f : 0.0f;
+    const float t = std::fabs(amount);
+    return ImVec4(c.x + (target - c.x) * t,
+                  c.y + (target - c.y) * t,
+                  c.z + (target - c.z) * t,
+                  c.w);
+}
+
+inline float luminance(const ImVec4& c) {
+    return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+}
+
+} // namespace themederive
+
+// Marks the 39 derived slots as untouched. Called before the theme switch so
+// a theme can override any of them simply by assigning it.
+inline void MarkDerivedThemeColorsUnset(ImVec4* colors) {
+    static const ImGuiCol derived[] = {
+        ImGuiCol_BorderShadow, ImGuiCol_CheckboxSelectedBg,
+        ImGuiCol_DragDropTarget, ImGuiCol_DragDropTargetBg,
+        ImGuiCol_InputTextCursor, ImGuiCol_ModalWindowDimBg,
+        ImGuiCol_NavCursor, ImGuiCol_NavWindowingDimBg,
+        ImGuiCol_NavWindowingHighlight, ImGuiCol_PlotHistogram,
+        ImGuiCol_PlotHistogramHovered, ImGuiCol_PlotLines,
+        ImGuiCol_PlotLinesHovered, ImGuiCol_ResizeGrip,
+        ImGuiCol_ResizeGripActive, ImGuiCol_ResizeGripHovered,
+        ImGuiCol_ScrollbarBg, ImGuiCol_ScrollbarGrab,
+        ImGuiCol_ScrollbarGrabActive, ImGuiCol_ScrollbarGrabHovered,
+        ImGuiCol_Separator, ImGuiCol_SeparatorActive,
+        ImGuiCol_SeparatorHovered, ImGuiCol_TabDimmed,
+        ImGuiCol_TabDimmedSelected, ImGuiCol_TabDimmedSelectedOverline,
+        ImGuiCol_TabSelectedOverline, ImGuiCol_TableBorderLight,
+        ImGuiCol_TableBorderStrong, ImGuiCol_TableHeaderBg,
+        ImGuiCol_TableRowBg, ImGuiCol_TableRowBgAlt, ImGuiCol_TextLink,
+        ImGuiCol_TextSelectedBg, ImGuiCol_TitleBgCollapsed,
+        ImGuiCol_TreeLines, ImGuiCol_UnsavedMarker,
+#ifdef IMGUI_HAS_DOCK
+        ImGuiCol_DockingPreview, ImGuiCol_DockingEmptyBg,
+#endif
+    };
+
+    for (ImGuiCol slot : derived) {
+        colors[slot] = ImVec4(themederive::UNSET_MARKER, 0.0f, 0.0f, 0.0f);
+    }
+}
+
+// Fills in every derived slot the theme left alone.
+inline void DeriveRemainingThemeColors(ImGuiStyle& style) {
+    using namespace themederive;
+    ImVec4* colors = style.Colors;
+
+    const ImVec4 windowBg   = colors[ImGuiCol_WindowBg];
+    const ImVec4 childBg    = colors[ImGuiCol_ChildBg];
+    const ImVec4 border     = colors[ImGuiCol_Border];
+    const ImVec4 button     = colors[ImGuiCol_Button];
+    const ImVec4 buttonHov  = colors[ImGuiCol_ButtonHovered];
+    const ImVec4 buttonAct  = colors[ImGuiCol_ButtonActive];
+    const ImVec4 header     = colors[ImGuiCol_Header];
+    const ImVec4 headerHov  = colors[ImGuiCol_HeaderHovered];
+    const ImVec4 headerAct  = colors[ImGuiCol_HeaderActive];
+    const ImVec4 checkMark  = colors[ImGuiCol_CheckMark];
+    const ImVec4 tab        = colors[ImGuiCol_Tab];
+    const ImVec4 tabActive  = colors[ImGuiCol_TabSelected];
+    const ImVec4 titleBg    = colors[ImGuiCol_TitleBg];
+    const ImVec4 text       = colors[ImGuiCol_Text];
+
+    // Which way "away from the background" points. Derived furniture has to
+    // move darker on a light theme and lighter on a dark one, or it vanishes.
+    const bool isLight = luminance(windowBg) > 0.5f;
+    const float away = isLight ? -0.14f : 0.14f;
+
+    auto set = [&](ImGuiCol slot, const ImVec4& value) {
+        if (isUnset(colors[slot])) colors[slot] = value;
+    };
+
+    // Scrollbars follow the button family: they are the other thing you grab.
+    set(ImGuiCol_ScrollbarBg, withAlpha(shift(childBg, away * 0.3f), 0.55f));
+    set(ImGuiCol_ScrollbarGrab, withAlpha(button, 0.80f));
+    set(ImGuiCol_ScrollbarGrabHovered, withAlpha(buttonHov, 0.95f));
+    set(ImGuiCol_ScrollbarGrabActive, withAlpha(buttonAct, 1.00f));
+
+    // Separators are borders that got a hover state.
+    set(ImGuiCol_Separator, withAlpha(border, border.w * 0.70f));
+    set(ImGuiCol_SeparatorHovered, withAlpha(headerHov, 0.78f));
+    set(ImGuiCol_SeparatorActive, withAlpha(headerAct, 1.00f));
+
+    // Resize grips are near-invisible until you reach for them.
+    set(ImGuiCol_ResizeGrip, withAlpha(button, 0.20f));
+    set(ImGuiCol_ResizeGripHovered, withAlpha(button, 0.55f));
+    set(ImGuiCol_ResizeGripActive, withAlpha(button, 0.85f));
+
+    // Tables. Row striping is a small luminance step, not a colour change -
+    // a tinted stripe fights every palette it lands in.
+    set(ImGuiCol_TableHeaderBg, withAlpha(header, 1.00f));
+    set(ImGuiCol_TableBorderStrong, withAlpha(border, 1.00f));
+    set(ImGuiCol_TableBorderLight, withAlpha(border, border.w * 0.45f));
+    set(ImGuiCol_TableRowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    set(ImGuiCol_TableRowBgAlt, withAlpha(shift(windowBg, away * 0.3f), 0.55f));
+
+    // Plots carry the spectrum analyser and the scope, so they take the
+    // accent rather than a neutral - they have to be legible, not tasteful.
+    set(ImGuiCol_PlotLines, checkMark);
+    set(ImGuiCol_PlotLinesHovered, shift(checkMark, 0.20f));
+    set(ImGuiCol_PlotHistogram, checkMark);
+    set(ImGuiCol_PlotHistogramHovered, shift(checkMark, 0.20f));
+
+    set(ImGuiCol_TextSelectedBg, withAlpha(header, 0.45f));
+
+    // A dimmed tab is the same tab, pulled toward the window behind it.
+    set(ImGuiCol_TabDimmed, mix(tab, windowBg, 0.35f));
+    set(ImGuiCol_TabDimmedSelected, mix(tabActive, windowBg, 0.25f));
+    set(ImGuiCol_TabSelectedOverline, checkMark);
+    set(ImGuiCol_TabDimmedSelectedOverline, withAlpha(checkMark, 0.45f));
+
+    set(ImGuiCol_TitleBgCollapsed, withAlpha(titleBg, 0.75f));
+
+    // Everything that means "this one, right here" uses the accent the theme
+    // already defined, so focus reads the same way everywhere.
+    set(ImGuiCol_NavCursor, checkMark);
+    set(ImGuiCol_DragDropTarget, checkMark);
+    set(ImGuiCol_DragDropTargetBg, withAlpha(checkMark, 0.20f));
+    set(ImGuiCol_TextLink, checkMark);
+    set(ImGuiCol_UnsavedMarker, checkMark);
+    set(ImGuiCol_InputTextCursor, checkMark);
+    set(ImGuiCol_CheckboxSelectedBg, withAlpha(checkMark, 0.18f));
+    set(ImGuiCol_NavWindowingHighlight, withAlpha(text, 0.70f));
+
+    // A light theme needs a gentler dim, or the modal layer turns the page
+    // into mud.
+    const float dim = isLight ? 0.25f : 0.45f;
+    set(ImGuiCol_ModalWindowDimBg, ImVec4(0.0f, 0.0f, 0.0f, dim));
+    set(ImGuiCol_NavWindowingDimBg, ImVec4(0.0f, 0.0f, 0.0f, dim * 0.55f));
+
+    // Shadows fight the flat look the shared metrics block establishes.
+    set(ImGuiCol_BorderShadow, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    set(ImGuiCol_TreeLines, withAlpha(border, border.w * 0.60f));
+
+#ifdef IMGUI_HAS_DOCK
+    set(ImGuiCol_DockingPreview, withAlpha(headerAct, 0.70f));
+    set(ImGuiCol_DockingEmptyBg, windowBg);
+#endif
+
+    // Anything still holding the sentinel would render as a negative colour.
+    // Nothing should reach here; fall back to the window background if it does.
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+        if (isUnset(colors[i])) colors[i] = windowBg;
+    }
+}
+
 // Apply a theme to ImGui style
 inline void ApplyTheme(Theme theme) {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
+
+    // Mark the derived slots before the switch, so a theme that wants to set
+    // one of them explicitly simply wins - see DeriveRemainingThemeColors.
+    MarkDerivedThemeColorsUnset(colors);
 
     // ------------------------------------------------------------------
     // Shared geometry, applied under every theme.
@@ -2949,6 +3142,9 @@ inline void ApplyTheme(Theme theme) {
             g_PianoRollColors.background = IM_COL32(238, 239, 243, 255);
             break;
     }
+
+    // Derived last, because it reads the palette the theme just chose.
+    DeriveRemainingThemeColors(style);
 }
 
 // Initialize Matrix rain effect

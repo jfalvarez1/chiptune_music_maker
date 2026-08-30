@@ -381,6 +381,15 @@ private:
                 continue;
             }
 
+            // The channel index was not checked, and it indexes an array of
+            // eight 35KB synths - so a clip naming channel 99 wrote megabytes
+            // past the end of the array from the audio thread. Loading a file
+            // drops such clips, but a project built in memory never passes
+            // through that, so the check belongs here as well.
+            if (clip.channelIndex < 0 || clip.channelIndex >= MAX_CHANNELS) {
+                continue;
+            }
+
             const auto& pattern = m_project->patterns[clip.patternIndex];
 
             // Check if this clip is active in current beat range
