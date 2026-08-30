@@ -144,6 +144,11 @@ struct CaptureRequest {
     std::vector<std::string> showWindows;
     bool selectNotes = false;    // pre-select notes, so selection styling shows
     bool startPlaying = false;   // run the transport, so meters and playhead move
+
+    // Capture normally ignores imgui.ini so a gallery shot looks the same
+    // wherever it runs. This opts back in, so the layout-repair path - which
+    // only triggers when a saved layout exists - can actually be tested.
+    bool keepSavedLayout = false;
     int framesToWait = 90;      // ~1.5s at 60fps, enough for meters to settle
     int windowWidth = 1600;
     int windowHeight = 900;
@@ -187,6 +192,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.selectNotes = true;
         } else if (arg == "--playing") {
             request.startPlaying = true;
+        } else if (arg == "--keep-ini") {
+            request.keepSavedLayout = true;
         } else if (arg == "--show") {
             std::string window;
             if (next(window)) request.showWindows.push_back(window);

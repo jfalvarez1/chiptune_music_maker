@@ -84,6 +84,17 @@ foreach ($panel in $panels) {
 [void]$cases.Add(@{ name = "tall-window";     args = "--view mixer --demo";     w = 900;  h = 1200 })
 [void]$cases.Add(@{ name = "single-frame";    args = "--view pianoroll --demo"; frames = 2 })
 
+# Upgrading from a pre-docking build leaves an imgui.ini full of window
+# positions with no DockId assignments, so every panel restores floating and
+# the dock space sits empty behind them. The app detects that and rebuilds.
+# This is the only case that must run WITH a saved layout, so it gets its own
+# working directory with the broken ini staged into it.
+[void]$cases.Add(@{
+    name    = "legacy-layout-repair"
+    args    = "--demo --keep-ini"
+    fixture = "tests/fixtures/legacy-predocking-imgui.ini"
+})
+
 # ---------------------------------------------------------------------------
 # Frame analysis
 # ---------------------------------------------------------------------------
@@ -153,7 +164,19 @@ foreach ($case in $cases) {
 
     $argList = "--capture `"$bmp`" --frames $f --size $w $h $($case.args)"
 
-    $process = Start-Process -FilePath $Exe -ArgumentList $argList -PassThru
+    # A case naming a fixture runs in its own directory with that ini staged
+    # as imgui.ini, so it exercises the saved-layout path without touching
+    # the repo's own layout file.
+    $workDir = (Get-Location).Path
+    if ($case.ContainsKey("fixture")) {
+        $workDir = Join-Path $temp "$name-cwd"
+        if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+        Copy-Item $case.fixture (Join-Path $workDir "imgui.ini") -Force
+    }
+
+    $process = Start-Process -FilePath (Resolve-Path $Exe) -ArgumentList $argList `
+                             -WorkingDirectory $workDir -PassThru
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         [void]$failed.Add("$name : timed out after ${TimeoutSeconds}s")

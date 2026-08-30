@@ -36,6 +36,8 @@
 
 #include <cstdio>
 #include <memory>
+#include <atomic>
+#include <vector>
 
 // OpenGL function loading
 typedef HGLRC (WINAPI* PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC, HGLRC, const int*);
@@ -47,7 +49,18 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 // Global state
 static bool g_Running = true;
-static ChiptuneTracker::Sequencer* g_Sequencer = nullptr;
+
+// Read by the audio thread, written by the main thread. Atomic because a
+// plain pointer shared across threads is a data race regardless of how
+// benign it looks on x86.
+static std::atomic<ChiptuneTracker::Sequencer*> g_Sequencer{nullptr};
+
+// Deinterleave scratch for the audio callback. Allocated once at startup:
+// the callback used to build two std::vectors per call, which is roughly 86
+// heap allocations a second on the real-time thread, and malloc can block.
+static constexpr ma_uint32 MAX_AUDIO_FRAMES = 4096;
+static std::vector<float> g_AudioLeft;
+static std::vector<float> g_AudioRight;
 
 // Screenshot state. F12 captures the rendered frame to screenshots/.
 static bool g_CaptureRequested = false;
@@ -57,20 +70,24 @@ static int g_CaptureCounter = 0;
 // Miniaudio Callback
 // ============================================================================
 void audioCallback(ma_device* pDevice, void* pOutput, const void* /*pInput*/, ma_uint32 frameCount) {
+    (void)pDevice;
     float* output = static_cast<float*>(pOutput);
 
-    if (g_Sequencer) {
-        // Deinterleave for our sequencer
-        std::vector<float> left(frameCount), right(frameCount);
-        g_Sequencer->process(left.data(), right.data(), frameCount);
+    ChiptuneTracker::Sequencer* sequencer = g_Sequencer.load(std::memory_order_acquire);
 
-        // Interleave for miniaudio
-        for (ma_uint32 i = 0; i < frameCount; ++i) {
-            output[i * 2 + 0] = left[i];
-            output[i * 2 + 1] = right[i];
-        }
-    } else {
-        std::fill_n(output, frameCount * 2, 0.0f);
+    // Silence if we have no sequencer, or if the device asked for a block
+    // larger than the scratch buffers - better a gap than a heap allocation
+    // on this thread or a write past the end of the buffer.
+    if (sequencer == nullptr || frameCount > g_AudioLeft.size()) {
+        std::fill_n(output, static_cast<size_t>(frameCount) * 2, 0.0f);
+        return;
+    }
+
+    sequencer->process(g_AudioLeft.data(), g_AudioRight.data(), frameCount);
+
+    for (ma_uint32 i = 0; i < frameCount; ++i) {
+        output[i * 2 + 0] = g_AudioLeft[i];
+        output[i * 2 + 1] = g_AudioRight[i];
     }
 }
 
@@ -199,7 +216,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // happens to have saved. Disabling the ini file makes capture mode use
     // the app's own default positions, so a gallery shot looks the same
     // wherever it is generated.
-    if (captureRequest.enabled) {
+    if (captureRequest.enabled && !captureRequest.keepSavedLayout) {
         io.IniFilename = nullptr;
     }
 
@@ -214,6 +231,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // Initialize Audio
     // ========================================================================
     printf("Initializing audio...\n");
+
+    // Sized before the device exists, so the first callback already has it.
+    g_AudioLeft.assign(MAX_AUDIO_FRAMES, 0.0f);
+    g_AudioRight.assign(MAX_AUDIO_FRAMES, 0.0f);
+
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
     config.playback.format   = ma_format_f32;
     config.playback.channels = 2;
@@ -248,7 +270,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     sequencer.setProject(&project);
     sequencer.setLoop(false, 0.0f, 16.0f);  // Don't loop by default - stop at end
 
-    g_Sequencer = &sequencer;
+    g_Sequencer.store(&sequencer, std::memory_order_release);
 
     // Start with empty pattern (no demo noise)
     uiState.selectedPattern = 0;
@@ -260,7 +282,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     {
         const bool hasSavedLayout = (io.IniFilename != nullptr) &&
                                     (GetFileAttributesA(io.IniFilename) != INVALID_FILE_ATTRIBUTES);
-        if (!hasSavedLayout || captureRequest.enabled) {
+        // --keep-ini deliberately keeps whatever layout is on disk, so the
+        // repair path has something broken to repair.
+        if (!hasSavedLayout || (captureRequest.enabled && !captureRequest.keepSavedLayout)) {
             uiState.pendingLayoutFrames = 3;
         }
     }
@@ -472,6 +496,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // panels have somewhere to dock into on the frame they first appear.
         const ImGuiID dockspaceId = ChiptuneTracker::BeginDockSpace();
 
+        // Repair an unusable saved layout, once, a couple of frames in.
+        //
+        // Upgrading from a pre-docking version leaves an imgui.ini full of
+        // window positions but with no DockId assignments, so every panel
+        // is restored floating at its old coordinates and the dock space
+        // sits empty behind them. Merely having an ini used to be enough to
+        // skip the default layout, so nothing corrected it.
+        //
+        // Frame 2, because ImGui applies the ini during the first NewFrame
+        // and the windows have to have been submitted once to be counted.
+        static int layoutHealthCheckFrame = 0;
+        if (layoutHealthCheckFrame >= 0) {
+            if (++layoutHealthCheckFrame > 2) {
+                if (ChiptuneTracker::IsDockSpaceEmpty(dockspaceId)) {
+                    printf("Saved layout has no docked panels - rebuilding.\n");
+                    uiState.pendingLayoutFrames = 2;
+                }
+                layoutHealthCheckFrame = -1;   // check once, never again
+            }
+        }
+
         // Rebuilding the dock tree is a one-shot operation, not per-frame.
         if (uiState.pendingLayoutFrames > 0) {
             ChiptuneTracker::BuildWorkspaceLayout(
@@ -670,8 +715,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // ========================================================================
     // Cleanup
     // ========================================================================
-    g_Sequencer = nullptr;
+    // Order matters: stop the device before retiring the pointer, so no
+    // callback can be in flight against state the main thread is dismantling.
     ma_device_uninit(&device);
+    g_Sequencer.store(nullptr, std::memory_order_release);
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplWin32_Shutdown();

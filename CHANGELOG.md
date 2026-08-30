@@ -7,6 +7,43 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.4.1] - 2026-08-30
+
+### Fixed
+
+- **Upgrading from a pre-docking build left every panel scattered.** An
+  `imgui.ini` written before docking existed contains positions for every
+  window but no `DockId` assignments, so ImGui restored them as floating
+  windows at their old coordinates while the dock space sat empty behind
+  them. The app only applied its default layout when *no* ini existed, so
+  nothing corrected it and there was no sign that `Ctrl+0` would.
+
+  It now checks the dock tree itself a couple of frames in, and rebuilds the
+  layout if nothing is docked. Checking the tree rather than sniffing the
+  file also catches an ini truncated mid-write or hand-edited into
+  uselessness.
+
+- **The audio callback allocated on every call.** It built two `std::vector`s
+  per block - roughly 86 heap allocations a second on the real-time thread -
+  and `malloc` can block on a lock, which is exactly what a real-time thread
+  must not do. The README's "zero allocations in the audio thread" was not
+  true. The scratch buffers are now allocated once at startup, and an
+  unexpectedly large block outputs silence rather than allocating or
+  overrunning.
+
+- **The sequencer pointer was a data race.** A plain pointer written by the
+  main thread and read by the audio thread. Now atomic, and shutdown stops
+  the device *before* retiring the pointer instead of after, so no callback
+  can be in flight against state the main thread is dismantling.
+
+### Added
+
+- `--keep-ini` for capture mode, so the saved-layout path can be tested at
+  all, and a UI smoke case that stages a real pre-docking `imgui.ini` and
+  asserts the app recovers from it.
+
+---
+
 ## [3.4.0] - 2026-08-30 - "Legible"
 
 ### Fixed

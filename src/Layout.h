@@ -102,6 +102,26 @@ inline ImGuiID BeginDockSpace() {
     return dockspaceId;
 }
 
+// Is the dock space empty - no windows docked into it anywhere?
+//
+// This is how an upgrade from a pre-docking version presents. The saved
+// imgui.ini has positions for every window but no DockId assignments, so
+// ImGui restores them as floating windows scattered at their old
+// coordinates and the dock space sits empty behind them. The app used to
+// skip its default layout whenever *any* ini existed, so there was nothing
+// to correct it and no sign that Ctrl+0 would.
+//
+// Checking the tree rather than sniffing the file means this also catches
+// an ini truncated mid-write, or one hand-edited into uselessness.
+inline bool IsDockSpaceEmpty(ImGuiID dockspaceId) {
+    ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspaceId);
+    if (node == nullptr) return true;
+
+    // A node holding windows, or split into children that might, is fine.
+    if (node->IsSplitNode()) return false;
+    return node->Windows.Size == 0;
+}
+
 // ============================================================================
 // Workspace layouts
 //
