@@ -1282,6 +1282,16 @@ struct UIState {
     // Tracker
     int trackerRowHighlight = 4;    // Highlight every N rows
 
+    // Tracker editing. The view used to be read-only - and wrong, printing
+    // the same note into all eight columns - so none of this existed.
+    int trackerCursorRow = 0;
+    int trackerCursorChannel = 0;
+    bool trackerEditMode = false;   // Space toggles; off means navigate only
+    int trackerEditStep = 1;        // rows the cursor advances after entry
+    int trackerOctave = 4;          // base octave for keyboard note entry
+    int trackerRowsPerBeat = 4;     // 4 = one row per 1/16 note
+    bool trackerFollowPlayhead = true;
+
     // Selection
     bool hasSelection = false;
     float selectionStart = 0.0f;

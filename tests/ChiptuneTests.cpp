@@ -28,6 +28,7 @@
 #include "NoteTransforms.h"
 #include "GhostNotes.h"
 #include "ChipMix.h"
+#include "TrackerGrid.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -4643,6 +4644,299 @@ static void testChipMixReachesAudio() {
 }
 
 // ============================================================================
+// 36. Tracker grid
+// ============================================================================
+static void testTrackerGrid() {
+    beginTest("Tracker grid");
+
+    // Two patterns on two channels, so the columns can be told apart. The
+    // old view could not: it searched the selected pattern for the first
+    // note matching the step and printed it into all eight columns.
+    auto makeSong = []() {
+        Project p;
+        p.beatsPerMeasure = 4;
+        p.songLength = 16.0f;
+        p.patterns.clear();
+
+        Pattern lead;                       // pattern 0
+        lead.name = "Lead";
+        lead.length = 4;
+        for (int i = 0; i < 4; ++i) {
+            Note n;
+            n.pitch = 72 + i;
+            n.startTime = float(i);
+            n.duration = 0.25f;
+            n.oscillatorType = OscillatorType::Pulse;
+            lead.notes.push_back(n);
+        }
+        p.patterns.push_back(lead);
+
+        Pattern bass;                       // pattern 1
+        bass.name = "Bass";
+        bass.length = 4;
+        for (int i = 0; i < 2; ++i) {
+            Note n;
+            n.pitch = 36 + i;
+            n.startTime = float(i) * 2.0f;
+            n.duration = 0.25f;
+            n.oscillatorType = OscillatorType::Triangle;
+            bass.notes.push_back(n);
+        }
+        p.patterns.push_back(bass);
+
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});   // lead on ch 0
+        p.arrangement.push_back(Clip{1, 2, 0.0f, 4.0f, 0});   // bass on ch 2
+        return p;
+    };
+
+    const float STEP = 0.25f;               // one row per 1/16 note
+
+    // ---- The regression this whole file exists for -----------------------
+    {
+        const Project p = makeSong();
+
+        const TrackerCell ch0 = readTrackerCell(p, 0, 0.0f, STEP);
+        const TrackerCell ch2 = readTrackerCell(p, 2, 0.0f, STEP);
+
+        check(ch0.hasNote && ch0.pitch == 72,
+              "channel 0 shows its own pattern's note");
+        check(ch2.hasNote && ch2.pitch == 36,
+              "channel 2 shows a different note - the old view printed the same "
+              "note into every column, ignoring channel entirely");
+        check(ch0.pitch != ch2.pitch, "the two columns genuinely differ");
+
+        // A channel with nothing placed on it must be empty, not a copy of
+        // whatever channel 0 happens to hold.
+        const TrackerCell ch5 = readTrackerCell(p, 5, 0.0f, STEP);
+        check(!ch5.hasNote && ch5.patternIndex < 0,
+              "a channel with no clip shows nothing at all");
+    }
+
+    // ---- Resolving which pattern is playing ------------------------------
+    {
+        const Project p = makeSong();
+
+        TrackerSlot slot = resolveTrackerSlot(p, 0, 2.0f);
+        check(slot.valid && slot.patternIndex == 0,
+              "the clip covering this beat is found");
+        check(std::fabs(slot.localBeat - 2.0f) < 1e-5f,
+              "and the beat is translated into the pattern's own timebase");
+
+        check(!resolveTrackerSlot(p, 0, 8.0f).valid,
+              "a beat past the end of every clip resolves to nothing");
+        check(!resolveTrackerSlot(p, 1, 0.0f).valid,
+              "a channel with no clip resolves to nothing");
+        check(!resolveTrackerSlot(p, -1, 0.0f).valid, "a negative channel is safe");
+        check(!resolveTrackerSlot(p, 99, 0.0f).valid, "an absurd channel is safe");
+        check(!resolveTrackerSlot(p, 0,
+                  std::numeric_limits<float>::quiet_NaN()).valid,
+              "a NaN beat is safe");
+
+        // Half-open in time: the clip owns its start and not its end.
+        check(resolveTrackerSlot(p, 0, 0.0f).valid, "the clip owns its first beat");
+        check(!resolveTrackerSlot(p, 0, 4.0f).valid,
+              "and not the beat where it ends, which belongs to whatever is next");
+    }
+
+    // ---- Overlapping clips ------------------------------------------------
+    {
+        Project p = makeSong();
+        p.arrangement.push_back(Clip{1, 0, 0.0f, 4.0f, 0});   // over the lead
+
+        const TrackerSlot slot = resolveTrackerSlot(p, 0, 0.0f);
+        check(slot.valid && slot.patternIndex == 1,
+              "where two clips overlap on a channel the later one is shown - the "
+              "grid can only draw one, and the newest is the better guess");
+    }
+
+    // ---- A row owns a half-open span -------------------------------------
+    {
+        Pattern pattern;
+        Note a; a.pitch = 60; a.startTime = 0.0f;   pattern.notes.push_back(a);
+        Note b; b.pitch = 62; b.startTime = 0.25f;  pattern.notes.push_back(b);
+
+        check(findNoteInStep(pattern, 0.0f, 0.25f) == 0,
+              "the first row holds the note at its start");
+        check(findNoteInStep(pattern, 0.25f, 0.25f) == 1,
+              "a note exactly on the boundary belongs to the later row, so no "
+              "note is ever shown in two places");
+        check(findNoteInStep(pattern, 0.5f, 0.25f) == -1, "an empty row is empty");
+        check(findNoteInStep(pattern, 0.0f, 0.0f) == -1,
+              "a zero-width row cannot contain anything");
+    }
+
+    // ---- Writing -----------------------------------------------------------
+    {
+        Project p = makeSong();
+        const size_t patternsBefore = p.patterns.size();
+
+        const int written = writeTrackerNote(p, 0, 1.25f, STEP, 64,
+                                             OscillatorType::Pulse);
+        check(written >= 0, "a note can be typed into an existing clip");
+        check(p.patterns.size() == patternsBefore,
+              "and doing so creates no new pattern");
+
+        const TrackerCell cell = readTrackerCell(p, 0, 1.25f, STEP);
+        check(cell.hasNote && cell.pitch == 64, "the note reads back from the grid");
+    }
+
+    // ---- Typing over a row replaces it ------------------------------------
+    {
+        Project p = makeSong();
+        const size_t notesBefore = p.patterns[0].notes.size();
+
+        writeTrackerNote(p, 0, 0.0f, STEP, 65, OscillatorType::Pulse);
+        check(p.patterns[0].notes.size() == notesBefore,
+              "typing over an occupied row replaces rather than stacks - a "
+              "column holds one note per row by definition");
+        check(readTrackerCell(p, 0, 0.0f, STEP).pitch == 65,
+              "and the new pitch is what shows");
+    }
+
+    // ---- Typing where nothing is placed builds somewhere to put it --------
+    {
+        Project p = makeSong();
+        const size_t patternsBefore = p.patterns.size();
+        const size_t clipsBefore = p.arrangement.size();
+
+        const int written = writeTrackerNote(p, 5, 9.5f, STEP, 60,
+                                             OscillatorType::Noise);
+        check(written >= 0, "a note can be typed into empty space");
+        check(p.patterns.size() == patternsBefore + 1,
+              "which creates a pattern to hold it");
+        check(p.arrangement.size() == clipsBefore + 1,
+              "and a clip to place that pattern on the channel");
+
+        const TrackerCell cell = readTrackerCell(p, 5, 9.5f, STEP);
+        check(cell.hasNote && cell.pitch == 60,
+              "and the note is then readable at the row it was typed on");
+
+        // The created clip has to be bar-aligned, or the arrangement fills up
+        // with clips at arbitrary offsets.
+        const Clip& created = p.arrangement.back();
+        check(std::fabs(created.startBeat - 8.0f) < 1e-5f,
+              "the created clip snaps to the bar (started at " +
+              std::to_string(created.startBeat) + ")");
+        check(created.channelIndex == 5, "on the channel that was typed into");
+    }
+
+    // ---- A note past the pattern's stated end extends it ------------------
+    //
+    // Otherwise it is written, saved, and never heard.
+    {
+        Project p = makeSong();
+        p.patterns[0].length = 1;
+
+        // 3.5, not 3.0: the lead already has a note on every beat, and
+        // writing onto an occupied row replaces it and returns early - which
+        // would test the replace path rather than the growth.
+        writeTrackerNote(p, 0, 3.5f, STEP, 70, OscillatorType::Pulse);
+        check(p.patterns[0].length > 1,
+              "the pattern grows to contain a note typed past its end (length " +
+              std::to_string(p.patterns[0].length) + ")");
+    }
+
+    // ---- Refusals ---------------------------------------------------------
+    {
+        Project p = makeSong();
+        check(writeTrackerNote(p, -1, 0.0f, STEP, 60, OscillatorType::Pulse) < 0,
+              "a negative channel is refused");
+        check(writeTrackerNote(p, 99, 0.0f, STEP, 60, OscillatorType::Pulse) < 0,
+              "an out-of-range channel is refused");
+        check(writeTrackerNote(p, 0, 0.0f, STEP, -5, OscillatorType::Pulse) < 0,
+              "an impossible pitch is refused");
+        check(writeTrackerNote(p, 0, 0.0f, STEP, 900, OscillatorType::Pulse) < 0,
+              "a pitch above MIDI range is refused");
+        check(writeTrackerNote(p, 0, -1.0f, STEP, 60, OscillatorType::Pulse) < 0,
+              "a negative beat is refused");
+        check(writeTrackerNote(p, 0, 0.0f, 0.0f, 60, OscillatorType::Pulse) < 0,
+              "a zero-width row is refused");
+    }
+
+    // ---- The pattern budget is finite -------------------------------------
+    {
+        Project p;
+        p.patterns.clear();
+        p.arrangement.clear();
+        for (int i = 0; i < Project::MAX_PATTERNS; ++i) p.patterns.push_back(Pattern());
+
+        const int written = writeTrackerNote(p, 3, 100.0f, STEP, 60,
+                                             OscillatorType::Pulse);
+        check(written < 0,
+              "with every pattern slot taken, typing into empty space fails "
+              "rather than corrupting the arrangement");
+        check(p.patterns.size() == static_cast<size_t>(Project::MAX_PATTERNS),
+              "and no pattern is created");
+    }
+
+    // ---- Clearing ---------------------------------------------------------
+    {
+        Project p = makeSong();
+        check(clearTrackerNote(p, 0, 0.0f, STEP), "an occupied row can be cleared");
+        check(!readTrackerCell(p, 0, 0.0f, STEP).hasNote, "and is then empty");
+
+        check(!clearTrackerNote(p, 0, 0.25f, STEP),
+              "clearing an empty row reports that nothing happened, so the "
+              "caller need not spend an undo step on it");
+        check(!clearTrackerNote(p, 6, 0.0f, STEP),
+              "clearing a channel with no clip is harmless");
+    }
+
+    // ---- How many rows the grid spans -------------------------------------
+    {
+        Project p = makeSong();
+        check(trackerRowCount(p, 0.25f) == 64,
+              "16 beats at a quarter-beat per row is 64 rows (got " +
+              std::to_string(trackerRowCount(p, 0.25f)) + ")");
+        check(trackerRowCount(p, 1.0f) == 16, "and 16 rows at one beat per row");
+
+        // A clip dragged past the song length must still be reachable, or
+        // notes exist that cannot be edited.
+        p.arrangement.push_back(Clip{0, 4, 60.0f, 4.0f, 0});
+        check(trackerRowCount(p, 1.0f) >= 64,
+              "the grid extends to cover a clip beyond the song length (got " +
+              std::to_string(trackerRowCount(p, 1.0f)) + ")");
+
+        check(trackerRowCount(p, 0.0f) == 0, "a zero row height yields no rows");
+    }
+
+    // ---- What is typed is what plays --------------------------------------
+    //
+    // The grid writes into the same patterns the sequencer reads, so a note
+    // typed into the tracker has to come out of the speakers.
+    {
+        Project p;
+        p.bpm = 120.0f;
+        p.masterLimiterEnabled = false;
+        p.patterns.clear();
+        p.arrangement.clear();
+        p.songLength = 8.0f;
+
+        const int written = writeTrackerNote(p, 0, 0.0f, 0.5f, 69,
+                                             OscillatorType::Pulse);
+        check(written >= 0, "a note is typed into an empty project");
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.updateChannelConfigs();
+        seq.play();
+
+        std::vector<float> l(512), r(512);
+        double energy = 0.0;
+        for (int b = 0; b < 40; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            for (float v : l) energy += double(v) * double(v);
+        }
+        check(energy > 1.0,
+              "and it sounds - the tracker writes into the same patterns the "
+              "sequencer plays (energy " + std::to_string(energy) + ")");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -4717,6 +5011,7 @@ int main(int argc, char** argv) {
     testChipMix();
     testChipFilters();
     testChipMixReachesAudio();
+    testTrackerGrid();
     testLongRunStability();
 
     std::printf("\n==========================\n");

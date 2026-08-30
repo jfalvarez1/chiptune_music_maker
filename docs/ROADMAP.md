@@ -279,7 +279,7 @@ audit of this codebase, which is reproducible by anyone with `grep`.
 
 ### Next, in rough value order
 
-- [ ] **G1. Make the tracker view editable.** `DrawTrackerView` is read-only
+- [x] **G1. Make the tracker view editable.** `DrawTrackerView` is read-only
       *and wrong*: it breaks on the first note whose `startTime` matches the
       step, ignoring channel, so it prints the same note into all eight
       columns. Its own comment says "This is a simplification". The app is

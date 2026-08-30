@@ -111,6 +111,14 @@ foreach ($panel in $panels) {
     args = "--demo --workspace mix --chip-panel"
 })
 
+# The tracker used to print the same note into all eight columns. With the
+# demo loaded, each channel now carries a different part, so this shot fails
+# visibly if the columns ever collapse back into one another.
+[void]$cases.Add(@{
+    name = "tracker-grid"
+    args = "--demo --view tracker"
+})
+
 # working directory with the broken ini staged into it.
 [void]$cases.Add(@{
     name     = "legacy-layout-repair"

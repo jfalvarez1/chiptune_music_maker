@@ -19,6 +19,7 @@
 #include "Scales.h"
 #include "NoteTransforms.h"
 #include "GhostNotes.h"
+#include "TrackerGrid.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -7807,76 +7808,297 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 // ============================================================================
 // Tracker View
 // ============================================================================
+// A tracker row is a moment in the song, and each column asks what is
+// playing on that channel at that moment. That is what a tracker has always
+// been - the order list and the pattern data seen at once - and it is the
+// only reading the data model supports, since a Pattern has no channel and
+// neither does a Note. See TrackerGrid.h.
+//
+// The previous version searched the selected pattern for the first note whose
+// start rounded to the step and printed it into all eight columns, ignoring
+// channel. It was read-only, and its own comment called itself a
+// simplification.
 inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SetNextWindowPos(ImVec2(930, 645), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(480, 180), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(700, 400), ImGuiCond_FirstUseEver);
     ImGui::Begin("Tracker", nullptr, ImGuiWindowFlags_HorizontalScrollbar);
 
-    if (ui.selectedPattern < 0 || ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
-        ImGui::Text("No pattern selected");
-        ImGui::End();
-        return;
+    ui.trackerRowsPerBeat = std::clamp(ui.trackerRowsPerBeat, 1, 16);
+    ui.trackerOctave = std::clamp(ui.trackerOctave, 0, 9);
+    ui.trackerEditStep = std::clamp(ui.trackerEditStep, 0, 16);
+
+    const float stepBeats = 1.0f / static_cast<float>(ui.trackerRowsPerBeat);
+    const int rowCount = trackerRowCount(project, stepBeats);
+
+    // ========================================================================
+    // Toolbar
+    // ========================================================================
+    {
+        const bool editing = ui.trackerEditMode;
+        if (editing) {
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(180, 50, 60, 255));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(210, 70, 80, 255));
+        }
+        if (ImGui::Button(editing ? "EDIT ON" : "edit off", ImVec2(90, 0))) {
+            ui.trackerEditMode = !ui.trackerEditMode;
+        }
+        if (editing) ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Space toggles edit mode.\nWith it on, the letter keys write notes.");
+        }
     }
 
-    Pattern& pattern = project.patterns[ui.selectedPattern];
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(70);
+    ImGui::DragInt("Oct", &ui.trackerOctave, 0.1f, 0, 9);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Base octave for typed notes");
 
-    // Header
-    ImGui::Text("Pattern: %s  |  Length: %d steps", pattern.name.c_str(), pattern.length);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(70);
+    ImGui::DragInt("Step", &ui.trackerEditStep, 0.1f, 0, 16);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Rows the cursor advances after entering a note.\n0 keeps it in place.");
+    }
+
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
+    {
+        static const int RESOLUTIONS[] = {1, 2, 4, 8, 16};
+        static const char* RES_LABELS[] = {"1/4", "1/8", "1/16", "1/32", "1/64"};
+        int resIndex = 2;
+        for (int i = 0; i < 5; ++i) {
+            if (RESOLUTIONS[i] == ui.trackerRowsPerBeat) resIndex = i;
+        }
+        if (ImGui::Combo("Res", &resIndex, RES_LABELS, 5)) {
+            ui.trackerRowsPerBeat = RESOLUTIONS[resIndex];
+        }
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much time one row covers");
+
+    ImGui::SameLine();
+    ImGui::Checkbox("Follow", &ui.trackerFollowPlayhead);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the cursor with the playhead");
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("| A-K = notes, W/E/T/Y/U = sharps, Del clears");
+
     ImGui::Separator();
 
+    // ========================================================================
     // Column headers
-    ImGui::Text("Step");
-    for (int ch = 0; ch < 8; ++ch) {
-        ImGui::SameLine(80 + ch * 100);
-        ImGui::TextColored(ImVec4(
-            ((CHANNEL_COLORS[ch] >> 0) & 0xFF) / 255.0f,
-            ((CHANNEL_COLORS[ch] >> 8) & 0xFF) / 255.0f,
-            ((CHANNEL_COLORS[ch] >> 16) & 0xFF) / 255.0f,
-            1.0f), "%s", project.channels[ch].name.c_str());
+    // ========================================================================
+    const float rowNumWidth = 52.0f;
+    const float cellWidth = 104.0f;
+
+    ImGui::Text("Row");
+    for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+        ImGui::SameLine(rowNumWidth + ch * cellWidth);
+        const ImU32 colour = CHANNEL_COLORS[ch];
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colour), "%s",
+                           project.channels[ch].name.c_str());
     }
     ImGui::Separator();
 
-    // Rows (steps)
-    float currentBeat = seq.getCurrentBeat();
-    int currentStep = static_cast<int>(std::fmod(currentBeat, static_cast<float>(pattern.length)));
+    // ========================================================================
+    // Keyboard
+    //
+    // Handled before the grid is drawn so the cursor moves and the view
+    // scrolls in the same frame the key is pressed.
+    // ========================================================================
+    const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    bool cursorMoved = false;
 
-    ImGui::BeginChild("TrackerGrid", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+    if (focused && !ImGui::GetIO().WantTextInput) {
+        const bool ctrl = ImGui::GetIO().KeyCtrl;
+        const bool shift = ImGui::GetIO().KeyShift;
 
-    for (int step = 0; step < pattern.length; ++step) {
-        bool isCurrentStep = (step == currentStep && seq.isPlaying());
-        bool isHighlighted = (step % ui.trackerRowHighlight == 0);
-
-        // Row background
-        if (isCurrentStep) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
-        } else if (isHighlighted) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.9f, 1.0f));
+        if (ImGui::IsKeyPressed(ImGuiKey_Space)) {
+            ui.trackerEditMode = !ui.trackerEditMode;
         }
 
-        // Step number
-        ImGui::Text("%02X", step);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   { --ui.trackerCursorRow; cursorMoved = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) { ++ui.trackerCursorRow; cursorMoved = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_PageUp))    { ui.trackerCursorRow -= 16; cursorMoved = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_PageDown))  { ui.trackerCursorRow += 16; cursorMoved = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_Home))      { ui.trackerCursorRow = 0; cursorMoved = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_End))       { ui.trackerCursorRow = rowCount - 1; cursorMoved = true; }
 
-        // Find notes at this step for each channel
-        for (int ch = 0; ch < 8; ++ch) {
-            ImGui::SameLine(80 + ch * 100);
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  { --ui.trackerCursorChannel; cursorMoved = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) { ++ui.trackerCursorChannel; cursorMoved = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            ui.trackerCursorChannel += shift ? -1 : 1;
+            cursorMoved = true;
+        }
 
-            // Find note at this step (simplified - notes are stored in pattern)
-            bool foundNote = false;
-            for (const auto& note : pattern.notes) {
-                if (static_cast<int>(note.startTime) == step) {
-                    // This is a simplification - in real tracker, notes are per-channel
-                    ImGui::Text("%s", noteToString(note.pitch).c_str());
-                    foundNote = true;
-                    break;
+        // Octave, the way every tracker binds it.
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_UpArrow))   ++ui.trackerOctave;
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) --ui.trackerOctave;
+
+        ui.trackerCursorChannel = std::clamp(ui.trackerCursorChannel, 0, Project::MAX_CHANNELS - 1);
+        ui.trackerCursorRow = std::clamp(ui.trackerCursorRow, 0,
+                                         (rowCount > 0) ? rowCount - 1 : 0);
+
+        if (ui.trackerEditMode) {
+            const float cursorBeat = static_cast<float>(ui.trackerCursorRow) * stepBeats;
+
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete) ||
+                ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
+                g_UndoHistory.saveState(project, "Clear Note");
+                if (!clearTrackerNote(project, ui.trackerCursorChannel,
+                                      cursorBeat, stepBeats)) {
+                    // Nothing was there; do not spend an undo step on it.
+                    g_UndoHistory.undo(project);
+                }
+                ui.trackerCursorRow += ui.trackerEditStep;
+                cursorMoved = true;
+            }
+
+            // The same layout the pad controller uses, so the two agree.
+            struct TrackerKey { ImGuiKey key; int offset; };
+            static const TrackerKey NOTE_KEYS[] = {
+                {ImGuiKey_A, 0}, {ImGuiKey_W, 1}, {ImGuiKey_S, 2}, {ImGuiKey_E, 3},
+                {ImGuiKey_D, 4}, {ImGuiKey_F, 5}, {ImGuiKey_T, 6}, {ImGuiKey_G, 7},
+                {ImGuiKey_Y, 8}, {ImGuiKey_H, 9}, {ImGuiKey_U, 10}, {ImGuiKey_J, 11},
+                {ImGuiKey_K, 12}, {ImGuiKey_O, 13}, {ImGuiKey_L, 14},
+                {ImGuiKey_P, 15}, {ImGuiKey_Semicolon, 16}
+            };
+
+            for (const TrackerKey& mapping : NOTE_KEYS) {
+                if (ctrl || !ImGui::IsKeyPressed(mapping.key)) continue;
+
+                const int pitch = ui.trackerOctave * 12 + mapping.offset;
+                if (pitch < 0 || pitch > 127) continue;
+
+                const OscillatorType osc =
+                    project.channels[ui.trackerCursorChannel].oscillator.type;
+
+                g_UndoHistory.saveState(project, "Tracker Note");
+                const int written = writeTrackerNote(project, ui.trackerCursorChannel,
+                                                     cursorBeat, stepBeats, pitch, osc);
+                if (written >= 0) {
+                    seq.previewNote(pitch, 0.8f, osc, 0.35f);
+                    ui.trackerCursorRow += ui.trackerEditStep;
+                    cursorMoved = true;
+                } else {
+                    g_UndoHistory.undo(project);   // nothing was placed
+                }
+                break;
+            }
+
+            ui.trackerCursorRow = std::clamp(ui.trackerCursorRow, 0,
+                                             (rowCount > 0) ? rowCount - 1 : 0);
+        }
+    }
+
+    // The playhead drags the cursor along, unless the user is editing - it
+    // would be unusable if the cursor kept jumping out from under them.
+    if (ui.trackerFollowPlayhead && seq.isPlaying() && !ui.trackerEditMode) {
+        const int playRow = static_cast<int>(seq.getCurrentBeat() / stepBeats);
+        if (playRow != ui.trackerCursorRow) {
+            ui.trackerCursorRow = std::clamp(playRow, 0, (rowCount > 0) ? rowCount - 1 : 0);
+            cursorMoved = true;
+        }
+    }
+
+    // ========================================================================
+    // Grid
+    // ========================================================================
+    ImGui::BeginChild("TrackerGrid", ImVec2(0, 0), false,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    if (rowCount <= 0) {
+        ImGui::TextDisabled("The song is empty. Place a clip in the arrangement,");
+        ImGui::TextDisabled("or turn on edit mode and type - a pattern will be made for you.");
+    } else {
+        const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+
+        // Keep the cursor on screen after a keyboard move. Done here rather
+        // than with SetScrollHereY because the clipper means the cursor row
+        // is usually not submitted as a widget at all.
+        if (cursorMoved) {
+            const float target = static_cast<float>(ui.trackerCursorRow) * rowHeight;
+            const float top = ImGui::GetScrollY();
+            const float bottom = top + ImGui::GetContentRegionAvail().y - rowHeight;
+            if (target < top) {
+                ImGui::SetScrollY(target);
+            } else if (target > bottom) {
+                ImGui::SetScrollY(target - ImGui::GetContentRegionAvail().y + rowHeight * 2.0f);
+            }
+        }
+
+        const int rowsPerBar = ui.trackerRowsPerBeat *
+                               ((project.beatsPerMeasure > 0) ? project.beatsPerMeasure : 4);
+        const int playRow = seq.isPlaying()
+            ? static_cast<int>(seq.getCurrentBeat() / stepBeats) : -1;
+
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        ImGuiListClipper clipper;
+        clipper.Begin(rowCount, rowHeight);
+        while (clipper.Step()) {
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                const float absBeat = static_cast<float>(row) * stepBeats;
+                const bool isBar = (rowsPerBar > 0) && (row % rowsPerBar == 0);
+                const bool isBeat = (row % ui.trackerRowsPerBeat) == 0;
+                const bool isPlayRow = (row == playRow);
+
+                // Bar and beat shading, so the grid can be read at a glance.
+                if (isBar || isBeat || isPlayRow) {
+                    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                    const float width = rowNumWidth + Project::MAX_CHANNELS * cellWidth;
+                    const ImU32 shade = isPlayRow ? IM_COL32(240, 200, 60, 45)
+                                      : isBar     ? IM_COL32(255, 255, 255, 20)
+                                                  : IM_COL32(255, 255, 255, 8);
+                    drawList->AddRectFilled(p0, ImVec2(p0.x + width, p0.y + rowHeight), shade);
+                }
+
+                if (isPlayRow) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%03d", row);
+                } else if (isBar) {
+                    ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%03d", row);
+                } else {
+                    ImGui::TextDisabled("%03d", row);
+                }
+
+                for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+                    ImGui::SameLine(rowNumWidth + ch * cellWidth);
+
+                    const TrackerCell cell =
+                        readTrackerCell(project, ch, absBeat, stepBeats);
+
+                    char label[64];
+                    if (cell.hasNote) {
+                        const std::string name = noteToString(cell.pitch);
+                        const std::string osc = oscillatorTypeToString(cell.oscillator);
+                        snprintf(label, sizeof(label), "%-4s %.2s##r%dc%d",
+                                 name.c_str(), osc.c_str(), row, ch);
+                    } else if (cell.patternIndex >= 0) {
+                        // A clip is here but this row is empty.
+                        snprintf(label, sizeof(label), "---##r%dc%d", row, ch);
+                    } else {
+                        // No clip at all: typing here would create one.
+                        snprintf(label, sizeof(label), "   ##r%dc%d", row, ch);
+                    }
+
+                    const bool isCursor = (row == ui.trackerCursorRow &&
+                                           ch == ui.trackerCursorChannel);
+
+                    if (cell.hasNote) {
+                        ImGui::PushStyleColor(ImGuiCol_Text,
+                            ImGui::ColorConvertU32ToFloat4(CHANNEL_COLORS[ch]));
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.48f, 1.0f));
+                    }
+
+                    if (ImGui::Selectable(label, isCursor,
+                                          ImGuiSelectableFlags_None,
+                                          ImVec2(cellWidth - 6.0f, 0.0f))) {
+                        ui.trackerCursorRow = row;
+                        ui.trackerCursorChannel = ch;
+                    }
+                    ImGui::PopStyleColor();
                 }
             }
-            if (!foundNote) {
-                ImGui::TextDisabled("---");
-            }
-        }
-
-        if (isCurrentStep || isHighlighted) {
-            ImGui::PopStyleColor();
         }
     }
 
@@ -8384,7 +8606,7 @@ inline void DrawMixer(Project& project, UIState& ui, Sequencer& seq) {
         ImGui::EndGroup();
         ImGui::PopID();
 
-        if (ch < Project::MAX_CHANNELS - 1) ImGui::SameLine(0.0f, 12.0f);
+        if (ch < Project::Project::MAX_CHANNELS - 1) ImGui::SameLine(0.0f, 12.0f);
     }
 
     // Volume, pan, mute and solo are read straight from the Project by the
@@ -11445,7 +11667,7 @@ inline void DrawPadController(Project& project, UIState& ui, Sequencer& sequence
             if (DrawKnob(knobLabels[idx], &state.knobValues[idx], minVal, maxVal,
                         knobRadius, knobColors[idx])) {
                 // Apply knob values to the preview channel synth (channel 7)
-                const int previewChannel = 7;  // MAX_CHANNELS - 1
+                const int previewChannel = 7;  // Project::MAX_CHANNELS - 1
                 auto& synth = sequencer.getSynth(previewChannel);
 
                 // Build envelope and oscillator config from knob values
