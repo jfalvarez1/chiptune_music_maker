@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**2112 checks across 44 groups.** Exit code 0 = pass, 1 = failure, and every
+**2139 checks across 45 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -96,6 +96,7 @@ failure names the field or parameter involved.
 | Clip transpose | +12 semitones doubles the measured frequency, so the transpose provably reaches the audio; a pitch pushed past MIDI's top is silent rather than wrapped; the value survives save/load as an optional sixth token and a pre-3.7 five-token file reads as untransposed with every older field intact; a corrupt value clamps to four octaves; a ghost from a transposed clip shows the sounding pitch, not the stored one. |
 | Groove presets | Every preset is named, described and in range; no two set the same feel; each matches itself after being applied and hand-moved sliders read as custom, so the highlight is honest; an off-beat note played from the ARRANGEMENT starts measurably later under swing - the regression test for the slider that was preview-only - and an on-beat note does not move. |
 | Version coherence | VERSION_STRING is composed from the version ints and the window title and About dialog carry it - the title shipped saying 3.4.1 on a 3.6.0 build because the file that promised one place held the version twice. |
+| Guided first track | Every step is titled, described and correctly kinded - an action step must carry evidence to check and an info step must not pretend to; the whole road is walked in order and each condition fires exactly when its thing is built, never before; a completed step stays completed when its evidence is later deleted; a null project and out-of-range indices are safe. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 
@@ -106,7 +107,7 @@ This drives the app's `--capture` mode through the combinations a person
 would otherwise click through by hand.
 
 ```powershell
-./tools/ui-smoke-test.ps1            # 39 cases
+./tools/ui-smoke-test.ps1            # 40 cases
 ./tools/ui-smoke-test.ps1 -Quick     # 12 cases, for a fast loop
 ```
 

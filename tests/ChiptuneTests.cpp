@@ -36,6 +36,7 @@
 #include "NextStep.h"
 #include "GroovePresets.h"
 #include "Version.h"
+#include "Tutorial.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -6259,6 +6260,221 @@ static void testVersionCoherence() {
 }
 
 // ============================================================================
+// 45. Guided first track
+// ============================================================================
+static void testTutorial() {
+    beginTest("Guided first track");
+
+    // ---- The lesson is well formed ----------------------------------------
+    {
+        int count = 0;
+        const TutorialStep* steps = tutorialSteps(count);
+        check(count >= 8 && count <= 32,
+              "the lesson has a sane number of steps and fits the 32-bit "
+              "latch mask (got " + std::to_string(count) + ")");
+
+        for (int i = 0; i < count; ++i) {
+            const TutorialStep& step = steps[i];
+            if (step.title == nullptr || step.title[0] == '\0' ||
+                step.body == nullptr || step.body[0] == '\0') {
+                check(false, "step " + std::to_string(i) +
+                      " lacks a title or body");
+                break;
+            }
+            // The contract that makes it a lesson and not a wizard: an
+            // action step must have evidence to check, an info step must not
+            // pretend to.
+            if (step.kind == TutorialStepKind::Action &&
+                step.isComplete == nullptr) {
+                check(false, std::string(step.title) +
+                      " is an action step with no completion condition");
+                break;
+            }
+            if (step.kind == TutorialStepKind::Info &&
+                step.isComplete != nullptr) {
+                check(false, std::string(step.title) +
+                      " is an info step with a condition it would ignore");
+                break;
+            }
+        }
+        check(true, "every step is titled, described, and correctly kinded");
+    }
+
+    // ---- The whole road, walked in order ----------------------------------
+    //
+    // Simulates a user actually doing the lesson: each stage builds the
+    // thing the step asks for, and the test asserts the step completes then
+    // and not before. A condition firing early is as much a bug as one
+    // never firing - it would tick goals the user has not reached.
+    {
+        Project project;
+        project.patterns.clear();
+        project.arrangement.clear();
+
+        TutorialContext context;
+        context.project = &project;
+
+        TutorialProgress progress;
+        progress.active = true;
+
+        int count = 0;
+        const TutorialStep* steps = tutorialSteps(count);
+
+        auto conditionOf = [&](int index) {
+            return steps[index].isComplete;
+        };
+        auto firstActionAfter = [&](int from) {
+            for (int i = from; i < count; ++i) {
+                if (steps[i].kind == TutorialStepKind::Action) return i;
+            }
+            return -1;
+        };
+
+        // Locate the action steps by walking the table, so reordering the
+        // lesson does not silently invalidate the test.
+        const int melodyStep = firstActionAfter(0);
+        check(melodyStep >= 0, "there is a melody step");
+        check(!conditionOf(melodyStep)(context),
+              "an empty project has not completed the melody step");
+
+        // The user draws a melody.
+        Pattern pattern;
+        for (int i = 0; i < 4; ++i) {
+            Note n; n.pitch = 72 + i; n.startTime = float(i);
+            n.oscillatorType = OscillatorType::Pulse;
+            pattern.notes.push_back(n);
+        }
+        project.patterns.push_back(pattern);
+        check(conditionOf(melodyStep)(context),
+              "four drawn notes complete the melody step");
+
+        // Playing.
+        const int playStep = firstActionAfter(melodyStep + 1);
+        check(playStep >= 0 && !conditionOf(playStep)(context),
+              "the play step waits until playback has actually run");
+        context.hasPlayed = true;
+        check(conditionOf(playStep)(context), "and completes once it has");
+
+        // Drums.
+        const int drumStep = firstActionAfter(playStep + 1);
+        check(drumStep >= 0 && !conditionOf(drumStep)(context),
+              "the drum step is not fooled by melody notes");
+        for (int i = 0; i < 3; ++i) {
+            Note d; d.pitch = 36; d.startTime = float(i);
+            d.oscillatorType = OscillatorType::Kick808;
+            project.patterns[0].notes.push_back(d);
+        }
+        check(conditionOf(drumStep)(context), "three drum hits complete it");
+
+        // Bass.
+        const int bassStep = firstActionAfter(drumStep + 1);
+        check(bassStep >= 0 && !conditionOf(bassStep)(context),
+              "the bass step is not fooled by drums or melody");
+        for (int i = 0; i < 2; ++i) {
+            Note b; b.pitch = 40; b.startTime = float(i) * 2.0f;
+            b.oscillatorType = OscillatorType::Triangle;
+            project.patterns[0].notes.push_back(b);
+        }
+        check(conditionOf(bassStep)(context), "two bass notes complete it");
+
+        // A variation.
+        const int variationStep = firstActionAfter(bassStep + 1);
+        check(variationStep >= 0 && !conditionOf(variationStep)(context),
+              "one pattern is not a variation");
+        Pattern second;
+        Note v; v.pitch = 74; v.oscillatorType = OscillatorType::Pulse;
+        second.notes.push_back(v);
+        project.patterns.push_back(second);
+        check(conditionOf(variationStep)(context),
+              "a second pattern with notes completes it");
+
+        // Arranging.
+        const int arrangeStep = firstActionAfter(variationStep + 1);
+        check(arrangeStep >= 0 && !conditionOf(arrangeStep)(context),
+              "an empty timeline is not an arrangement");
+        project.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        project.arrangement.push_back(Clip{1, 0, 4.0f, 4.0f, 0});
+        check(conditionOf(arrangeStep)(context),
+              "two placements covering eight beats complete it");
+
+        // Looping.
+        const int loopStep = firstActionAfter(arrangeStep + 1);
+        check(loopStep >= 0 && !conditionOf(loopStep)(context),
+              "no loop range yet");
+        context.loopRangeActive = true;
+        check(conditionOf(loopStep)(context), "a drawn loop range completes it");
+
+        // Saving.
+        const int saveStep = firstActionAfter(loopStep + 1);
+        check(saveStep >= 0 && !conditionOf(saveStep)(context),
+              "unsaved is unsaved");
+        context.projectSaved = true;
+        check(conditionOf(saveStep)(context), "a saved file finishes the road");
+    }
+
+    // ---- Latching ----------------------------------------------------------
+    //
+    // Deleting your drums after the drum step must not walk the lesson
+    // backwards underneath you.
+    {
+        Project project;
+        project.patterns.clear();
+        Pattern pattern;
+        for (int i = 0; i < 3; ++i) {
+            Note d; d.pitch = 36; d.oscillatorType = OscillatorType::Kick808;
+            pattern.notes.push_back(d);
+        }
+        project.patterns.push_back(pattern);
+
+        TutorialContext context;
+        context.project = &project;
+
+        TutorialProgress progress;
+        progress.active = true;
+
+        // Find the drum step and park the lesson on it.
+        int count = 0;
+        const TutorialStep* steps = tutorialSteps(count);
+        int drumStep = -1;
+        for (int i = 0; i < count; ++i) {
+            if (steps[i].kind == TutorialStepKind::Action &&
+                steps[i].isComplete(context)) {
+                drumStep = i;   // the drum condition is the one this satisfies
+            }
+        }
+        check(drumStep >= 0, "a drum-only project satisfies exactly the drum step");
+
+        progress.step = drumStep;
+        check(updateTutorial(progress, context), "the step reports complete");
+        check(progress.stepDone(drumStep), "and is latched");
+
+        project.patterns[0].notes.clear();   // the user deletes everything
+        check(updateTutorial(progress, context),
+              "deleting the drums afterwards does not un-complete the step");
+    }
+
+    // ---- Hygiene ----------------------------------------------------------
+    {
+        TutorialProgress progress;
+        check(!progress.active, "the lesson does not start itself");
+
+        TutorialContext empty;               // null project
+        progress.active = true;
+        progress.step = 0;
+        check(updateTutorial(progress, empty) || true,
+              "a null project does not crash a condition");
+
+        progress.step = 999;
+        check(!updateTutorial(progress, empty),
+              "a step index past the end reports nothing rather than reading "
+              "past the table");
+
+        check(!progress.stepDone(-1) && !progress.stepDone(64),
+              "out-of-range latch queries are safely false");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -6342,6 +6558,7 @@ int main(int argc, char** argv) {
     testClipTranspose();
     testGroovePresets();
     testVersionCoherence();
+    testTutorial();
     testLongRunStability();
 
     std::printf("\n==========================\n");

@@ -182,6 +182,9 @@ struct CaptureRequest {
 
     // Load a genre starter template instead of the demo song.
     std::string templateGenre;
+
+    // Open the lesson at a given step (0-based; -1 = off).
+    int tutorialStep = -1;
 };
 
 // Parses the flags this app understands and ignores anything else.
@@ -199,6 +202,7 @@ struct CaptureRequest {
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
+//   --tutorial <step>    open the lesson at a 0-based step
 //   --genre <name>       everything|chiptune|synthwave|hiphop|reggaeton|
 //                        edm|rock|lofi
 //   --frames <n>         frames to render before capturing
@@ -247,6 +251,11 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.forceWelcome = true;
         } else if (arg == "--template") {
             next(request.templateGenre);
+        } else if (arg == "--tutorial") {
+            std::string stepText;
+            request.tutorialStep = next(stepText)
+                ? static_cast<int>(std::strtol(stepText.c_str(), nullptr, 10))
+                : 0;
         } else if (arg == "--select") {
             request.selectNotes = true;
         } else if (arg == "--playing") {
@@ -304,6 +313,11 @@ inline void applyCaptureState(const CaptureRequest& request,
 
     if (request.showGhostNotes) ui.showGhostNotes = true;
     if (request.expandChipPanel) g_ExpandChipAccuracy = true;
+
+    if (request.tutorialStep >= 0) {
+        StartTutorial();
+        g_Tutorial.step = request.tutorialStep;
+    }
 
     // --- Genre focus ---
     //

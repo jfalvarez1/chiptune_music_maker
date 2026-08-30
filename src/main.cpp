@@ -632,6 +632,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Help")) {
+                if (ImGui::MenuItem("Lesson: make your first track")) {
+                    ChiptuneTracker::StartTutorial();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "A guided walk from empty project to saved track.\n"
+                        "You do every step yourself; it watches and ticks\n"
+                        "them off. Closable at any time.");
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("About")) {
                     showAboutDialog = true;
                 }
@@ -777,6 +787,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
 
             static bool applyDefaults = true;
             static bool startFromTemplate = true;
+            static bool startLesson = false;
             ChiptuneTracker::Genre chosen = ChiptuneTracker::Genre::Everything;
             bool picked = false;
 
@@ -805,8 +816,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             ImGui::Separator();
             ImGui::Spacing();
 
+            ImGui::Checkbox("Teach me - guided first track, step by step",
+                            &startLesson);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "A lesson, not a wizard: it names each goal and watches\n"
+                    "your project until you have built it yourself, however\n"
+                    "you like. Skippable per step, closable any time.");
+            }
+
+            if (startLesson) ImGui::BeginDisabled();
             ImGui::Checkbox("Start me off with four bars I can change",
                             &startFromTemplate);
+            if (startLesson) {
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::TextDisabled("(the lesson starts from empty)");
+            }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
                     "Drums, bass, chords and a lead already playing, in the key\n"
@@ -840,7 +866,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
 
                 // A starting point already arrives in the right key and
                 // tempo, so the two options do not fight over the project.
-                if (startFromTemplate) {
+                if (startLesson) {
+                    // The lesson's whole point is building it yourself, so
+                    // it starts from the empty project the goals assume.
+                    ChiptuneTracker::StartTutorial();
+                } else if (startFromTemplate) {
                     ChiptuneTracker::g_UndoHistory.saveState(project, "Empty Project");
                     project = ChiptuneTracker::makeGenreTemplate(chosen);
                     uiState.selectedPattern = 0;
@@ -905,6 +935,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // Transport bar (always visible)
         ChiptuneTracker::DrawTransportBar(sequencer, project, playbackState, uiState);
         ChiptuneTracker::DrawMasterBus(sequencer, project, uiState);
+        ChiptuneTracker::DrawTutorialPanel(project, uiState,
+                                           sequencer.isPlaying(),
+                                           sequencer.getState().loopRangeActive);
 
         // View tabs
         ChiptuneTracker::DrawViewTabs(project, uiState);

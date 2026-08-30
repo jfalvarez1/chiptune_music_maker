@@ -325,6 +325,16 @@ audit of this codebase, which is reproducible by anyone with `grep`.
       dismissals persist across sessions, and the manual path is untouched
       throughout - these are a faster pencil, not a different instrument.
 
+- [x] **Guided first track.** A ten-step lesson - Help > Lesson, or the
+      welcome's "teach me" checkbox - that walks from empty project to saved
+      track. A lesson, not a wizard: each step names a goal ("draw at least
+      four notes, any notes you like") and watches the actual project until
+      the goal is true, so the user does everything themselves with the real
+      tools and the finished track is theirs. Completion is detected, never
+      claimed; steps latch so deleting evidence later cannot walk the lesson
+      backwards; every step is skippable and the whole thing closable,
+      because a tutorial you cannot leave is a hostage situation.
+
 ### Next, in rough value order
 
 - [x] **G1. Make the tracker view editable.** `DrawTrackerView` is read-only

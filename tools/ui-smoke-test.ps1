@@ -140,6 +140,12 @@ foreach ($panel in $panels) {
     args = "--demo --genre reggaeton --focus Tools"
 })
 
+# The lesson panel, parked on the draw-a-melody step.
+[void]$cases.Add(@{
+    name = "tutorial-lesson"
+    args = "--demo --tutorial 2"
+})
+
 # The first-run prompt appears once ever, so it needs forcing to be seen.
 [void]$cases.Add(@{
     name = "welcome-genre-prompt"

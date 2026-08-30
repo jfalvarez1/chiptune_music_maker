@@ -25,6 +25,7 @@
 #include "NextStep.h"
 #include "GenreKits.h"
 #include "GroovePresets.h"
+#include "Tutorial.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -2512,6 +2513,16 @@ static bool g_ToolsScaleHighlight = true;
 // Set by the capture harness so a screenshot can show a section that is
 // collapsed by default.
 static bool g_ExpandChipAccuracy = false;
+
+// The guided first-track lesson. Static here rather than on UIState
+// because it is UI-session state, not project state: it must survive a
+// project load mid-lesson and never be saved into anyone's file.
+static TutorialProgress g_Tutorial;
+
+inline void StartTutorial() {
+    g_Tutorial = TutorialProgress{};
+    g_Tutorial.active = true;
+}
 
 static UndoHistory g_UndoHistory;
 
@@ -13753,6 +13764,147 @@ inline bool shouldSnapToScale() {
 inline int getScaleSnappedPitch(int pitch) {
     if (!g_ToolsScaleLock) return pitch;
     return snapToScale(pitch, g_ToolsScaleRoot, g_ToolsScaleType);
+}
+
+/*
+ * The lesson panel.
+ *
+ * Floating on purpose, and never dockable: the lesson follows the user
+ * across views, and docking it into one workspace would strand it there.
+ *
+ * The rules it renders under: an action step shows its goal and waits -
+ * there is no button that claims completion without evidence - but Skip is
+ * always present, because a tutorial you cannot leave is a hostage
+ * situation. Once a goal is met it stays met (latched in the progress
+ * mask), so deleting notes later cannot walk the lesson backwards.
+ */
+inline void DrawTutorialPanel(Project& project, UIState& ui,
+                              bool isPlaying, bool loopRangeActive) {
+    if (!g_Tutorial.active) return;
+
+    // "Has pressed play" is an event, not a state the project remembers.
+    static bool hasPlayedLatch = false;
+    if (isPlaying) hasPlayedLatch = true;
+
+    TutorialContext context;
+    context.project = &project;
+    context.hasPlayed = hasPlayedLatch;
+    context.loopRangeActive = loopRangeActive;
+    context.projectSaved = !ui.projectFilePath.empty();
+
+    const bool currentDone = updateTutorial(g_Tutorial, context);
+
+    int stepCount = 0;
+    const TutorialStep* steps = tutorialSteps(stepCount);
+    if (g_Tutorial.step >= stepCount) {
+        g_Tutorial.active = false;
+        return;
+    }
+    const TutorialStep& step = steps[g_Tutorial.step];
+
+    // Raise the window a step points at, once per step.
+    static int lastFocusedStep = -1;
+    if (lastFocusedStep != g_Tutorial.step) {
+        if (step.focusWindow != nullptr) {
+            ImGui::SetWindowFocus(step.focusWindow);
+        }
+        lastFocusedStep = g_Tutorial.step;
+    }
+
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 420.0f, 60.0f),
+                            ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(390.0f, 0.0f), ImGuiCond_Always);
+
+    bool open = true;
+    if (ImGui::Begin("Lesson: your first track", &open,
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_AlwaysAutoResize)) {
+
+        // Progress dots: filled = done, ring = current, dim = ahead.
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImVec2 dotPos = ImGui::GetCursorScreenPos();
+        for (int i = 0; i < stepCount; ++i) {
+            const float cx = dotPos.x + 8.0f + i * 20.0f;
+            const float cy = dotPos.y + 8.0f;
+            if (g_Tutorial.stepDone(i) ||
+                (i < g_Tutorial.step)) {
+                drawList->AddCircleFilled(ImVec2(cx, cy), 5.0f,
+                                          IM_COL32(120, 220, 140, 255));
+            } else if (i == g_Tutorial.step) {
+                drawList->AddCircle(ImVec2(cx, cy), 5.0f,
+                                    IM_COL32(140, 200, 255, 255), 0, 2.0f);
+            } else {
+                drawList->AddCircleFilled(ImVec2(cx, cy), 3.0f,
+                                          IM_COL32(110, 110, 125, 160));
+            }
+        }
+        ImGui::Dummy(ImVec2(stepCount * 20.0f, 18.0f));
+
+        ImGui::TextDisabled("Step %d of %d", g_Tutorial.step + 1, stepCount);
+        ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.00f, 1.0f), "%s", step.title);
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 370.0f);
+        ImGui::TextUnformatted(step.body);
+        ImGui::PopTextWrapPos();
+        if (step.hint != nullptr && step.hint[0] != '\0') {
+            ImGui::Spacing();
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 370.0f);
+            ImGui::TextDisabled("%s", step.hint);
+            ImGui::PopTextWrapPos();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        // The status line an action step lives by.
+        if (step.kind == TutorialStepKind::Action) {
+            if (currentDone) {
+                ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
+                                   "Done - nice.");
+            } else {
+                ImGui::TextDisabled("Waiting for you - the lesson will "
+                                    "notice when it is there.");
+            }
+        }
+
+        if (g_Tutorial.step > 0) {
+            if (ImGui::Button("Back")) {
+                --g_Tutorial.step;
+                lastFocusedStep = -1;
+            }
+            ImGui::SameLine();
+        }
+
+        const bool isLast = (g_Tutorial.step == stepCount - 1);
+        if (currentDone) {
+            if (ImGui::Button(isLast ? "Finish" : "Next", ImVec2(90, 0))) {
+                if (isLast) {
+                    g_Tutorial.active = false;
+                } else {
+                    ++g_Tutorial.step;
+                    lastFocusedStep = -1;
+                }
+            }
+        } else {
+            if (ImGui::Button("Skip step")) {
+                g_Tutorial.completedMask |= (1u << g_Tutorial.step);
+                if (isLast) {
+                    g_Tutorial.active = false;
+                } else {
+                    ++g_Tutorial.step;
+                    lastFocusedStep = -1;
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Moves on without doing this one.\n"
+                                  "Every tool works with or without the lesson.");
+            }
+        }
+    }
+    ImGui::End();
+
+    // The X closes the lesson entirely; Help > Lesson starts it fresh.
+    if (!open) g_Tutorial.active = false;
 }
 
 // Apply a queued undo or redo. main.cpp calls this at the top of the frame,
