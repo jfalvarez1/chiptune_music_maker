@@ -7,6 +7,61 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.1.0] — 2026-08-30 — "Dockyard"
+
+Panels dock. Tests grew a second layer and a written plan. One more silent
+bug found and fixed.
+
+### Added
+
+- **Real docking.** Dear ImGui upgraded to the docking branch (1.92.6 →
+  1.93.0). Panels dock into shared regions and become **tabs** when they
+  share one, can be dragged anywhere, and the arrangement persists.
+  This is the model the established tools converged on independently:
+  Reaper's Docker with Screensets, Bitwig's resizable docked panels, and
+  Furnace — itself an ImGui tracker — describing "the most flexible and
+  customizable tracker interface ever". The three workspaces are now dock
+  trees built with `DockBuilder`, so they are a good starting point rather
+  than a cage.
+- **UI smoke test** (`tools/ui-smoke-test.ps1`). 26 cases driving the app's
+  `--capture` mode through every view, theme, workspace and panel, plus
+  empty projects and window sizes from 800×600 to 2560×800. Each asserts
+  the process exited cleanly and the frame is not blank or near-flat. It
+  fills the gap the headless suite cannot reach: the renderer.
+- **`docs/TEST_PLAN.md`.** What is tested, how, and — deliberately — the
+  seven things that are *not*, so a green run is not mistaken for full
+  coverage.
+- **`--workspace` capture flag**, so workspace layouts are screenshot- and
+  smoke-testable.
+- **221 new headless checks** covering the gaps called out last release:
+  undo/redo (cap, redo invalidation, deep round trips), mute/solo/pan
+  routing, live note triggering and preview across all 65 oscillators,
+  wavetable morphing and bounds, whole-project validation field by field,
+  and a 60-second stability run checking for level drift and playhead
+  escape.
+
+### Fixed
+
+- **Enabling the master EQ silenced the entire song.** `ThreeBandEQ` takes
+  linear gain where 1.0 is unity; the project stores decibels, and the
+  value was passed straight through. Switching the master EQ on at its
+  default of 0 dB multiplied the mix by zero. The master compressor's
+  threshold and makeup gain had the same mismatch. Found by the new
+  long-run test, which rendered sixty seconds of perfect silence while
+  every individual channel showed healthy signal.
+- The Transport panel was clipped and never showed its master volume row.
+- Tool windows opened *behind* the main editor, which is indistinguishable
+  from not opening.
+- `imgui.ini` was tracked in git, so a fresh clone inherited one machine's
+  stale window layout.
+
+### Changed
+
+- `Combo()`'s getter signature changed upstream; the Voice-to-Note tool's
+  call was updated.
+
+---
+
 ## [3.0.0] — 2026-08-30 — "Macro"
 
 The release that makes this a chiptune tool rather than a synth that can

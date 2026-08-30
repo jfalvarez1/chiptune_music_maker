@@ -1,7 +1,7 @@
 # ChiptuneTracker — Roadmap
 
 **Last updated:** 2026-08-30
-**Current version:** v3.0.0
+**Current version:** v3.1.0
 
 This is the living plan. It supersedes the point-in-time notes in
 `features_implementation_summary.md` and `implementation_plan.md`, which
@@ -74,8 +74,10 @@ drops data.
       - Effects at parameter extremes produce no NaN, no infinity and no
         runaway feedback.
       - Polyphony overflow — more simultaneous notes than voices.
-- [ ] **A5. NaN / denormal guards** in the audio path, with a test that
-      injects a NaN and asserts the mixer recovers rather than going silent.
+- [~] **A5. NaN / denormal guards.** Validation now repairs NaN and infinity
+      on load, and the suite asserts finite output everywhere. Still wanted:
+      a guard in the mixer itself, so a NaN arising at runtime is contained
+      rather than poisoning the master bus.
 - [ ] **A6. Autosave and crash recovery.** Rolling autosave to a temp file;
       offer to restore on next launch.
 - [x] **A7. Fix the `nul` file** and other stray artifacts in the repo
@@ -145,6 +147,11 @@ envelopes where chiptune wants step macros.**
       `Voice` fields exist; the playback path does not.
 
 ## Phase E — Interface and experience
+
+**E0. Docking (done in 3.1).** Panels dock into shared regions and become
+tabs; three workspaces build the dock tree. Researched against Reaper's
+Docker + Screensets, Bitwig's docked panels and Furnace's ImGui docking,
+all of which converged on the same answer.
 
 The theme system (8 themes with animated backgrounds) is a real asset and
 better than most trackers. The gap is that the *widgets* are stock ImGui

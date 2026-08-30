@@ -189,6 +189,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    // Docking. Panels dock into shared regions and become tabs when they
+    // share one - the model Reaper's Docker and Furnace both use, and the
+    // reason panels can no longer overlap or fall off screen.
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.ConfigDockingWithShift = false;
+
     // Screenshots must not inherit whatever window layout this machine
     // happens to have saved. Disabling the ini file makes capture mode use
     // the app's own default positions, so a gallery shot looks the same
@@ -456,6 +462,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             ImGui::EndMainMenuBar();
         }
 
+        // The dock space must be submitted before any dockable panel, so the
+        // panels have somewhere to dock into on the frame they first appear.
+        const ImGuiID dockspaceId = ChiptuneTracker::BeginDockSpace();
+
+        // Rebuilding the dock tree is a one-shot operation, not per-frame.
+        if (uiState.pendingLayoutFrames > 0) {
+            ChiptuneTracker::BuildWorkspaceLayout(
+                dockspaceId,
+                static_cast<ChiptuneTracker::Workspace>(uiState.currentWorkspace),
+                ImGui::GetMainViewport()->WorkSize);
+            uiState.pendingLayoutFrames = 0;
+        }
+
         // About dialog
         if (showAboutDialog) {
             ImGui::OpenPopup("About ChiptuneTracker");
@@ -587,17 +606,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) {
                 uiState.pianoRollOctaveOffset = std::min(6, uiState.pianoRollOctaveOffset + 1);
             }
-        }
-
-        // Workspace layout. Applied after every window has been submitted,
-        // because SetWindowPos-by-name can only find a window that exists.
-        // The new position takes effect on the following frame, which is why
-        // this runs for two frames rather than one.
-        if (uiState.pendingLayoutFrames > 0) {
-            ChiptuneTracker::ApplyWorkspaceLayout(
-                static_cast<ChiptuneTracker::Workspace>(uiState.currentWorkspace),
-                io.DisplaySize);
-            --uiState.pendingLayoutFrames;
         }
 
         // Reset layout update flag after all windows have been positioned

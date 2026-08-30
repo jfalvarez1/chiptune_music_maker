@@ -62,6 +62,8 @@ MPC-style pads for playing drums and auditioning sounds live.
 Ten themes, several with animated backgrounds. The theme reaches the piano
 roll and the custom widgets, not just the window chrome.
 
+Panels dock: drag one anywhere, and panels sharing a region become tabs.
+
 | Game Boy DMG | Matrix |
 |---|---|
 | ![Game Boy theme](docs/images/theme-gameboy.png) | ![Matrix theme](docs/images/theme-matrix.png) |
@@ -77,21 +79,52 @@ Vaporwave.
 `tools/generate-gallery.ps1`, which drives its `--capture` mode. They can be
 regenerated after any UI change rather than going stale.*
 
-## What's new in 3.0
+## What's new
 
-- **Instrument macros** - the step sequences chip instruments are actually
+### 3.1 — "Dockyard"
+
+- **Real docking.** Drag any panel anywhere; panels sharing a region become
+  tabs. The same model Reaper, Bitwig and Furnace all arrived at
+  independently. Three workspaces (Compose, Sound Design, Mix) give you a
+  starting arrangement, and `Ctrl+0` resets it.
+- **A second test layer.** 26 UI smoke cases render every view, theme,
+  workspace and window size and check a real frame came out — the part the
+  headless suite cannot reach.
+- **Fixed: turning on the master EQ silenced the whole song.** It takes
+  linear gain; it was being handed decibels, so the default of 0 dB
+  multiplied the mix by zero. Found by a new 60-second stability test.
+
+### 3.0 — "Macro"
+
+- **Instrument macros** — the step sequences chip instruments are actually
   built from, with eight ready-made presets
-- **Project format v2** - v1 saved the notes and silently discarded the
+- **Project format v2** — v1 saved the notes and silently discarded the
   entire mix, arrangement and every tracker effect
-- **Workspace layouts** - Compose, Sound Design and Mix, computed from the
-  display size so panels tile instead of overlapping
-- **Custom widgets** - knobs, meters with peak hold, animated toggles
-- **A headless test suite** - 1112 checks, which found a startup crash, two
-  effects that never ran at all, and an oscillator that could reach an
-  amplitude of 2.4 x 10^7
+- **Custom widgets** — knobs, meters with peak hold, animated toggles
+- **A headless test suite** which found a startup crash, two effects that
+  never ran at all, and an oscillator that could reach an amplitude of
+  2.4 × 10⁷
 
-See [CHANGELOG.md](CHANGELOG.md) for the full list, including the eleven
-bugs fixed in this release.
+See [CHANGELOG.md](CHANGELOG.md) for the full history.
+
+## Testing
+
+Three layers, described in full in [docs/TEST_PLAN.md](docs/TEST_PLAN.md)
+along with an honest list of what is *not* covered.
+
+```powershell
+cmake --build build --config Release
+
+build/bin/Release/ChiptuneTests.exe    # 1333 headless checks
+./tools/ui-smoke-test.ps1              # 26 rendering checks
+./tools/generate-gallery.ps1           # refresh the screenshots above
+```
+
+The headless suite exists because this project's recurring failure is
+*silent* breakage — a control wired in the UI that never reaches the synth.
+So it asserts that turning a control on **changes the audio**, not merely
+that the code runs. That is what caught the dead stereo widener, the dead
+sidechain and the muting master EQ.
 
 ## Features
 

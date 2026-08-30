@@ -463,11 +463,12 @@ void RenderUI() {
     // WAV Import
     ImGui::Separator();
     // Templates
-    ImGui::Combo("Session Template", &templateIndex, [](void* data, int idx, const char** out_text) {
+    // ImGui changed the Combo getter signature: it now returns the string
+    // directly instead of writing through an out parameter and returning bool.
+    ImGui::Combo("Session Template", &templateIndex, [](void* data, int idx) -> const char* {
         auto* arr = reinterpret_cast<SessionTemplate*>(data);
-        *out_text = arr[idx].name;
-        return true;
-    }, sessionTemplates, IM_ARRAYSIZE(sessionTemplates), IM_ARRAYSIZE(sessionTemplates));
+        return arr[idx].name;
+    }, sessionTemplates, IM_ARRAYSIZE(sessionTemplates));
     ImGui::SameLine();
     if (ImGui::Button("Apply Template")) {
         auto& t = sessionTemplates[templateIndex];

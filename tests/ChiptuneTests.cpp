@@ -1537,6 +1537,709 @@ static void testInstrumentMacros() {
 }
 
 // ============================================================================
+// 14. Undo / redo history
+// ============================================================================
+static void testUndoRedo() {
+    beginTest("Undo and redo history");
+
+    auto patternWithNotes = [](int count) {
+        Pattern p;
+        for (int i = 0; i < count; ++i) {
+            Note n;
+            n.pitch = 60 + i;
+            n.startTime = float(i);
+            p.notes.push_back(n);
+        }
+        return p;
+    };
+
+    // ---- Nothing to undo -----------------------------------------------
+    {
+        UndoHistory history;
+        check(!history.canUndo(), "a fresh history has nothing to undo");
+        check(!history.canRedo(), "a fresh history has nothing to redo");
+
+        Pattern current = patternWithNotes(3);
+        PatternSnapshot result = history.undo(current, 0);
+        check(result.notes.size() == 3,
+              "undo with an empty stack returns the current state unchanged");
+        result = history.redo(current, 0);
+        check(result.notes.size() == 3,
+              "redo with an empty stack returns the current state unchanged");
+    }
+
+    // ---- Basic undo then redo -------------------------------------------
+    {
+        UndoHistory history;
+        Pattern first = patternWithNotes(2);
+        history.saveState(first, 0);
+
+        Pattern second = patternWithNotes(5);
+        check(history.canUndo(), "saving a state makes undo available");
+
+        PatternSnapshot undone = history.undo(second, 0);
+        check(undone.notes.size() == 2,
+              "undo restores the saved state (expected 2 notes, got " +
+              std::to_string(undone.notes.size()) + ")");
+        check(history.canRedo(), "undo makes redo available");
+
+        PatternSnapshot redone = history.redo(Pattern(first), 0);
+        check(redone.notes.size() == 5,
+              "redo restores the state undo replaced (expected 5, got " +
+              std::to_string(redone.notes.size()) + ")");
+    }
+
+    // ---- A new action clears the redo stack ------------------------------
+    {
+        UndoHistory history;
+        history.saveState(patternWithNotes(1), 0);
+        history.undo(patternWithNotes(2), 0);
+        check(history.canRedo(), "redo is available after an undo");
+
+        history.saveState(patternWithNotes(3), 0);
+        check(!history.canRedo(),
+              "a new edit after an undo clears the redo stack - redoing onto a "
+              "diverged timeline would restore notes the user did not make");
+    }
+
+    // ---- The history is capped -------------------------------------------
+    {
+        UndoHistory history;
+        for (int i = 0; i < UndoHistory::MAX_HISTORY + 25; ++i) {
+            history.saveState(patternWithNotes(i % 7 + 1), 0);
+        }
+        check(history.undoStack.size() == static_cast<size_t>(UndoHistory::MAX_HISTORY),
+              "history is capped at " + std::to_string(UndoHistory::MAX_HISTORY) +
+              " (got " + std::to_string(history.undoStack.size()) + ")");
+
+        // And undoing all the way out must not run off the end
+        Pattern current = patternWithNotes(4);
+        for (int i = 0; i < UndoHistory::MAX_HISTORY + 25; ++i) {
+            current.notes = history.undo(current, 0).notes;
+        }
+        check(!history.canUndo(), "undoing past the start leaves the stack empty");
+        check(true, "undoing past the start did not crash");
+    }
+
+    // ---- Round trip through many steps preserves content ------------------
+    {
+        UndoHistory history;
+        for (int i = 1; i <= 10; ++i) history.saveState(patternWithNotes(i), 0);
+
+        Pattern current = patternWithNotes(11);
+        for (int i = 0; i < 10; ++i) current.notes = history.undo(current, 0).notes;
+        check(current.notes.size() == 1,
+              "ten undos land on the first saved state (got " +
+              std::to_string(current.notes.size()) + ")");
+
+        for (int i = 0; i < 10; ++i) current.notes = history.redo(current, 0).notes;
+        check(current.notes.size() == 11,
+              "ten redos return to where we started (got " +
+              std::to_string(current.notes.size()) + ")");
+    }
+
+    // ---- clear() ----------------------------------------------------------
+    {
+        UndoHistory history;
+        history.saveState(patternWithNotes(2), 0);
+        history.undo(patternWithNotes(3), 0);
+        history.clear();
+        check(!history.canUndo() && !history.canRedo(), "clear() empties both stacks");
+    }
+}
+
+// ============================================================================
+// 15. Mute, solo and per-channel routing
+// ============================================================================
+static void testMuteSoloRouting() {
+    beginTest("Mute, solo and channel routing");
+
+    auto renderProject = [](void (*configure)(Project&)) {
+        Project p;
+        Pattern pattern;
+        for (int ch = 0; ch < 4; ++ch) {
+            Note n;
+            n.pitch = 48 + ch * 5;
+            n.startTime = 0.0f;
+            n.duration = 4.0f;
+            n.velocity = 1.0f;
+            n.oscillatorType = OscillatorType::Sawtooth;
+            pattern.notes.push_back(n);
+        }
+        p.patterns.clear();
+        p.patterns.push_back(pattern);
+        p.arrangement.clear();
+        for (int ch = 0; ch < 4; ++ch) {
+            p.arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0});
+        }
+
+        if (configure) configure(p);
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.play();
+
+        std::vector<float> out;
+        std::vector<float> l(512), r(512);
+        for (int b = 0; b < 40; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            out.insert(out.end(), l.begin(), l.end());
+        }
+        return out;
+    };
+
+    BufferStats normal = analyze(renderProject(nullptr));
+    check(!normal.allZero, "the baseline mix is audible");
+
+    // Muting every channel must produce silence
+    BufferStats allMuted = analyze(renderProject([](Project& p) {
+        for (auto& c : p.channels) c.muted = true;
+    }));
+    check(allMuted.peak < 1e-4f,
+          "muting every channel silences the mix (peak " +
+          std::to_string(allMuted.peak) + ")");
+
+    // Muting one channel must reduce, not silence
+    BufferStats oneMuted = analyze(renderProject([](Project& p) {
+        p.channels[0].muted = true;
+    }));
+    check(!oneMuted.allZero, "muting one channel leaves the others audible");
+    check(oneMuted.rms < normal.rms,
+          "muting one channel reduces the level (" + std::to_string(normal.rms) +
+          " -> " + std::to_string(oneMuted.rms) + ")");
+
+    // Solo must isolate
+    BufferStats soloed = analyze(renderProject([](Project& p) {
+        p.channels[1].solo = true;
+    }));
+    check(!soloed.allZero, "a soloed channel is audible");
+    check(soloed.rms < normal.rms,
+          "solo removes the other channels (" + std::to_string(normal.rms) +
+          " -> " + std::to_string(soloed.rms) + ")");
+
+    // Solo beats mute on a different channel
+    BufferStats soloAndMute = analyze(renderProject([](Project& p) {
+        p.channels[1].solo = true;
+        p.channels[2].muted = true;
+    }));
+    check(!soloAndMute.allZero,
+          "soloing one channel while muting another still produces audio");
+
+    // Zero master volume is silence
+    BufferStats noMaster = analyze(renderProject([](Project& p) {
+        p.masterVolume = 0.0f;
+    }));
+    check(noMaster.peak < 1e-4f, "zero master volume silences the mix");
+
+    // Hard pan puts the signal on one side only
+    {
+        Project p;
+        Pattern pattern;
+        Note n;
+        n.pitch = 60; n.duration = 4.0f; n.velocity = 1.0f;
+        n.oscillatorType = OscillatorType::Sawtooth;
+        pattern.notes.push_back(n);
+        p.patterns.clear();
+        p.patterns.push_back(pattern);
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p.channels[0].pan = -1.0f;   // hard left
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.play();
+
+        std::vector<float> left, right;
+        std::vector<float> l(512), r(512);
+        for (int b = 0; b < 30; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            left.insert(left.end(), l.begin(), l.end());
+            right.insert(right.end(), r.begin(), r.end());
+        }
+        BufferStats ls = analyze(left);
+        BufferStats rs = analyze(right);
+        check(ls.rms > rs.rms * 4.0f,
+              "hard-left pan puts the signal on the left (L rms " +
+              std::to_string(ls.rms) + ", R rms " + std::to_string(rs.rms) + ")");
+    }
+}
+
+// ============================================================================
+// 16. Live playing - trigger, release, preview
+// ============================================================================
+static void testLivePlaying() {
+    beginTest("Live note triggering");
+
+    Project p;
+    auto seqPtr = std::make_unique<Sequencer>();
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&p);
+
+    std::vector<float> l(512), r(512);
+
+    // Triggering a note with the transport stopped must still sound - that
+    // is how the on-screen keyboard and the pad controller work.
+    seq.triggerNote(0, 60, 0.9f);
+    std::vector<float> out;
+    for (int b = 0; b < 20; ++b) {
+        seq.process(l.data(), r.data(), 512);
+        out.insert(out.end(), l.begin(), l.end());
+    }
+    BufferStats st = analyze(out);
+    check(!st.allZero, "a triggered note sounds with the transport stopped");
+    check(st.nonFiniteCount == 0, "a triggered note produces finite audio");
+
+    // Releasing it, and releasing things that were never pressed
+    seq.releaseNote(0, 60);
+    seq.releaseNote(0, 61);          // never triggered
+    seq.releaseNote(99, 60);         // channel out of range
+    seq.releaseNote(-1, 60);
+    seq.triggerNote(99, 60, 1.0f);   // channel out of range
+    seq.triggerNote(-1, 60, 1.0f);
+    seq.triggerNote(0, 200, 1.0f);   // pitch out of range
+    seq.triggerNote(0, -5, 1.0f);
+    for (int b = 0; b < 10; ++b) seq.process(l.data(), r.data(), 512);
+    check(analyze(l).nonFiniteCount == 0,
+          "out-of-range triggers and releases do not corrupt the output");
+
+    // Preview covers every oscillator, including the drums
+    for (int i = 0; i < OSC_COUNT; ++i) {
+        seq.previewNote(60, 0.8f, static_cast<OscillatorType>(i), 0.1f);
+    }
+    for (int b = 0; b < 20; ++b) seq.process(l.data(), r.data(), 512);
+    BufferStats preview = analyze(l);
+    check(preview.nonFiniteCount == 0,
+          "previewing every oscillator in one frame produces finite audio");
+    check(preview.outOfRangeCount == 0,
+          "previewing every oscillator stays within headroom (peak " +
+          std::to_string(preview.peak) + ")");
+
+    // Holding many notes then releasing them all.
+    // stop() first: the out-of-range triggers above are still held, and a
+    // sustained voice is correct behaviour rather than something to assert
+    // away here.
+    seq.stop();
+    for (int b = 0; b < 30; ++b) seq.process(l.data(), r.data(), 512);
+
+    for (int note = 36; note < 96; ++note) seq.triggerNote(note % 8, note, 1.0f);
+    for (int b = 0; b < 10; ++b) seq.process(l.data(), r.data(), 512);
+    for (int note = 36; note < 96; ++note) seq.releaseNote(note % 8, note);
+    for (int b = 0; b < 40; ++b) seq.process(l.data(), r.data(), 512);
+    BufferStats tail = analyze(l);
+    check(tail.nonFiniteCount == 0, "a large chord releases cleanly");
+    check(tail.peak < 1e-3f,
+          "everything decays to silence after release (peak " +
+          std::to_string(tail.peak) + ")");
+}
+
+// ============================================================================
+// 17. Wavetables
+// ============================================================================
+static void testWavetables() {
+    beginTest("Wavetable lookup and morphing");
+
+    // A fresh bank is seeded with three usable waveforms by its constructor,
+    // so a new bank is immediately useful. Worth asserting: code below relies
+    // on it, and silently losing it would be a regression.
+    {
+        WavetableBank fresh;
+        check(fresh.tables.size() == 3,
+              "a new bank starts with three default waveforms (got " +
+              std::to_string(fresh.tables.size()) + ")");
+        check(fresh.name == "Default", "a new bank is named Default");
+        check(std::isfinite(fresh.lookupMorph(0.25f, 0.5f)),
+              "the default bank morphs to a finite value");
+    }
+
+    // An emptied bank must be safe to look up
+    {
+        WavetableBank bank;
+        bank.tables.clear();
+        check(bank.lookupMorph(0.0f, 0.0f) == 0.0f, "an empty bank reads as zero");
+        check(bank.lookupMorph(0.5f, 1.0f) == 0.0f,
+              "an empty bank reads as zero at any morph position");
+        check(std::isfinite(bank.lookupMorph(-5.0f, -5.0f)),
+              "an empty bank survives out-of-range arguments");
+    }
+
+    // One table: morphing has nothing to morph to, but must still read it
+    {
+        WavetableBank bank;
+        bank.tables.clear();
+        Wavetable sine;
+        for (int i = 0; i < Wavetable::TABLE_SIZE; ++i) {
+            sine.samples[i] = std::sin(2.0f * PI * float(i) / float(Wavetable::TABLE_SIZE));
+        }
+        bank.addTable(sine);
+
+        check(std::fabs(bank.lookupMorph(0.25f, 0.0f) - 1.0f) < 0.05f,
+              "a single sine table reads +1 at a quarter phase");
+        check(std::fabs(bank.lookupMorph(0.25f, 1.0f) - 1.0f) < 0.05f,
+              "morph position is ignored when there is only one table");
+    }
+
+    // Two tables: morphing must interpolate between them
+    {
+        WavetableBank bank;
+        bank.tables.clear();
+        Wavetable low, high;
+        for (int i = 0; i < Wavetable::TABLE_SIZE; ++i) {
+            low.samples[i] = -1.0f;
+            high.samples[i] = 1.0f;
+        }
+        bank.addTable(low);
+        bank.addTable(high);
+
+        check(std::fabs(bank.lookupMorph(0.5f, 0.0f) - (-1.0f)) < 0.01f,
+              "morph 0 reads the first table");
+        check(std::fabs(bank.lookupMorph(0.5f, 1.0f) - 1.0f) < 0.01f,
+              "morph 1 reads the last table");
+        check(std::fabs(bank.lookupMorph(0.5f, 0.5f)) < 0.05f,
+              "morph 0.5 sits between the two (got " +
+              std::to_string(bank.lookupMorph(0.5f, 0.5f)) + ")");
+
+        // Out-of-range morph and phase must not read out of bounds
+        for (float morph : {-2.0f, 2.0f, 100.0f}) {
+            for (float phase : {-1.0f, 1.5f, 99.0f}) {
+                check(std::isfinite(bank.lookupMorph(phase, morph)),
+                      "out-of-range lookup stays finite");
+            }
+        }
+    }
+
+    // The bank is capped
+    {
+        WavetableBank bank;
+        bank.tables.clear();
+        Wavetable table;
+        for (int i = 0; i < WavetableBank::MAX_TABLES + 10; ++i) bank.addTable(table);
+        check(bank.tables.size() == static_cast<size_t>(WavetableBank::MAX_TABLES),
+              "the bank stops at " + std::to_string(WavetableBank::MAX_TABLES) +
+              " tables (got " + std::to_string(bank.tables.size()) + ")");
+    }
+}
+
+// ============================================================================
+// 18. Long-run stability
+// ============================================================================
+static void testLongRunStability() {
+    beginTest("Long-run stability");
+
+    // Sixty seconds of a busy, effect-heavy, looping project. Slow drifts -
+    // an integrator winding up, a filter state creeping, a denormal storm -
+    // do not show up in a one-second test.
+    Project p;
+    p.bpm = 174.0f;
+    p.masterLimiterEnabled = true;
+    p.masterCompressorEnabled = true;
+    p.masterEQEnabled = true;
+
+    Pattern pattern;
+    for (int i = 0; i < 32; ++i) {
+        Note n;
+        n.pitch = 36 + (i * 7) % 60;
+        n.startTime = float(i) * 0.25f;
+        n.duration = 0.4f;
+        n.velocity = 0.7f + 0.3f * float(i % 3) / 2.0f;
+        n.oscillatorType = static_cast<OscillatorType>(i % OSC_COUNT);
+        n.vibrato = 0.5f;
+        n.arpeggio = (i % 2) ? 0x47 : 0;
+        pattern.notes.push_back(n);
+    }
+    p.patterns.clear();
+    p.patterns.push_back(pattern);
+    p.arrangement.clear();
+    for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+        p.arrangement.push_back(Clip{0, ch, 0.0f, 8.0f, 0});
+        ChannelConfig& c = p.channels[ch];
+        c.reverbEnabled = c.delayEnabled = c.chorusEnabled = true;
+        c.filterEnabled = c.compressorEnabled = c.eqEnabled = true;
+        c.delayFeedback = 0.6f;
+        c.reverbMix = 0.4f;
+    }
+
+    auto seqPtr = std::make_unique<Sequencer>();
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&p);
+    seq.setLoop(true, 0.0f, 8.0f);
+    seq.play();
+
+    const int blocks = (44100 * 60) / 512;   // 60 seconds
+    float earlyRms = 0.0f, lateRms = 0.0f;
+    int nonFinite = 0;
+    float peak = 0.0f;
+
+    std::vector<float> l(512), r(512);
+    for (int b = 0; b < blocks; ++b) {
+        seq.process(l.data(), r.data(), 512);
+        BufferStats st = analyze(l);
+        nonFinite += st.nonFiniteCount;
+        peak = std::max(peak, st.peak);
+        if (b == 100) earlyRms = st.rms;
+        if (b == blocks - 100) lateRms = st.rms;
+    }
+
+    check(nonFinite == 0,
+          "sixty seconds of playback produced no non-finite samples (" +
+          std::to_string(nonFinite) + " found)");
+    check(peak <= 1.05f,
+          "the limiter held the output over sixty seconds (peak " +
+          std::to_string(peak) + ")");
+    check(earlyRms > 1e-4f && lateRms > 1e-4f,
+          "audio is still present at the end of the run (early rms " +
+          std::to_string(earlyRms) + ", late rms " + std::to_string(lateRms) + ")");
+
+    // A loop that has run for a minute should sound roughly like it did at
+    // the start. A large drift means state is accumulating somewhere.
+    if (earlyRms > 1e-4f) {
+        const float ratio = lateRms / earlyRms;
+        check(ratio > 0.25f && ratio < 4.0f,
+              "level has not drifted over sixty seconds (late/early = " +
+              std::to_string(ratio) + ")");
+    }
+
+    // Position must still be inside the loop, not run off to infinity
+    check(std::isfinite(seq.getCurrentBeat()) && seq.getCurrentBeat() >= 0.0f &&
+          seq.getCurrentBeat() <= 8.5f,
+          "the playhead is still inside the loop (beat " +
+          std::to_string(seq.getCurrentBeat()) + ")");
+}
+
+// ============================================================================
+// 19. The master bus does not destroy the mix at its default settings
+// ============================================================================
+static void testMasterBusUnits() {
+    beginTest("Master bus unit conversions");
+
+    // The Project stores master EQ and compressor values in decibels; the
+    // DSP wants linear gain. Handing dB straight through meant enabling the
+    // master EQ at its default of 0 dB multiplied the mix by zero and
+    // silenced the entire song. Turning an effect ON at its defaults must be
+    // close to a no-op, never a mute.
+
+    auto renderWith = [](void (*configure)(Project&)) {
+        Project p;
+        Pattern pattern;
+        for (int i = 0; i < 8; ++i) {
+            Note n;
+            n.pitch = 48 + i * 3;
+            n.startTime = float(i) * 0.25f;
+            n.duration = 0.5f;
+            n.velocity = 0.9f;
+            n.oscillatorType = OscillatorType::Sawtooth;
+            pattern.notes.push_back(n);
+        }
+        p.patterns.clear();
+        p.patterns.push_back(pattern);
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        if (configure) configure(p);
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.play();
+
+        std::vector<float> out;
+        std::vector<float> l(512), r(512);
+        for (int b = 0; b < 60; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            out.insert(out.end(), l.begin(), l.end());
+        }
+        return analyze(out);
+    };
+
+    BufferStats bypassed = renderWith(nullptr);
+    check(!bypassed.allZero, "the baseline mix with no master effects is audible");
+
+    struct Case { const char* label; void (*configure)(Project&); };
+    const Case cases[] = {
+        {"master EQ at defaults", [](Project& p) { p.masterEQEnabled = true; }},
+        {"master compressor at defaults", [](Project& p) { p.masterCompressorEnabled = true; }},
+        {"master limiter at defaults", [](Project& p) { p.masterLimiterEnabled = true; }},
+        {"the whole master chain at defaults", [](Project& p) {
+            p.masterEQEnabled = true;
+            p.masterCompressorEnabled = true;
+            p.masterLimiterEnabled = true; }},
+    };
+
+    for (const Case& c : cases) {
+        BufferStats st = renderWith(c.configure);
+        check(st.nonFiniteCount == 0,
+              std::string(c.label) + " produced non-finite audio");
+        check(!st.allZero,
+              std::string(c.label) + " silenced the mix - check dB vs linear units");
+
+        // "Close to a no-op" - within about 12 dB either way. A limiter and a
+        // compressor legitimately move the level; a unit mismatch moves it by
+        // orders of magnitude or to zero.
+        if (bypassed.rms > 1e-5f) {
+            const float ratio = st.rms / bypassed.rms;
+            check(ratio > 0.25f && ratio < 4.0f,
+                  std::string(c.label) + " changed the level by " +
+                  std::to_string(ratio) + "x - a unit mismatch, not mastering");
+        }
+    }
+
+    // A deliberate boost must actually boost, and a cut must cut. This is
+    // what proves the conversion runs in the right direction.
+    BufferStats boosted = renderWith([](Project& p) {
+        p.masterEQEnabled = true;
+        p.masterEQLowGain = 9.0f;
+        p.masterEQMidGain = 9.0f;
+        p.masterEQHighGain = 9.0f;
+        p.masterLimiterEnabled = false;
+    });
+    BufferStats cut = renderWith([](Project& p) {
+        p.masterEQEnabled = true;
+        p.masterEQLowGain = -9.0f;
+        p.masterEQMidGain = -9.0f;
+        p.masterEQHighGain = -9.0f;
+        p.masterLimiterEnabled = false;
+    });
+    check(boosted.rms > cut.rms,
+          "a +9 dB master EQ is louder than a -9 dB one (" +
+          std::to_string(boosted.rms) + " vs " + std::to_string(cut.rms) + ")");
+    check(!cut.allZero, "a -9 dB master EQ attenuates rather than silencing");
+}
+
+// ============================================================================
+// 20. Validation covers every field it claims to
+// ============================================================================
+static void testValidationRepairsEverything() {
+    beginTest("Validation repairs every field");
+
+    // Fill a project with the worst values a corrupt file could contain and
+    // assert every one comes back usable.
+    Project p;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float inf = std::numeric_limits<float>::infinity();
+
+    p.bpm = nan;
+    p.beatsPerMeasure = -99;
+    p.masterVolume = inf;
+    p.songLength = -1e30f;
+    p.swing = 50.0f;
+    p.swingGrid = nan;
+    p.humanizeAmount = -3.0f;
+    p.masterEQLowGain = inf;
+    p.masterCompRatio = -5.0f;
+    p.masterLimiterCeiling = 100.0f;
+
+    for (ChannelConfig& c : p.channels) {
+        c.volume = nan;
+        c.pan = -50.0f;
+        c.filterCutoff = -1.0f;
+        c.filterResonance = inf;
+        c.delayFeedback = 2.0f;       // would self-oscillate
+        c.flangerFeedback = -5.0f;
+        c.phaserFeedback = 3.0f;
+        c.compThreshold = -10.0f;     // linear field given a dB value
+        c.compRatio = 0.01f;
+        c.eqLow = nan;
+        c.formantResonance = -1.0f;
+        c.tapeDrive = inf;
+        c.sidechainSource = 500;
+        c.envelope.attack = nan;
+        c.envelope.sustain = 9.0f;
+        c.oscillator.pulseWidth = 0.0f;
+    }
+
+    Pattern pattern;
+    Note bad;
+    bad.pitch = 9999;
+    bad.velocity = nan;
+    bad.startTime = -1e20f;
+    bad.duration = inf;
+    bad.vibrato = -50.0f;
+    bad.slide = 1e9f;
+    bad.sweepAmount = nan;
+    bad.echoRepeats = -20;
+    bad.retriggerSpeed = 0.0f;
+    bad.tremoloSpeed = inf;
+    pattern.notes.push_back(bad);
+    pattern.length = -40;
+    p.patterns.clear();
+    p.patterns.push_back(pattern);
+
+    p.arrangement.clear();
+    p.arrangement.push_back(Clip{0, 0, nan, inf, 0});
+    p.arrangement.push_back(Clip{77, 0, 0.0f, 4.0f, 0});   // dropped: bad pattern
+    p.arrangement.push_back(Clip{0, 77, 0.0f, 4.0f, 0});   // dropped: bad channel
+
+    clampProjectToValidRanges(p);
+
+    check(std::isfinite(p.bpm) && p.bpm >= ProjectLimits::MIN_BPM, "BPM repaired");
+    check(p.beatsPerMeasure >= 1, "time signature repaired");
+    check(std::isfinite(p.masterVolume) && p.masterVolume <= 2.0f, "master volume repaired");
+    check(std::isfinite(p.songLength) && p.songLength > 0.0f, "song length repaired");
+    check(p.swing >= 0.0f && p.swing <= 1.0f, "swing repaired");
+    check(std::isfinite(p.swingGrid) && p.swingGrid > 0.0f, "swing grid repaired");
+
+    for (const ChannelConfig& c : p.channels) {
+        check(std::isfinite(c.volume), "channel volume repaired");
+        check(c.pan >= -1.0f && c.pan <= 1.0f, "channel pan repaired");
+        check(c.filterCutoff >= 20.0f, "filter cutoff repaired");
+        check(std::isfinite(c.filterResonance), "filter resonance repaired");
+        check(c.delayFeedback < 1.0f,
+              "delay feedback held below unity so it cannot self-oscillate");
+        check(std::fabs(c.flangerFeedback) < 1.0f, "flanger feedback held below unity");
+        check(std::fabs(c.phaserFeedback) < 1.0f, "phaser feedback held below unity");
+        check(c.compThreshold > 0.0f,
+              "compressor threshold repaired to a positive linear level");
+        check(c.compRatio >= 1.0f, "compressor ratio repaired");
+        check(std::isfinite(c.eqLow) && c.eqLow > 0.0f,
+              "EQ gain repaired to a usable multiplier, not silence");
+        check(c.formantResonance > 0.0f, "formant resonance repaired");
+        check(std::isfinite(c.tapeDrive), "tape drive repaired");
+        check(c.sidechainSource >= -1 && c.sidechainSource < Project::MAX_CHANNELS,
+              "sidechain source repaired");
+        check(std::isfinite(c.envelope.attack), "envelope attack repaired");
+        check(c.envelope.sustain <= 1.0f, "envelope sustain repaired");
+        check(c.oscillator.pulseWidth > 0.0f, "pulse width repaired");
+    }
+
+    check(p.patterns[0].length > 0, "pattern length repaired");
+    const Note& n = p.patterns[0].notes[0];
+    check(n.pitch >= 0 && n.pitch <= 127, "note pitch repaired");
+    check(std::isfinite(n.velocity), "note velocity repaired");
+    check(std::isfinite(n.startTime) && n.startTime >= 0.0f, "note start repaired");
+    check(std::isfinite(n.duration) && n.duration > 0.0f, "note duration repaired");
+    check(std::isfinite(n.slide) && std::fabs(n.slide) <= 96.0f, "note slide repaired");
+    check(std::isfinite(n.sweepAmount), "note sweep repaired");
+    check(n.echoRepeats >= 0, "note echo repeats repaired");
+    check(n.retriggerSpeed > 0.0f, "note retrigger speed repaired");
+    check(std::isfinite(n.tremoloSpeed), "note tremolo speed repaired");
+
+    check(p.arrangement.size() == 1,
+          "clips pointing at a missing pattern or channel are dropped, not "
+          "silently retargeted (kept " + std::to_string(p.arrangement.size()) + " of 3)");
+    if (!p.arrangement.empty()) {
+        check(std::isfinite(p.arrangement[0].startBeat), "clip start repaired");
+        check(std::isfinite(p.arrangement[0].lengthBeats) &&
+              p.arrangement[0].lengthBeats > 0.0f, "clip length repaired");
+    }
+
+    // And the repaired project must render
+    auto seqPtr = std::make_unique<Sequencer>();
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&p);
+    seq.play();
+    std::vector<float> l(512), r(512);
+    for (int b = 0; b < 30; ++b) seq.process(l.data(), r.data(), 512);
+    check(analyze(l).nonFiniteCount == 0, "the repaired project renders finite audio");
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -1590,6 +2293,13 @@ int main(int argc, char** argv) {
     testMasterBus();
     testSilenceIsSilent();
     testInstrumentMacros();
+    testUndoRedo();
+    testMuteSoloRouting();
+    testLivePlaying();
+    testWavetables();
+    testMasterBusUnits();
+    testValidationRepairsEverything();
+    testLongRunStability();
 
     std::printf("\n==========================\n");
     std::printf("%d checks, %d failures\n", g_checks, g_failures);

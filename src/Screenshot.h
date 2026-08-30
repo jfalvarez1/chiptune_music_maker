@@ -138,6 +138,7 @@ struct CaptureRequest {
     std::string outputPath;
     std::string themeName;
     std::string viewName;
+    std::string workspaceName;
     std::vector<std::string> showWindows;
     int framesToWait = 90;      // ~1.5s at 60fps, enough for meters to settle
     int windowWidth = 1600;
@@ -151,6 +152,7 @@ struct CaptureRequest {
 //   --theme <name>       stock|cyberpunk|synthwave|matrix|frutiger|minimal|
 //                        vaporwave|terminal|gameboy|daylight
 //   --view <name>        pianoroll|tracker|arrangement|mixer|pad
+//   --workspace <name>   compose|sounddesign|mix
 //   --show <name>        macros|spectrum|midi   (repeatable)
 //   --frames <n>         frames to render before capturing
 //   --size <w> <h>       window size
@@ -171,6 +173,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             next(request.themeName);
         } else if (arg == "--view") {
             next(request.viewName);
+        } else if (arg == "--workspace") {
+            next(request.workspaceName);
         } else if (arg == "--show") {
             std::string window;
             if (next(window)) request.showWindows.push_back(window);
@@ -232,6 +236,18 @@ inline void applyCaptureState(const CaptureRequest& request,
     for (const ViewName& entry : views) {
         if (request.viewName == entry.name) {
             ui.currentView = entry.view;
+            break;
+        }
+    }
+
+    // --- Workspace ---
+    struct WorkspaceName { const char* name; int index; };
+    static const WorkspaceName workspaces[] = {
+        {"compose", 0}, {"sounddesign", 1}, {"mix", 2},
+    };
+    for (const WorkspaceName& entry : workspaces) {
+        if (request.workspaceName == entry.name) {
+            ui.currentWorkspace = entry.index;
             break;
         }
     }

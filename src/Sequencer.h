@@ -328,17 +328,27 @@ public:
 
         // Master EQ settings
         m_masterEffects.eqEnabled = m_project->masterEQEnabled;
-        m_masterEffects.eq.lowGain = m_project->masterEQLowGain;
-        m_masterEffects.eq.midGain = m_project->masterEQMidGain;
-        m_masterEffects.eq.highGain = m_project->masterEQHighGain;
+        // The Project stores these in decibels, which is what the UI shows.
+        // ThreeBandEQ and Compressor want linear gain, where 1.0 is unity.
+        // Handing them the dB value meant enabling the master EQ at its
+        // default of 0 dB multiplied the whole mix by zero and silenced the
+        // song. Limiter::ceiling is the exception - it converts dB itself.
+        auto dbToLinear = [](float db) {
+            if (!std::isfinite(db)) return 1.0f;
+            return std::pow(10.0f, db / 20.0f);
+        };
+
+        m_masterEffects.eq.lowGain = dbToLinear(m_project->masterEQLowGain);
+        m_masterEffects.eq.midGain = dbToLinear(m_project->masterEQMidGain);
+        m_masterEffects.eq.highGain = dbToLinear(m_project->masterEQHighGain);
 
         // Master Compressor settings
         m_masterEffects.compressorEnabled = m_project->masterCompressorEnabled;
-        m_masterEffects.compressor.threshold = m_project->masterCompThreshold;
+        m_masterEffects.compressor.threshold = dbToLinear(m_project->masterCompThreshold);
         m_masterEffects.compressor.ratio = m_project->masterCompRatio;
         m_masterEffects.compressor.attack = m_project->masterCompAttack;
         m_masterEffects.compressor.release = m_project->masterCompRelease;
-        m_masterEffects.compressor.makeupGain = m_project->masterCompMakeup;
+        m_masterEffects.compressor.makeupGain = dbToLinear(m_project->masterCompMakeup);
 
         // Master Limiter settings
         m_masterEffects.limiterEnabled = m_project->masterLimiterEnabled;
