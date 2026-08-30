@@ -119,6 +119,18 @@ foreach ($panel in $panels) {
     args = "--demo --view tracker"
 })
 
+# Genre focus decides what is put in front of you. Two very different ones,
+# so a change that collapsed them into the same palette would show up here.
+[void]$cases.Add(@{
+    name = "genre-chiptune"
+    args = "--demo --genre chiptune"
+})
+
+[void]$cases.Add(@{
+    name = "genre-reggaeton"
+    args = "--demo --genre reggaeton"
+})
+
 # working directory with the broken ini staged into it.
 [void]$cases.Add(@{
     name     = "legacy-layout-repair"

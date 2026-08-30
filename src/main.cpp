@@ -690,7 +690,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         ChiptuneTracker::DrawMasterBus(sequencer, project, uiState);
 
         // View tabs
-        ChiptuneTracker::DrawViewTabs(uiState);
+        ChiptuneTracker::DrawViewTabs(project, uiState);
 
         // Pattern list (always visible)
         ChiptuneTracker::DrawPatternList(project, uiState);

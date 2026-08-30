@@ -168,6 +168,9 @@ struct CaptureRequest {
 
     // Open the Chip Accuracy section, which is collapsed by default.
     bool expandChipPanel = false;
+
+    // Genre focus by name, so a shot can show the palette filtered.
+    std::string genreFocus;
 };
 
 // Parses the flags this app understands and ignores anything else.
@@ -182,6 +185,8 @@ struct CaptureRequest {
 //   --snap <name>        off|bar|1/2|1/4|1/8|1/16|1/32|1/4T|1/8T|1/16T
 //   --ghosts             show cross-channel ghost notes
 //   --chip-panel         open the Chip Accuracy section
+//   --genre <name>       everything|chiptune|synthwave|hiphop|reggaeton|
+//                        edm|rock|lofi
 //   --frames <n>         frames to render before capturing
 //   --size <w> <h>       window size
 //   --demo               populate a short demo song first
@@ -220,6 +225,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.showGhostNotes = true;
         } else if (arg == "--chip-panel") {
             request.expandChipPanel = true;
+        } else if (arg == "--genre") {
+            next(request.genreFocus);
         } else if (arg == "--select") {
             request.selectNotes = true;
         } else if (arg == "--playing") {
@@ -277,6 +284,31 @@ inline void applyCaptureState(const CaptureRequest& request,
 
     if (request.showGhostNotes) ui.showGhostNotes = true;
     if (request.expandChipPanel) g_ExpandChipAccuracy = true;
+
+    // --- Genre focus ---
+    //
+    // Matched against the profile names folded to lowercase with spaces
+    // dropped, so "Hip Hop" is reachable on a command line as "hiphop".
+    if (!request.genreFocus.empty()) {
+        auto fold = [](const char* text) {
+            std::string out;
+            for (const char* c = text; *c != '\0'; ++c) {
+                if (*c == ' ') continue;
+                out.push_back((*c >= 'A' && *c <= 'Z')
+                              ? static_cast<char>(*c - 'A' + 'a') : *c);
+            }
+            return out;
+        };
+
+        for (int i = 0; i < static_cast<int>(Genre::Count); ++i) {
+            const Genre candidate = static_cast<Genre>(i);
+            if (fold(genreName(candidate)) == request.genreFocus) {
+                ui.genre = candidate;
+                ApplyGenrePanels(ui);
+                break;
+            }
+        }
+    }
 
     // --- Grid snap ---
     if (!request.snapName.empty()) {

@@ -277,6 +277,25 @@ audit of this codebase, which is reproducible by anyone with `grep`.
 - [x] Note probability — one float, rolled per loop pass
 - [x] Snap to Scale actually snapping
 
+### Also done
+
+- [x] **Genre focus.** The palette carries eight chord sets and seven drum
+      categories, and the workspace has a panel for every feature we have
+      shipped. Someone writing chiptune does not have options in the jazz
+      voicings and the reggaeton percussion - they have things to scroll
+      past. A genre decides what is put in front of you: which palette
+      sections show, and which optional panels open. It removes nothing. The
+      View menu still lists every panel, and the palette carries a switch
+      that brings all of it back and says how much is being held. The default
+      is Everything, which behaves exactly as before, and choosing a genre
+      never touches the music - tempo, swing and key are a separate, explicit
+      button, because silently retuning someone's project is not a layout
+      change.
+
+      Still worth doing on top of it: filter the Tools panel's generators the
+      same way, ship a genre-appropriate starting template, and persist the
+      choice across sessions.
+
 ### Next, in rough value order
 
 - [x] **G1. Make the tracker view editable.** `DrawTrackerView` is read-only

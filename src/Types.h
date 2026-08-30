@@ -16,6 +16,7 @@
 #include "Macros.h"
 
 #include "Snap.h"
+#include "Genres.h"
 
 namespace ChiptuneTracker {
 
@@ -1229,6 +1230,12 @@ struct UIState {
     // - and therefore shuffle and 6/8 - were unwritable. Sixteenth reproduces
     // the old behaviour exactly, so nothing changes until the user asks.
     SnapDivision snapDivision = DEFAULT_SNAP;
+
+    // Genre focus. Decides which palette sections and panels are put in
+    // front of you; never removes anything. Everything is the default and
+    // behaves exactly as the program did before.
+    Genre genre = Genre::Everything;
+    bool paletteShowEverything = false;
 
     // Show the other channels' notes faintly behind the edited pattern.
     // Off by default: this audience self-selects for a quiet screen.

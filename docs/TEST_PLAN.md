@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**1986 checks across 36 groups.** Exit code 0 = pass, 1 = failure, and every
+**2005 checks across 37 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -88,6 +88,7 @@ failure names the field or parameter involved.
 | Chip mixing | The curves reproduce the published hardware ratios - 1.73x for two pulses, 1.65x for triangle against pulse, 88.7% for triangle plus noise - so a refactor that moves them fails; only 2A03 voices are grouped and a supersaw renders bit-identically either way; garbage levels yield finite gains. |
 | Console filters | 60 Hz is attenuated against 1 kHz; 16 kHz is rolled off; Famicom keeps far more low and top end than NES; DC settles away; a NaN sample does not poison the filter state permanently. |
 | Tracker grid | Two channels show two different notes - the exact bug the old view had; a channel with no clip shows nothing; a clip owns its start beat and not its end; overlapping clips resolve to the later one; a row owns a half-open span so no note appears twice; typing replaces rather than stacks; typing into empty space creates a bar-aligned pattern and clip; a note past the pattern end extends it; the pattern budget is respected; and a note typed into the grid is audible from the sequencer. |
+| Genre focus | Everything is the default and hides nothing; every other genre keeps some sections and sets others aside, and none is indistinguishable from Everything; two genres show genuinely different palettes; the hidden count the UI reports matches the profile; every profile has a name, a description and a usable tempo, swing and scale; an out-of-range genre falls back rather than reading past the table. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 
@@ -98,7 +99,7 @@ This drives the app's `--capture` mode through the combinations a person
 would otherwise click through by hand.
 
 ```powershell
-./tools/ui-smoke-test.ps1            # 33 cases
+./tools/ui-smoke-test.ps1            # 35 cases
 ./tools/ui-smoke-test.ps1 -Quick     # 12 cases, for a fast loop
 ```
 

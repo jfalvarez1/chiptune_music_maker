@@ -20,6 +20,7 @@
 #include "NoteTransforms.h"
 #include "GhostNotes.h"
 #include "TrackerGrid.h"
+#include "Genres.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -9706,10 +9707,26 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
 // ============================================================================
 // View Tabs
 // ============================================================================
-inline void DrawViewTabs(UIState& ui) {
+// Panels a genre puts in front of you. Applied once, when the genre is
+// chosen - not every frame, or the View menu could never override it.
+//
+// Everything deliberately does nothing here. It means "no opinion", so
+// switching back to it leaves whatever you had open still open, rather than
+// closing panels you asked for.
+inline void ApplyGenrePanels(UIState& ui) {
+    if (ui.genre == Genre::Everything) return;
+
+    const GenreProfile& profile = genreProfile(ui.genre);
+    ui.showMacroEditor = profile.macroEditor;
+    ui.showWavetableEditor = profile.wavetableEditor;
+    ui.showSpectrumAnalyzer = profile.spectrumAnalyzer;
+    ui.showAutomation = profile.automation;
+}
+
+inline void DrawViewTabs(Project& project, UIState& ui) {
     // Set initial window position on first use (top right)
     ImGui::SetNextWindowPos(ImVec2(780, 35), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(500, 50), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(500, 80), ImGuiCond_FirstUseEver);
     ImGui::Begin("Views", nullptr, ImGuiWindowFlags_NoCollapse);
 
     if (ImGui::Button("Piano Roll", ImVec2(100, 30))) {
@@ -9726,6 +9743,58 @@ inline void DrawViewTabs(UIState& ui) {
     ImGui::SameLine();
     if (ImGui::Button("Mixer", ImVec2(100, 30))) {
         ui.currentView = ViewMode::Mixer;
+    }
+
+    // ------------------------------------------------------------------
+    // Genre focus
+    //
+    // The workspace decides what you are doing; the genre decides what is
+    // worth having in front of you while you do it. It hides nothing - the
+    // View menu still lists every panel and the palette keeps a switch that
+    // brings all of it straight back.
+    // ------------------------------------------------------------------
+    ImGui::Separator();
+    ImGui::TextUnformatted("Focus:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::BeginCombo("##genrefocus", genreName(ui.genre))) {
+        for (int i = 0; i < static_cast<int>(Genre::Count); ++i) {
+            const Genre candidate = static_cast<Genre>(i);
+            if (ImGui::Selectable(genreName(candidate), candidate == ui.genre)) {
+                ui.genre = candidate;
+                ui.paletteShowEverything = false;
+                ApplyGenrePanels(ui);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", genreProfile(candidate).blurb);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Puts the tools for one kind of music in front of you.\n"
+                          "Nothing is removed - every panel stays in the View menu,\n"
+                          "and the palette has a switch to show all of it again.");
+    }
+
+    if (ui.genre != Genre::Everything) {
+        ImGui::SameLine();
+        if (ImGui::Button("Apply Defaults")) {
+            const GenreProfile& profile = genreProfile(ui.genre);
+            project.bpm = profile.bpm;
+            project.swing = profile.swing;
+            g_ToolsScaleRoot = profile.scaleRoot;
+            g_ToolsScaleType = profile.scaleType;
+        }
+        if (ImGui::IsItemHovered()) {
+            const GenreProfile& profile = genreProfile(ui.genre);
+            ImGui::SetTooltip("Set the tempo to %.0f, swing to %.0f%% and the key\n"
+                              "to %s %s.\n\n"
+                              "This one changes your project, which is why it is a\n"
+                              "button and not part of choosing the focus.",
+                              profile.bpm, profile.swing * 100.0f,
+                              noteName(profile.scaleRoot), scaleName(profile.scaleType));
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Pad", ImVec2(100, 30))) {
@@ -10415,6 +10484,14 @@ inline void PushCategoryHeaderStyle(const ImVec4& tint) {
 inline void DrawDrumCategory(const char* categoryName, bool& expanded,
                              const int* oscIndices, const char** names, const char** descs, int count,
                              Project& project, UIState& ui, Sequencer& seq) {
+    // Held back by the current genre. Nothing is removed - the palette's
+    // "show everything" switch brings it straight back, and says how much
+    // is being held back in the first place.
+    if (!ui.paletteShowEverything &&
+        !genreShowsDrumCategory(ui.genre, categoryName)) {
+        return;
+    }
+
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     PushCategoryHeaderStyle(ImVec4(1.00f, 0.67f, 0.67f, 1.0f));
@@ -10660,10 +10737,41 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
 
     // ========== CHORDS (Organized by Genre) ==========
     ImGui::Separator();
+    // What the current focus is holding back, and the way out of it. Shown
+    // above the sections themselves so it is read before the absence is
+    // noticed, rather than after hunting for something that is missing.
+    if (ui.genre != Genre::Everything) {
+        static const char* ALL_CHORD_SETS[] = {
+            "Pop", "Jazz", "Rock", "EDM", "HipHop", "Reggaeton",
+            "Synthwave", "Chiptune"
+        };
+        static const char* ALL_DRUM_SETS[] = {
+            "Kicks", "Snares & Claps", "Hi-Hats", "Toms", "Cymbals",
+            "Percussion", "Reggaeton Drums"
+        };
+        const int hidden = genreHiddenSectionCount(ui.genre, ALL_CHORD_SETS, 8,
+                                                   ALL_DRUM_SETS, 7);
+        if (hidden > 0) {
+            ImGui::Checkbox("Show everything", &ui.paletteShowEverything);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%d hidden by %s focus)", hidden, genreName(ui.genre));
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%d palette section%s are set aside for now.\n"
+                                  "Nothing has been removed.",
+                                  hidden, (hidden == 1) ? "" : "s");
+            }
+            ImGui::Separator();
+        }
+    }
+
     ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "CHORDS (click to select, then draw)");
 
     // Helper lambda to draw chord buttons for a genre
     auto DrawChordGenre = [&](const char* genre, bool& expanded, const char* headerLabel) {
+        if (!ui.paletteShowEverything && !genreShowsChordSet(ui.genre, genre)) {
+            return;
+        }
+
         PushCategoryHeaderStyle(ImVec4(0.75f, 0.50f, 1.00f, 1.0f));
 
         if (ImGui::CollapsingHeader(headerLabel, expanded ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {

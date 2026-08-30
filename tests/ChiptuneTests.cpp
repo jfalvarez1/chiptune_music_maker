@@ -29,6 +29,7 @@
 #include "GhostNotes.h"
 #include "ChipMix.h"
 #include "TrackerGrid.h"
+#include "Genres.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -4937,6 +4938,178 @@ static void testTrackerGrid() {
 }
 
 // ============================================================================
+// 37. Genre focus
+// ============================================================================
+static void testGenreFocus() {
+    beginTest("Genre focus");
+
+    // The palette's full contents. If a section is added and not listed
+    // here, the hidden-count the UI reports goes stale, so the counts below
+    // are the thing holding these two lists together.
+    static const char* ALL_CHORD_SETS[] = {
+        "Pop", "Jazz", "Rock", "EDM", "HipHop", "Reggaeton",
+        "Synthwave", "Chiptune"
+    };
+    static const char* ALL_DRUM_SETS[] = {
+        "Kicks", "Snares & Claps", "Hi-Hats", "Toms", "Cymbals",
+        "Percussion", "Reggaeton Drums"
+    };
+    const int CHORD_COUNT = 8;
+    const int DRUM_COUNT = 7;
+
+    // ---- Everything is the default and hides nothing ---------------------
+    {
+        const UIState fresh;
+        check(fresh.genre == Genre::Everything,
+              "a new session has no genre imposed on it");
+
+        for (int i = 0; i < CHORD_COUNT; ++i) {
+            if (!genreShowsChordSet(Genre::Everything, ALL_CHORD_SETS[i])) {
+                check(false, std::string("Everything hid the chord set ") +
+                      ALL_CHORD_SETS[i]);
+                break;
+            }
+        }
+        for (int i = 0; i < DRUM_COUNT; ++i) {
+            if (!genreShowsDrumCategory(Genre::Everything, ALL_DRUM_SETS[i])) {
+                check(false, std::string("Everything hid the drum set ") +
+                      ALL_DRUM_SETS[i]);
+                break;
+            }
+        }
+        check(true, "Everything shows every palette section");
+
+        check(genreHiddenSectionCount(Genre::Everything, ALL_CHORD_SETS, CHORD_COUNT,
+                                      ALL_DRUM_SETS, DRUM_COUNT) == 0,
+              "and therefore hides nothing at all");
+    }
+
+    // ---- A genre keeps what it needs and sets the rest aside -------------
+    {
+        check(genreShowsChordSet(Genre::Chiptune, "Chiptune"),
+              "chiptune keeps its own chord set");
+        check(!genreShowsChordSet(Genre::Chiptune, "Jazz"),
+              "and sets jazz voicings aside");
+        check(!genreShowsChordSet(Genre::Chiptune, "Reggaeton"),
+              "and reggaeton chords");
+        check(!genreShowsDrumCategory(Genre::Chiptune, "Reggaeton Drums"),
+              "and reggaeton percussion");
+
+        check(genreShowsChordSet(Genre::Reggaeton, "Reggaeton"),
+              "reggaeton keeps its own chord set");
+        check(genreShowsDrumCategory(Genre::Reggaeton, "Reggaeton Drums"),
+              "and its percussion, which is the part that actually matters");
+        check(!genreShowsChordSet(Genre::Reggaeton, "Chiptune"),
+              "and sets the chiptune set aside");
+
+        // The two must not collapse into the same palette.
+        int differences = 0;
+        for (int i = 0; i < CHORD_COUNT; ++i) {
+            if (genreShowsChordSet(Genre::Chiptune, ALL_CHORD_SETS[i]) !=
+                genreShowsChordSet(Genre::Reggaeton, ALL_CHORD_SETS[i])) {
+                ++differences;
+            }
+        }
+        check(differences >= 2,
+              "two different genres show genuinely different palettes (" +
+              std::to_string(differences) + " chord sets differ)");
+    }
+
+    // ---- Every genre keeps something, and sets something aside -----------
+    //
+    // A profile that hid everything, or nothing, would be a mistake rather
+    // than a choice.
+    {
+        for (int i = 1; i < static_cast<int>(Genre::Count); ++i) {
+            const Genre genre = static_cast<Genre>(i);
+
+            int shownChords = 0;
+            for (int c = 0; c < CHORD_COUNT; ++c) {
+                if (genreShowsChordSet(genre, ALL_CHORD_SETS[c])) ++shownChords;
+            }
+            int shownDrums = 0;
+            for (int d = 0; d < DRUM_COUNT; ++d) {
+                if (genreShowsDrumCategory(genre, ALL_DRUM_SETS[d])) ++shownDrums;
+            }
+
+            if (shownChords == 0 || shownDrums == 0) {
+                check(false, std::string(genreName(genre)) +
+                      " leaves the palette empty");
+                break;
+            }
+            if (shownChords == CHORD_COUNT && shownDrums == DRUM_COUNT) {
+                check(false, std::string(genreName(genre)) +
+                      " is indistinguishable from Everything");
+                break;
+            }
+        }
+        check(true, "every genre keeps some sections and sets others aside");
+    }
+
+    // ---- The hidden count the UI reports is right -------------------------
+    {
+        const int chiptuneHidden = genreHiddenSectionCount(
+            Genre::Chiptune, ALL_CHORD_SETS, CHORD_COUNT, ALL_DRUM_SETS, DRUM_COUNT);
+        // Chiptune keeps 3 chord sets and 3 drum categories out of 8 and 7.
+        check(chiptuneHidden == (CHORD_COUNT - 3) + (DRUM_COUNT - 3),
+              "the count of hidden sections matches the profile (got " +
+              std::to_string(chiptuneHidden) + ")");
+    }
+
+    // ---- Profiles are sane ------------------------------------------------
+    {
+        for (int i = 0; i < static_cast<int>(Genre::Count); ++i) {
+            const GenreProfile& profile = genreProfile(static_cast<Genre>(i));
+
+            if (profile.name == nullptr || profile.name[0] == '\0') {
+                check(false, "a genre has no name"); break;
+            }
+            if (profile.blurb == nullptr || profile.blurb[0] == '\0') {
+                check(false, std::string(profile.name) + " has no description"); break;
+            }
+            if (!(profile.bpm >= 30.0f && profile.bpm <= 300.0f)) {
+                check(false, std::string(profile.name) + " suggests an unusable tempo");
+                break;
+            }
+            if (!(profile.swing >= 0.0f && profile.swing <= 1.0f)) {
+                check(false, std::string(profile.name) + " suggests an impossible swing");
+                break;
+            }
+            if (profile.scaleRoot < 0 || profile.scaleRoot > 11) {
+                check(false, std::string(profile.name) + " suggests a root outside an octave");
+                break;
+            }
+            if (profile.scaleType < 0 || profile.scaleType >= SCALE_COUNT) {
+                check(false, std::string(profile.name) + " suggests a scale that does not exist");
+                break;
+            }
+        }
+        check(true, "every profile has a name, a description and usable defaults");
+    }
+
+    // ---- Hygiene ----------------------------------------------------------
+    {
+        // An out-of-range genre must fall back rather than read past the
+        // table - this arrives from a saved layout or a command line.
+        const GenreProfile& bogus = genreProfile(static_cast<Genre>(99));
+        check(std::string(bogus.name) == "Everything",
+              "an unknown genre falls back to Everything");
+
+        const GenreProfile& negative = genreProfile(static_cast<Genre>(-3));
+        check(std::string(negative.name) == "Everything",
+              "and so does a negative one");
+
+        check(!genreShowsChordSet(Genre::Chiptune, nullptr),
+              "a null section name is refused rather than dereferenced");
+        check(!genreShowsChordSet(Genre::Chiptune, "NoSuchSet"),
+              "an unknown section name is not shown");
+        check(genreShowsChordSet(Genre::Everything, "NoSuchSet"),
+              "though Everything shows even sections it has never heard of, "
+              "which is what makes it future-proof against new ones");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -5012,6 +5185,7 @@ int main(int argc, char** argv) {
     testChipFilters();
     testChipMixReachesAudio();
     testTrackerGrid();
+    testGenreFocus();
     testLongRunStability();
 
     std::printf("\n==========================\n");
