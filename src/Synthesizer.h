@@ -9,6 +9,7 @@
 
 #include "Types.h"
 #include "Effects.h"
+#include "Sample.h"
 #include <cmath>
 #include <array>
 
@@ -50,6 +51,10 @@ struct Voice {
     // Per-voice oscillator type (allows different sounds per note)
     OscillatorType oscillatorType = OscillatorType::Pulse;
 
+    // Sample playback (if >= 0, use sample instead of synth oscillator)
+    int sampleID = -1;
+    SampleOscillator sampleOscillator;
+
     // Per-note effects
     float vibratoDepth = 0.0f;      // 0.0 to 1.0 (semitones of pitch wobble)
     float vibratoSpeed = 5.0f;      // Hz (default 5 Hz vibrato rate)
@@ -75,6 +80,16 @@ struct Voice {
     float tremoloDepth = 0.0f;      // 0.0 to 1.0 (volume wobble depth)
     float tremoloSpeed = 4.0f;      // Hz
     float tremoloPhase = 0.0f;      // Current tremolo LFO phase
+
+    // Filter Envelope State
+    float filterEnvLevel = 0.0f;
+    float filterEnvTime = 0.0f;
+    
+    // Per-voice Filter State (Simple 1-pole Lowpass)
+    float filterState = 0.0f;
+    
+    // Formant Filter States (3 bands x 2 states for biquad/svf)
+    float formantState[3][2] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}};
 
     void reset() {
         active = false;
@@ -108,6 +123,12 @@ struct Voice {
         tremoloDepth = 0.0f;
         tremoloSpeed = 4.0f;
         tremoloPhase = 0.0f;
+        // Filter reset
+        filterEnvLevel = 0.0f;
+        filterEnvTime = 0.0f;
+        filterState = 0.0f;
+        // Formant reset
+        for(int i=0; i<3; ++i) { formantState[i][0] = 0.0f; formantState[i][1] = 0.0f; }
     }
 };
 
@@ -249,6 +270,96 @@ public:
     void setConfig(const OscillatorConfig& osc, const Envelope& env) {
         m_oscConfig = osc;
         m_envelope = env;
+    }
+
+    void setChannelConfig(const ChannelConfig& config) {
+        m_oscConfig = config.oscillator;
+        m_envelope = config.envelope;
+        
+        // Filter Envelope
+        m_filterEnvEnabled = config.filterEnvEnabled;
+        m_filterEnvAmount = config.filterEnvAmount;
+        m_filterEnvAttack = config.filterEnvAttack;
+        m_filterEnvDecay = config.filterEnvDecay;
+        
+        // Effects
+        m_effects.bitcrusherEnabled = config.bitcrusherEnabled;
+        m_effects.bitcrusher.bitDepth = config.bitDepth;
+        m_effects.bitcrusher.sampleRateReduction = config.sampleRateDiv;
+        
+        m_effects.distortionEnabled = config.distortionEnabled;
+        m_effects.distortion.type = static_cast<DistortionType>(config.distortionType);
+        m_effects.distortion.drive = config.distortionDrive;
+        m_effects.distortion.mix = config.distortionMix;
+        
+        m_effects.filterEnabled = config.filterEnabled;
+        m_effects.filter.type = static_cast<FilterType>(config.filterType);
+        m_effects.filter.cutoff = config.filterCutoff;
+        m_effects.filter.resonance = config.filterResonance;
+        
+        m_effects.eqEnabled = config.eqEnabled;
+        m_effects.eq.lowGain = config.eqLow;
+        m_effects.eq.midGain = config.eqMid;
+        m_effects.eq.highGain = config.eqHigh;
+        m_effects.eq.lowFreq = config.eqLowFreq;
+        m_effects.eq.midFreq = config.eqMidFreq;
+        m_effects.eq.highFreq = config.eqHighFreq;
+        
+        m_effects.compressorEnabled = config.compressorEnabled;
+        m_effects.compressor.threshold = config.compThreshold;
+        m_effects.compressor.ratio = config.compRatio;
+        m_effects.compressor.attack = config.compAttack;
+        m_effects.compressor.release = config.compRelease;
+        m_effects.compressor.makeupGain = config.compGain;
+        
+        m_effects.formantEnabled = config.formantEnabled;
+        m_effects.formant.vowel = static_cast<FormantFilter::Vowel>(config.formantVowel);
+        m_effects.formant.resonance = config.formantResonance;
+        
+        m_effects.delayEnabled = config.delayEnabled;
+        m_effects.delay.delayTime = config.delayTime;
+        m_effects.delay.feedback = config.delayFeedback;
+        m_effects.delay.mix = config.delayMix;
+        
+        m_effects.chorusEnabled = config.chorusEnabled;
+        m_effects.chorus.mix = config.chorusMix;
+        m_effects.chorus.rate = config.chorusRate;
+        m_effects.chorus.depth = config.chorusDepth;
+
+        m_effects.flangerEnabled = config.flangerEnabled;
+        m_effects.flanger.rate = config.flangerRate;
+        m_effects.flanger.depth = config.flangerDepth;
+        m_effects.flanger.feedback = config.flangerFeedback;
+        m_effects.flanger.mix = config.flangerMix;
+
+        m_effects.tremoloEnabled = config.tremoloEnabled;
+        m_effects.tremolo.rate = config.tremoloRate;
+        m_effects.tremolo.depth = config.tremoloDepth;
+        
+        m_effects.phaserEnabled = config.phaserEnabled;
+        m_effects.phaser.rate = config.phaserRate;
+        m_effects.phaser.depth = config.phaserDepth;
+        m_effects.phaser.feedback = config.phaserFeedback;
+        
+        m_effects.sidechainEnabled = config.sidechainEnabled;
+        m_effects.sidechain.amount = config.sidechainAmount;
+        m_effects.sidechain.release = config.sidechainRelease;
+        
+        m_effects.reverbEnabled = config.reverbEnabled;
+        m_effects.reverb.mix = config.reverbMix;
+        m_effects.reverb.roomSize = config.reverbRoomSize;
+        m_effects.reverb.damping = config.reverbDamping;
+        
+        m_effects.stereoWidenerEnabled = config.stereoWidenerEnabled;
+        m_effects.stereoWidener.width = config.stereoWidenerWidth;
+        m_effects.stereoWidener.haasDelay = config.stereoWidenerHaas;
+        m_effects.stereoWidener.mix = config.stereoWidenerMix;
+        
+        m_effects.tapeSaturationEnabled = config.tapeSaturationEnabled;
+        m_effects.tapeSaturation.drive = config.tapeDrive;
+        m_effects.tapeSaturation.warmth = config.tapeWarmth;
+        m_effects.tapeSaturation.compression = config.tapeCompression;
+        m_effects.tapeSaturation.mix = config.tapeMix;
     }
 
     // Trigger a note (with optional fade parameters and oscillator type)
@@ -462,6 +573,28 @@ public:
 
             // Generate oscillator sample
             float sample = generateOscillator(voice);
+
+            // Apply Per-Voice Filter Envelope (if enabled and not drum)
+            if (m_filterEnvEnabled && !isDrum) {
+                // Calculate envelope
+                float envVal = 0.0f;
+                if (voice.filterEnvTime < m_filterEnvAttack) {
+                    envVal = voice.filterEnvTime / (m_filterEnvAttack + 0.001f);
+                } else {
+                    float decayTime = voice.filterEnvTime - m_filterEnvAttack;
+                    envVal = std::max(0.0f, 1.0f - decayTime / (m_filterEnvDecay + 0.001f));
+                }
+                voice.filterEnvTime += dt;
+                
+                // Modulate cutoff (base around 800Hz for warmth, sweep up)
+                float baseCutoff = 800.0f; 
+                float cutoff = baseCutoff * std::pow(2.0f, m_filterEnvAmount * 5.0f * envVal);
+                cutoff = std::max(50.0f, std::min(cutoff, 18000.0f));
+                
+                float alpha = 1.0f - std::exp(-TWO_PI * cutoff * dt);
+                voice.filterState += alpha * (sample - voice.filterState);
+                sample = voice.filterState;
+            }
 
             // Apply envelope (skip ADSR for drums - they have internal envelopes)
             float envGain = 1.0f;
@@ -792,6 +925,14 @@ private:
                 break;
             case OscillatorType::DembowSnare:
                 sample = generateDembowSnare(voice);
+                break;
+            
+            // High-Accuracy Recreations
+            case OscillatorType::Vocoder:
+                sample = generateVocoder(voice);
+                break;
+            case OscillatorType::KavinskyBass:
+                sample = generateKavinskyBass(voice);
                 break;
         }
 
@@ -2364,6 +2505,102 @@ private:
     }
 
     // ========================================================================
+    // High-Accuracy Recreation Generators
+    // ========================================================================
+
+    // Vocoder - Accurate Formant Filtered Sawtooth (Male "Ah/Oh" vowel)
+    // Uses 3 parallel bandpass filters to shape the spectrum
+    float generateVocoder(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // 1. Source: Rich Sawtooth (with PolyBLEP)
+        float saw = 2.0f * t - 1.0f;
+        saw -= polyBlep(t, dt);
+        
+        // Add Pulse for "hollow" voice character
+        float pulse = (t < 0.5f) ? 1.0f : -1.0f;
+        pulse += polyBlep(t, dt);
+        pulse -= polyBlep(std::fmod(t + 0.5f, 1.0f), dt);
+        
+        // Add Noise for "Breath" (crucial for realism)
+        float noise = generateNoise(voice);
+        
+        // Source Mix: Saw + Pulse + Breath
+        float source = saw * 0.5f + pulse * 0.3f + noise * 0.15f;
+        
+        // 2. Formant Filtering (Parallel Bandpass)
+        // "Oh" Formants: F1=400Hz, F2=900Hz, F3=2300Hz
+        float freqs[] = {400.0f, 900.0f, 2300.0f};
+        float gains[] = {1.2f, 0.6f, 0.3f};
+        float qs[]    = {6.0f, 8.0f, 10.0f};
+        
+        float output = 0.0f;
+        
+        for (int i = 0; i < 3; ++i) {
+            // Simple State Variable Filter (Bandpass)
+            float f = 2.0f * std::sin(PI * freqs[i] / m_sampleRate);
+            float q = 1.0f / qs[i];
+            
+            float low = voice.formantState[i][1] + f * voice.formantState[i][0];
+            float high = source - low - q * voice.formantState[i][0];
+            float band = f * high + voice.formantState[i][0];
+            
+            voice.formantState[i][0] = band;
+            voice.formantState[i][1] = low;
+            
+            output += band * gains[i];
+        }
+        
+        // 3. Saturation/Compression
+        return std::tanh(output * 6.0f);
+    }
+
+    // KavinskyBass - Driving, filtered saw with aggressive resonant pluck
+    // Uses resonant filter for that "wow" attack
+    float generateKavinskyBass(Voice& voice) {
+        float t = voice.phase;
+        float dt = voice.phaseIncrement;
+
+        // 1. Fat Unison Saw
+        float saw1 = 2.0f * t - 1.0f;
+        saw1 -= polyBlep(t, dt);
+        
+        // Second saw slightly detuned
+        float phase2 = std::fmod(t * 1.005f + 0.3f, 1.0f);
+        float saw2 = 2.0f * phase2 - 1.0f;
+        saw2 -= polyBlep(phase2, dt);
+        
+        // Sub-oscillator
+        float subT = std::fmod(t * 0.5f, 1.0f);
+        float sub = (subT < 0.5f) ? 1.0f : -1.0f;
+        sub += polyBlep(subT, dt * 0.5f);
+        sub -= polyBlep(std::fmod(subT + 0.5f, 1.0f), dt * 0.5f);
+
+        float raw = (saw1 + saw2) * 0.4f + sub * 0.6f;
+
+        // 2. Resonant Filter Envelope
+        float env = std::exp(-voice.envTime * 12.0f);
+        float cutoff = 200.0f + 2400.0f * env;
+        float resonance = 0.7f; // Add resonance!
+
+        // State Variable Filter (Lowpass)
+        // Re-use formantState[0] for filter state: [0]=band, [1]=low
+        float f = 2.0f * std::sin(PI * cutoff / m_sampleRate);
+        float q = 1.0f - resonance;
+        
+        float low = voice.formantState[0][1] + f * voice.formantState[0][0];
+        float high = raw - low - q * voice.formantState[0][0];
+        float band = f * high + voice.formantState[0][0];
+        
+        voice.formantState[0][0] = band;
+        voice.formantState[0][1] = low;
+        
+        // 3. Drive
+        return std::tanh(low * 2.5f);
+    }
+
+    // ========================================================================
     // Envelope Processing
     // ========================================================================
     float processEnvelope(Voice& voice) {
@@ -2442,6 +2679,12 @@ private:
 
     bool m_vibratoEnabled = false;
     bool m_arpeggiatorEnabled = false;
+    
+    // Filter Envelope Settings
+    bool m_filterEnvEnabled = false;
+    float m_filterEnvAmount = 0.0f;
+    float m_filterEnvAttack = 0.0f;
+    float m_filterEnvDecay = 0.1f;
 };
 
 } // namespace ChiptuneTracker

@@ -202,11 +202,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
     // ========================================================================
     // Initialize Tracker
     // ========================================================================
+    // These two are large (the Sequencer holds eight synths, each with a full
+    // effects chain and its delay buffers). Give them static storage so they
+    // never sit on WinMain's 1MB stack, no matter how the DSP grows.
     printf("Creating project...\n");
-    ChiptuneTracker::Project project;
+    static ChiptuneTracker::Project project;
     printf("Project created\n");
     printf("Creating sequencer...\n");
-    ChiptuneTracker::Sequencer sequencer;
+    static ChiptuneTracker::Sequencer sequencer;
     printf("Sequencer created\n");
     ChiptuneTracker::UIState uiState;
     ChiptuneTracker::PlaybackState playbackState;

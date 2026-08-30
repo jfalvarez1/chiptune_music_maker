@@ -288,82 +288,9 @@ public:
 
         for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
             const auto& config = m_project->channels[ch];
-            m_synths[ch].setConfig(config.oscillator, config.envelope);
-
-            // Sync effect enables
-            auto& fx = m_synths[ch].effects();
-            fx.bitcrusherEnabled = config.bitcrusherEnabled;
-            fx.distortionEnabled = config.distortionEnabled;
-            fx.filterEnabled = config.filterEnabled;
-            fx.delayEnabled = config.delayEnabled;
-
-            // Sync genre effects (reverb, chorus, delay settings)
-            fx.reverbEnabled = config.reverbEnabled;
-            fx.reverb.mix = config.reverbMix;
-            fx.reverb.roomSize = config.reverbRoomSize;
-            fx.reverb.damping = config.reverbDamping;
-
-            fx.chorusEnabled = config.chorusEnabled;
-            fx.chorus.mix = config.chorusMix;
-            fx.chorus.rate = config.chorusRate;
-            fx.chorus.depth = config.chorusDepth;
-
-            // Extended delay settings
-            if (config.delayEnabled) {
-                fx.delay.mix = config.delayMix;
-                fx.delay.delayTime = config.delayTime;
-                fx.delay.feedback = config.delayFeedback;
-            }
-
-            // Stereo Widener (essential for synthwave pads)
-            fx.stereoWidenerEnabled = config.stereoWidenerEnabled;
-            fx.stereoWidener.width = config.stereoWidenerWidth;
-            fx.stereoWidener.haasDelay = config.stereoWidenerHaas;
-            fx.stereoWidener.mix = config.stereoWidenerMix;
-
-            // Tape Saturation (analog warmth)
-            fx.tapeSaturationEnabled = config.tapeSaturationEnabled;
-            fx.tapeSaturation.drive = config.tapeDrive;
-            fx.tapeSaturation.warmth = config.tapeWarmth;
-            fx.tapeSaturation.compression = config.tapeCompression;
-            fx.tapeSaturation.mix = config.tapeMix;
-
-            // Filter settings
-            fx.filter.type = static_cast<FilterType>(config.filterType);
-            fx.filter.cutoff = config.filterCutoff;
-            fx.filter.resonance = config.filterResonance;
-
-            // Distortion settings
-            fx.distortion.type = static_cast<DistortionType>(config.distortionType);
-            fx.distortion.drive = config.distortionDrive;
-            fx.distortion.mix = config.distortionMix;
-
-            // Bitcrusher settings
-            fx.bitcrusher.bitDepth = config.bitDepth;
-            fx.bitcrusher.sampleRateReduction = config.sampleRateDiv;
-
-            // Phaser settings
-            fx.phaserEnabled = config.phaserEnabled;
-            fx.phaser.rate = config.phaserRate;
-            fx.phaser.depth = config.phaserDepth;
-            fx.phaser.feedback = config.phaserFeedback;
-
-            // Flanger settings (NEW)
-            fx.flangerEnabled = config.flangerEnabled;
-            fx.flanger.rate = config.flangerRate;
-            fx.flanger.depth = config.flangerDepth;
-            fx.flanger.feedback = config.flangerFeedback;
-            fx.flanger.mix = config.flangerMix;
-
-            // Tremolo settings
-            fx.tremoloEnabled = config.tremoloEnabled;
-            fx.tremolo.depth = config.tremoloDepth;
-            fx.tremolo.rate = config.tremoloRate;
-
-            // Sidechain settings
-            fx.sidechainEnabled = config.sidechainEnabled;
-            fx.sidechain.amount = config.sidechainAmount;
-            fx.sidechain.release = config.sidechainRelease;
+            // Single sync point: oscillator, envelope, filter envelope and the
+            // full per-channel effects chain (see Synthesizer::setChannelConfig).
+            m_synths[ch].setChannelConfig(config);
         }
     }
 

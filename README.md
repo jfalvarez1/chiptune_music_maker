@@ -443,6 +443,18 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
+### Quick Rebuild (when build directory exists)
+
+For Windows with Visual Studio, from the project root:
+
+```bash
+cmake --build build --config Release
+```
+
+Output: `build/bin/Release/ChiptuneTracker.exe`
+
+**Note**: If the app is running, close it first or the build will fail with a file lock error.
+
 ## Usage
 
 Run the executable from `build/bin/`:

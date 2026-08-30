@@ -8,6 +8,7 @@
 
 #include "Types.h"
 #include "Sequencer.h"
+#include "MIDIExport.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -33,6 +34,7 @@ inline std::string oscillatorTypeToString(OscillatorType type) {
         case OscillatorType::Sawtooth: return "Sawtooth";
         case OscillatorType::Sine: return "Sine";
         case OscillatorType::Noise: return "Noise";
+        case OscillatorType::Supersaw: return "Supersaw";
         case OscillatorType::Custom: return "Custom";
         // Synths
         case OscillatorType::SynthLead: return "SynthLead";
@@ -45,6 +47,32 @@ inline std::string oscillatorTypeToString(OscillatorType type) {
         case OscillatorType::SynthBrass: return "SynthBrass";
         case OscillatorType::SynthChip: return "SynthChip";
         case OscillatorType::SynthBell: return "SynthBell";
+        
+        // Additional Basses
+        case OscillatorType::SynthwaveBass: return "SynthwaveBass";
+        case OscillatorType::AcidBass: return "AcidBass";
+        case OscillatorType::SubBass808: return "SubBass808";
+        
+        // Synthwave
+        case OscillatorType::SynthwaveLead: return "SynthwaveLead";
+        case OscillatorType::SynthwavePad: return "SynthwavePad";
+        case OscillatorType::SynthwaveArp: return "SynthwaveArp";
+        case OscillatorType::SynthwaveChord: return "SynthwaveChord";
+        case OscillatorType::SynthwaveFM: return "SynthwaveFM";
+        // Techno
+        case OscillatorType::TechnoStab: return "TechnoStab";
+        case OscillatorType::Hoover: return "Hoover";
+        case OscillatorType::RaveChord: return "RaveChord";
+        case OscillatorType::Reese: return "Reese";
+        // Hip Hop
+        case OscillatorType::LoFiKeys: return "LoFiKeys";
+        case OscillatorType::VinylNoise: return "VinylNoise";
+        case OscillatorType::TrapLead: return "TrapLead";
+        // Extra
+        case OscillatorType::GatedPad: return "GatedPad";
+        case OscillatorType::PolySynth: return "PolySynth";
+        case OscillatorType::SyncLead: return "SyncLead";
+
         // Drums
         case OscillatorType::Kick: return "Kick";
         case OscillatorType::Kick808: return "Kick808";
@@ -67,6 +95,17 @@ inline std::string oscillatorTypeToString(OscillatorType type) {
         case OscillatorType::Conga: return "Conga";
         case OscillatorType::Maracas: return "Maracas";
         case OscillatorType::Tambourine: return "Tambourine";
+        // Reggaeton
+        case OscillatorType::ReggaetonBass: return "ReggaetonBass";
+        case OscillatorType::LatinBrass: return "LatinBrass";
+        case OscillatorType::Guira: return "Guira";
+        case OscillatorType::Bongo: return "Bongo";
+        case OscillatorType::Timbale: return "Timbale";
+        case OscillatorType::Dembow808: return "Dembow808";
+        case OscillatorType::DembowSnare: return "DembowSnare";
+        // High-Accuracy Recreations
+        case OscillatorType::Vocoder: return "Vocoder";
+        case OscillatorType::KavinskyBass: return "KavinskyBass";
         default: return "Pulse";
     }
 }
@@ -77,6 +116,7 @@ inline OscillatorType stringToOscillatorType(const std::string& str) {
     if (str == "Sawtooth") return OscillatorType::Sawtooth;
     if (str == "Sine") return OscillatorType::Sine;
     if (str == "Noise") return OscillatorType::Noise;
+    if (str == "Supersaw") return OscillatorType::Supersaw;
     if (str == "Custom") return OscillatorType::Custom;
     // Synths
     if (str == "SynthLead") return OscillatorType::SynthLead;
@@ -89,6 +129,32 @@ inline OscillatorType stringToOscillatorType(const std::string& str) {
     if (str == "SynthBrass") return OscillatorType::SynthBrass;
     if (str == "SynthChip") return OscillatorType::SynthChip;
     if (str == "SynthBell") return OscillatorType::SynthBell;
+    
+    // Additional Basses
+    if (str == "SynthwaveBass") return OscillatorType::SynthwaveBass;
+    if (str == "AcidBass") return OscillatorType::AcidBass;
+    if (str == "SubBass808") return OscillatorType::SubBass808;
+    
+    // Synthwave
+    if (str == "SynthwaveLead") return OscillatorType::SynthwaveLead;
+    if (str == "SynthwavePad") return OscillatorType::SynthwavePad;
+    if (str == "SynthwaveArp") return OscillatorType::SynthwaveArp;
+    if (str == "SynthwaveChord") return OscillatorType::SynthwaveChord;
+    if (str == "SynthwaveFM") return OscillatorType::SynthwaveFM;
+    // Techno
+    if (str == "TechnoStab") return OscillatorType::TechnoStab;
+    if (str == "Hoover") return OscillatorType::Hoover;
+    if (str == "RaveChord") return OscillatorType::RaveChord;
+    if (str == "Reese") return OscillatorType::Reese;
+    // Hip Hop
+    if (str == "LoFiKeys") return OscillatorType::LoFiKeys;
+    if (str == "VinylNoise") return OscillatorType::VinylNoise;
+    if (str == "TrapLead") return OscillatorType::TrapLead;
+    // Extra
+    if (str == "GatedPad") return OscillatorType::GatedPad;
+    if (str == "PolySynth") return OscillatorType::PolySynth;
+    if (str == "SyncLead") return OscillatorType::SyncLead;
+
     // Drums
     if (str == "Kick") return OscillatorType::Kick;
     if (str == "Kick808") return OscillatorType::Kick808;
@@ -111,6 +177,17 @@ inline OscillatorType stringToOscillatorType(const std::string& str) {
     if (str == "Conga") return OscillatorType::Conga;
     if (str == "Maracas") return OscillatorType::Maracas;
     if (str == "Tambourine") return OscillatorType::Tambourine;
+    // Reggaeton
+    if (str == "ReggaetonBass") return OscillatorType::ReggaetonBass;
+    if (str == "LatinBrass") return OscillatorType::LatinBrass;
+    if (str == "Guira") return OscillatorType::Guira;
+    if (str == "Bongo") return OscillatorType::Bongo;
+    if (str == "Timbale") return OscillatorType::Timbale;
+    if (str == "Dembow808") return OscillatorType::Dembow808;
+    if (str == "DembowSnare") return OscillatorType::DembowSnare;
+    // High-Accuracy Recreations
+    if (str == "Vocoder") return OscillatorType::Vocoder;
+    if (str == "KavinskyBass") return OscillatorType::KavinskyBass;
     return OscillatorType::Pulse;
 }
 
@@ -510,5 +587,13 @@ inline std::string saveFileDialog(const char*, const char*) {
 }
 
 #endif
+
+// ============================================================================
+// MIDI Export
+// ============================================================================
+
+inline bool exportProjectToMIDI(const Project& project, const std::string& filepath) {
+    return MIDIExporter::exportToMIDI(project, filepath);
+}
 
 } // namespace ChiptuneTracker

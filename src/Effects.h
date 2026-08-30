@@ -451,7 +451,12 @@ public:
     }
 
 private:
-    static constexpr int BUFFER_SIZE = 96000; // 2 seconds at 48kHz
+    // A flanger only ever needs a few milliseconds of delay (1ms + depth, where
+    // depth maxes out at 10ms). 8192 samples is ~170ms at 48kHz - far more than
+    // enough, and small enough that eight of these fit comfortably in memory.
+    // (This was 96000 floats = 384KB per instance, which overflowed the stack
+    //  once eight EffectsChains were held by value in the Sequencer.)
+    static constexpr int BUFFER_SIZE = 8192;
     std::array<float, BUFFER_SIZE> m_delayBuffer = {};
     int m_writePos = 0;
     float m_phase = 0.0f;

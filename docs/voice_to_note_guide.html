@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VoiceToNote Guide</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-soft: #1e293b;
+      --border: #1f2937;
+      --text: #e5e7eb;
+      --shadow: 0 20px 60px rgba(0,0,0,0.35);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: radial-gradient(circle at 20% 20%, rgba(56,189,248,0.08), transparent 30%),
+                  radial-gradient(circle at 80% 0%, rgba(168,85,247,0.08), transparent 30%),
+                  var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      padding: 32px 18px 80px;
+      position: relative;
+      overflow-x: hidden;
+      animation: bg-shift 18s ease-in-out infinite alternate;
+    }
+    main { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 2.2rem; margin: 0 0 10px; }
+    h2 { margin: 0 0 12px; font-size: 1.4rem; }
+    h3 { margin: 12px 0 8px; font-size: 1.1rem; }
+    p { margin: 6px 0 14px; color: var(--muted); }
+    .hero {
+      background: linear-gradient(135deg, rgba(56,189,248,0.16), rgba(94,234,212,0.08));
+      border: 1px solid rgba(56,189,248,0.3);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero .glow {
+      position: absolute;
+      width: 260px;
+      height: 260px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(56,189,248,0.18), transparent 55%);
+      filter: blur(12px);
+      top: -60px;
+      right: -60px;
+      animation: drift 14s ease-in-out infinite alternate;
+      pointer-events: none;
+    }
+    .hero .glow.left {
+      left: -60px; right: auto; top: 10px;
+      background: radial-gradient(circle, rgba(168,85,247,0.16), transparent 55%);
+      animation-duration: 16s;
+    }
+    @keyframes drift {
+      from { transform: translateY(-6px) scale(1); opacity: 0.9; }
+      to { transform: translateY(6px) scale(1.05); opacity: 0.6; }
+    }
+
+    .neon-frame {
+      position: relative;
+    }
+    .neon-frame::before {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: 14px;
+      padding: 1px;
+      background: linear-gradient(120deg, rgba(56,189,248,0.6), rgba(168,85,247,0.4), rgba(56,189,248,0.6));
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      opacity: 0.6;
+      animation: hue 10s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes hue {
+      from { filter: hue-rotate(0deg); }
+      to { filter: hue-rotate(360deg); }
+    }
+
+    /* Equalizer bars */
+    .eq {
+      display: flex;
+      gap: 4px;
+      align-items: flex-end;
+      height: 30px;
+      margin: 10px 0 4px;
+    }
+    .eq span {
+      width: 6px;
+      border-radius: 4px;
+      background: linear-gradient(180deg, rgba(56,189,248,0.8), rgba(168,85,247,0.7));
+      height: 12px;
+      transition: height 0.2s ease;
+      box-shadow: 0 0 10px rgba(56,189,248,0.4);
+    }
+    .grid { display: grid; gap: 14px; }
+    @media (min-width: 880px) { .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+    .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.85rem; background: var(--accent-soft); color: var(--accent); margin-right: 8px; }
+    ul { padding-left: 20px; margin: 6px 0 12px; }
+    li { margin: 6px 0; }
+    code { background: #1f2937; padding: 2px 6px; border-radius: 6px; color: #e0e7ff; }
+    .timeline { position: relative; padding-left: 26px; }
+    .timeline::before { content: ""; position: absolute; left: 9px; top: 4px; bottom: 4px; width: 2px; background: var(--border); }
+    .step { position: relative; margin-bottom: 12px; }
+    .step::before { content: ""; position: absolute; left: -18px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(56,189,248,0.16); }
+    .tag { font-size: 0.85rem; color: var(--muted); }
+    .callout {
+      border-left: 3px solid var(--accent);
+      padding: 10px 12px;
+      background: rgba(56,189,248,0.06);
+      border-radius: 10px;
+      margin: 10px 0;
+    }
+    .columns { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--muted); }
+
+    /* Pad grid visual */
+    .pad-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .pad {
+      position: relative;
+      height: 70px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(168,85,247,0.08));
+      border: 1px solid rgba(255,255,255,0.06);
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), 0 10px 25px rgba(0,0,0,0.35);
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .pad::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(56,189,248,0.35), transparent 55%);
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    .pad.active::after { opacity: 1; }
+    .pad.active {
+      animation: flash 0.5s ease;
+      border-color: rgba(56,189,248,0.5);
+      box-shadow: inset 0 0 0 1px rgba(56,189,248,0.4), 0 12px 30px rgba(56,189,248,0.35);
+    }
+    .pad-label {
+      position: absolute;
+      bottom: 8px;
+      right: 10px;
+      font-size: 0.8rem;
+      color: rgba(229,231,235,0.7);
+    }
+
+    @keyframes flash {
+      0% { transform: translateY(0); filter: brightness(1); }
+      50% { transform: translateY(-2px); filter: brightness(1.4); }
+      100% { transform: translateY(0); filter: brightness(1); }
+    }
+
+    /* Synthwave overlay grid */
+    .grid-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(56,189,248,0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(168,85,247,0.06) 1px, transparent 1px);
+      background-size: 140px 140px, 140px 140px;
+      mix-blend-mode: screen;
+      opacity: 0.5;
+      animation: grid-move 20s linear infinite;
+    }
+
+    /* Floating musical notes */
+    .anim-notes {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .note {
+      position: absolute;
+      bottom: -40px;
+      color: var(--text);
+      font-size: 18px;
+      opacity: 0.8;
+      filter: drop-shadow(0 0 6px rgba(56,189,248,0.6));
+      animation: rise 8s linear forwards;
+      font-family: "Segoe UI Symbol", "Arial Unicode MS", Arial, sans-serif;
+    }
+
+    @keyframes rise {
+      0% { transform: translateY(0) translateX(0) scale(0.8); opacity: 0; }
+      10% { opacity: 0.9; }
+      60% { opacity: 0.9; }
+      100% { transform: translateY(-120vh) translateX(30px) scale(1.3); opacity: 0; }
+    }
+
+    @keyframes grid-move {
+      from { background-position: 0 0, 0 0; }
+      to { background-position: 0 140px, 140px 0; }
+    }
+
+    @keyframes bg-shift {
+      0% { filter: hue-rotate(0deg); }
+      50% { filter: hue-rotate(10deg) saturate(1.05); }
+      100% { filter: hue-rotate(-10deg) saturate(1.05); }
+    }
+  </style>
+</head>
+<body>
+<div class="grid-overlay"></div>
+<div class="anim-notes" id="notesLayer"></div>
+<main>
+  <div class="hero neon-frame">
+    <div class="glow left"></div><div class="glow"></div>
+    <h1>Chiptune Voice-to-Note Tool</h1>
+    <p>Record or import audio (voice, humming, beatbox), detect notes or drums, map to instruments, preview, and export to your tracker. This guide explains every mode, setting, and practical workflow. Theme: neon/synthwave UI with interactive pads.</p>
+    <div class="eq" id="eqBars">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="pad-grid" id="padGrid">
+      <div class="pad"><span class="pad-label">Kick</span></div>
+      <div class="pad"><span class="pad-label">Snare</span></div>
+      <div class="pad"><span class="pad-label">Hat</span></div>
+      <div class="pad"><span class="pad-label">Bass</span></div>
+      <div class="pad"><span class="pad-label">Lead</span></div>
+      <div class="pad"><span class="pad-label">Chord</span></div>
+      <div class="pad"><span class="pad-label">Pluck</span></div>
+      <div class="pad"><span class="pad-label">FX</span></div>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Quick Workflow</h2>
+    <div class="timeline">
+      <div class="step"><strong>1) Capture</strong> – Click <b>START RECORDING</b>, or load a WAV via <b>Load WAV</b>/<b>Browse</b>. Recording clears any imported file.</div>
+      <div class="step"><strong>2) Choose Mode</strong> – Pick Melodic, Bass, Percussion, Rhythm, or Polyphonic.</div>
+      <div class="step"><strong>3) Tune Settings</strong> – Adjust <b>Sensitivity</b>, <b>Target BPM</b>, pitch range, harmonize, or drum focus/kit.</div>
+      <div class="step"><strong>4) Analyze</strong> – Click <b>ANALYZE</b>. Results appear in the piano-roll preview; auto-play if enabled.</div>
+      <div class="step"><strong>5) Preview & Edit</strong> – Use <b>PLAY PREVIEW</b>. Right-click notes in the roll to override instruments.</div>
+      <div class="step"><strong>6) Export</strong> – <b>EXPORT TO .CTP</b> with current BPM and quantization (16ths).</div>
+    </div>
+  </section>
+
+  <section class="grid grid-2">
+    <div class="card">
+      <h2>Detection Modes</h2>
+      <h3><span class="pill">Melodic (Pitch)</span></h3>
+      <ul>
+        <li>Tracks sung/played notes with YIN+FFT fusion, pitch median smoothing, and outlier rejection.</li>
+        <li><b>Pitch Range</b>: All, Melody (&gt;C3), Bass (&lt;C4) filter to cut bleed.</li>
+        <li><b>Harmonize</b>: Add octave, fifth, or smart 3rd (uses detected key when available).</li>
+        <li>Use when singing melodies, whistling, or playing a single lead line; best with clean input and moderate Sensitivity.</li>
+      </ul>
+      <h3><span class="pill">Bass Only</span></h3>
+      <ul>
+        <li>Low-frequency focused; longer window; adaptive envelope to avoid chopping sustained booms.</li>
+        <li>Fallback to MIDI 36 if pitch is undefined; good for “boom” beatbox basslines.</li>
+      </ul>
+      <h3><span class="pill">Percussion (Drums)</span></h3>
+      <ul>
+        <li>Classifies Kick/Snare/Hat with spectral centroid, dominant freq, zero-crossing, and band energy.</li>
+        <li><b>Drum Focus</b>: filter to Kick, Snare, Hat, or Full Kit. <b>Kit Mapping</b> picks playback samples.</li>
+        <li>Writes debug to <code>analysis_debug.txt</code> after ANALYZE.</li>
+      </ul>
+      <h3><span class="pill">Rhythm (Onset)</span></h3>
+      <ul>
+        <li>Instrument-agnostic onset splitter using RMS + spectral flux; keeps hit lengths, no pitch.</li>
+        <li>Map the rhythm to any instrument (pluck, pad, bass) after detection; great for tapping/clapping patterns.</li>
+      </ul>
+      <h3><span class="pill">Polyphonic (Chords)</span></h3>
+      <ul>
+        <li>Captures top spectral peaks per window for simple triads/pads; adaptive gate to suppress noise.</li>
+        <li>Use for slow-moving pads or block chords; avoid very dense or percussive audio.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Key Controls</h2>
+      <div class="columns">
+        <div>
+          <h3>Input</h3>
+          <ul>
+            <li><b>Input Device</b>: select mic/interface.</li>
+            <li><b>Load WAV/Browse</b>: import mono WAV; Active Source shows path/rate.</li>
+            <li><b>START RECORDING</b>: clears imported file, begins capture.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Analysis</h3>
+          <ul>
+            <li><b>Sensitivity</b>: lower = more detections; raise to reject noise.</li>
+            <li><b>Target BPM</b>: preview/export tempo; quantize to 16ths.</li>
+            <li><b>Harmonize</b>: adds layers; Smart 3rd uses detected key.</li>
+            <li><b>Drum Focus/Kit</b>: filter and pick samples for kick/snare/hat.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Preview</h3>
+          <ul>
+            <li><b>Target Instrument</b>: global playback sound; override per-note via right-click in roll.</li>
+            <li><b>Advanced Preview</b>: richer ADSR/effects for many synth presets.</li>
+            <li><b>Auto-Play</b>: auto preview after analyze/apply effects.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Post-Processing</h3>
+          <ul>
+            <li><b>Harmonics</b>: add up to 3 intervals (octave, 5th, 3rd).</li>
+            <li><b>Auto-Tune</b>: snap to detected key scale.</li>
+            <li><b>Chain Melody</b>: legato stitch between melodic notes.</li>
+            <li><b>COMMIT EDITS</b>: save manual edits as new base before effects.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Use-Case Recipes</h2>
+    <table id="recipesTable">
+      <thead><tr><th>Goal</th><th>Mode & Settings</th><th>Steps</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Beatbox Kicks/Hats</td>
+          <td>Percussion; Drum Focus=Full; Sensitivity ~0.02; Kit mapping to your samples.</td>
+          <td>Beatbox “boom/tss”; ANALYZE; preview; export. If hats mislabel, check <code>analysis_debug.txt</code> and adjust Sensitivity slightly.</td>
+        </tr>
+        <tr>
+          <td>Tap/Clap Rhythm</td>
+          <td>Rhythm (Onset); Sensitivity ~0.02.</td>
+          <td>Tap/clap; ANALYZE; set Target Instrument to pluck/bass/pad; preview. Increase gap between hits for clearer splits.</td>
+        </tr>
+        <tr>
+          <td>Hum Bassline</td>
+          <td>Bass Only; Pitch Range Bass; Target Instrument=Sub Bass 808.</td>
+          <td>Hum low “boom”; ANALYZE; adjust Sensitivity if fragmented; keep mic close to reduce room noise.</td>
+        </tr>
+        <tr>
+          <td>Sing Lead + Harmony</td>
+          <td>Melodic; Pitch Range=Melody; Harmonize=Octave+Fifth.</td>
+          <td>Sing; ANALYZE; auto-play; export to pad/lead. If pitch jitters, raise Sensitivity a notch.</td>
+        </tr>
+        <tr>
+          <td>Simple Chords</td>
+          <td>Polyphonic; Sensitivity slightly higher (~0.03).</td>
+          <td>Play/sing triads; ANALYZE; map to pad/organ. Use clean input and sustain chords for best capture.</td>
+        </tr>
+      </tbody>
+    </table>
+    <button id="shuffleRecipe" style="margin-top:10px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--accent-soft);color:var(--text);cursor:pointer;">Shuffle Example</button>
+    <div id="recipeNote" style="margin-top:6px;color:var(--muted);font-size:0.9rem;"></div>
+  </section>
+
+  <section class="card">
+    <h2>Tips & Troubleshooting</h2>
+    <div class="columns">
+      <div>
+        <h3>Too many fragments?</h3>
+        <ul>
+          <li>Raise Sensitivity slightly.</li>
+          <li>For Rhythm, separate hits with clearer gaps.</li>
+          <li>For Melodic, use Melody pitch range to ignore low rumble.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Missing notes?</h3>
+        <ul>
+          <li>Lower Sensitivity a bit.</li>
+          <li>Sing/beatbox closer to mic; avoid clipping.</li>
+          <li>Use Bass mode for low  boom content.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Wrong drum class?</h3>
+        <ul>
+          <li>Check <code>analysis_debug.txt</code> after ANALYZE.</li>
+          <li>Set Drum Focus to the target (Kick/Snare/Hat) to filter.</li>
+          <li>Ensure WAV is mono or beatbox clearly separated.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Clicks or harsh tails?</h3>
+        <ul>
+          <li>Enable Advanced Preview for smoother envelopes.</li>
+          <li>Shorten very tiny notes (<code>Chain Melody</code> helps stitch).</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><strong>Export note:</strong> .CTP export uses current BPM and 16th-note quantization. Set Target BPM before exporting for proper grid alignment.</div>
+  </section>
+
+  <section class="card">
+    <h2>Interactive Cheat Sheet</h2>
+    <div class="columns">
+      <div>
+        <h3>Mode Helper</h3>
+        <select id="modeHelper" style="width:100%; padding:8px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text);">
+          <option value="melodic">Melodic</option>
+          <option value="bass">Bass Only</option>
+          <option value="drums">Percussion</option>
+          <option value="rhythm">Rhythm</option>
+          <option value="poly">Polyphonic</option>
+        </select>
+        <div id="modeTip" class="callout" style="margin-top:10px;">Pick a mode to see a quick tip.</div>
+      </div>
+      <div>
+        <h3>Sensitivity Sandbox</h3>
+        <label class="tag">Sensitivity (simulated)</label>
+        <input id="sensSlider" type="range" min="1" max="50" value="20" style="width:100%;" />
+        <div id="sensTip" class="callout" style="margin-top:8px;">Higher = fewer hits, use to reject noise. Lower = more hits.</div>
+      </div>
+      <div>
+        <h3>Pad Instrument Selector</h3>
+        <p class="tag">Click a pad in the hero grid to audition and set the target instrument.</p>
+        <p class="tag">Waveform shows detected onsets; beats ruler toggle helps align to BPM.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Feature Highlights (Under the Hood)</h2>
+    <ul>
+      <li>Melodic: YIN + FFT fusion, median smoothing, outlier gating, adaptive RMS envelope, longer release for sustained tones.</li>
+      <li>Bass: onset gating tuned for low end; fallback to MIDI 36 when pitchless; retrigger protection to avoid chopping.</li>
+      <li>Percussion: centroid + dominant freq + ZCR + band energies; kick/hat tie-breakers; post-pass corrections; debug dump.</li>
+      <li>Rhythm: RMS + spectral flux onsets; preserves per-hit durations; instrument-agnostic mapping after detection.</li>
+      <li>Polyphonic: top spectral peaks with adaptive gate to avoid noise hits; good for slow-moving pads/triads.</li>
+    </ul>
+  </section>
+</main>
+  <script>
+    // Floating musical notes generator
+    (function() {
+      const layer = document.getElementById("notesLayer");
+      if (!layer) return;
+      const symbols = ["\\266B", "\\266A", "\\266C"]; // music note unicode escapes
+
+    function spawnNote() {
+      const span = document.createElement("span");
+      span.className = "note";
+      const sym = symbols[Math.floor(Math.random() * symbols.length)];
+      span.innerHTML = "&#" + parseInt(sym.replace("\\", ""), 16) + ";";
+      const size = 14 + Math.random() * 12;
+      span.style.left = Math.random() * 100 + "vw";
+      span.style.fontSize = size + "px";
+      span.style.animationDuration = (6 + Math.random() * 4) + "s";
+      span.style.animationDelay = (Math.random() * 1.5) + "s";
+      layer.appendChild(span);
+      setTimeout(() => { span.remove(); }, 12000);
+    }
+
+    setInterval(spawnNote, 800);
+    for (let i = 0; i < 6; i++) spawnNote();
+  })();
+
+    // Pad flash animation loop
+    (function() {
+      const grid = document.getElementById("padGrid");
+      if (!grid) return;
+      const pads = Array.from(grid.querySelectorAll(".pad"));
+    function flashRandomPad() {
+      if (pads.length === 0) return;
+      const pad = pads[Math.floor(Math.random() * pads.length)];
+      pad.classList.add("active");
+      setTimeout(() => pad.classList.remove("active"), 350);
+    }
+    setInterval(flashRandomPad, 600);
+    flashRandomPad();
+  })();
+
+  // Equalizer bars animation
+  (function() {
+    const eq = document.getElementById("eqBars");
+    if (!eq) return;
+    const bars = Array.from(eq.querySelectorAll("span"));
+    function pump() {
+      bars.forEach((bar, idx) => {
+        const base = 10 + Math.random() * 50;
+        const wobble = (idx % 2 === 0) ? 8 : -8;
+        bar.style.height = Math.max(6, base + wobble) + "px";
+      });
+    }
+    setInterval(pump, 180);
+    pump();
+  })();
+
+  // Mode helper tips
+  (function() {
+    const helper = document.getElementById("modeHelper");
+    const tip = document.getElementById("modeTip");
+    if (!helper || !tip) return;
+    const tips = {
+      melodic: "Melodic: best for singing/whistling leads. Use Melody range and Harmonize for thickness.",
+      bass: "Bass Only: targets low “boom”. Good for hummed bass/beatbox. Falls back to MIDI 36 if pitchless.",
+      drums: "Percussion: kick/snare/hat detection with spectral cues. Use Drum Focus to filter.",
+      rhythm: "Rhythm: onset splitter only. Map the rhythm to any instrument after detection.",
+      poly: "Polyphonic: simple chord capture; best with slow pads/triads and clean input."
+    };
+    helper.addEventListener("change", () => {
+      const val = helper.value;
+      tip.textContent = tips[val] || "Pick a mode to see a quick tip.";
+    });
+  })();
+
+  // Sensitivity sandbox
+  (function() {
+    const slider = document.getElementById("sensSlider");
+    const tip = document.getElementById("sensTip");
+    if (!slider || !tip) return;
+    function update() {
+      const v = Number(slider.value);
+      if (v < 12) tip.textContent = "Very low threshold: expect more hits, even faint noise.";
+      else if (v < 22) tip.textContent = "Low threshold: detailed detection; good room noise control needed.";
+      else if (v < 35) tip.textContent = "Medium threshold: balanced; rejects light noise, keeps strong hits.";
+      else tip.textContent = "High threshold: only strong hits/notes get through; use to suppress clutter.";
+    }
+    slider.addEventListener("input", update);
+    update();
+  })();
+
+  // Shuffle recipe note
+  (function() {
+    const btn = document.getElementById("shuffleRecipe");
+    const note = document.getElementById("recipeNote");
+    const rows = document.querySelectorAll("#recipesTable tbody tr");
+    if (!btn || !note || rows.length === 0) return;
+    function shuffle() {
+      const row = Array.from(rows)[Math.floor(Math.random() * rows.length)];
+      const cells = row.querySelectorAll("td");
+      if (cells.length >= 3) {
+        note.innerHTML = `<strong>Try:</strong> ${cells[0].textContent.trim()} — ${cells[2].textContent.trim()}`;
+      }
+    }
+    btn.addEventListener("click", shuffle);
+    shuffle();
+  })();
+
+  // Pad click sounds (Web Audio)
+  (function() {
+    const grid = document.getElementById("padGrid");
+    if (!grid || typeof AudioContext === "undefined") return;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const padLabels = ["Kick","Snare","Hat","Bass","Lead","Chord","Pluck","FX"];
+    const baseFreqs = [80, 180, 6000, 55, 440, 330, 520, 2600];
+
+    function beep(freq, dur) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + dur);
+    }
+
+    Array.from(grid.querySelectorAll(".pad")).forEach((pad, idx) => {
+      pad.addEventListener("click", () => {
+        const freq = baseFreqs[idx % baseFreqs.length];
+        beep(freq, 0.18);
+        pad.classList.add("active");
+        setTimeout(() => pad.classList.remove("active"), 220);
+      });
+    });
+  })();
+</script>
+</body>
+</html>

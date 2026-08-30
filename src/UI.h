@@ -66,6 +66,7 @@ static bool g_PaletteExpanded_Toms = false;
 static bool g_PaletteExpanded_Cymbals = false;
 static bool g_PaletteExpanded_Percussion = false;
 static bool g_PaletteExpanded_Reggaeton = false;
+static bool g_PaletteExpanded_Recreations = false;
 static bool g_PaletteExpanded_Patterns = false;
 
 // ============================================================================
@@ -8737,7 +8738,9 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         "Crash", "Ride",
         "Cowbell", "Clave", "Conga", "Maracas", "Tambourine",
         // Reggaeton Instruments (7) - indices 56-62
-        "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow808", "DembowSnare"
+        "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow808", "DembowSnare",
+        // High-Accuracy Recreations (2) - indices 63-64
+        "Vocoder", "Kavinsky Bass"
     };
     const char* oscDesc[] = {
         // Oscillators (7) - indices 0-6
@@ -8763,11 +8766,17 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         "Crash long", "Ride sustained",
         "808 cowbell", "Wood block", "Conga", "Shaker", "Jingly",
         // Reggaeton Instruments (7) - indices 56-62
-        "Punchy reggaeton bass", "Latin brass stab", "Scraped dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick", "Tight clap snare"
+        "Punchy reggaeton bass", "Latin brass stab", "Scraped dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick", "Tight clap snare",
+        // High-Accuracy Recreations (2) - indices 63-64
+        "Formant-filtered talkbox lead", "Resonant filtered saw bass"
     };
 
     constexpr int NUM_OSCILLATORS = 7;  // Pulse, Triangle, Sawtooth, Sine, Noise, Supersaw, Custom
     constexpr int NUM_SYNTHS = 28;  // 10 original + 6 synthwave + 5 techno + 4 hip-hop + 3 additional (reggaeton synths are in Reggaeton section)
+    constexpr int NUM_RECREATIONS = 2;      // Vocoder, KavinskyBass
+    constexpr int RECREATIONS_START = static_cast<int>(OscillatorType::Vocoder);
+    static_assert(RECREATIONS_START + NUM_RECREATIONS == sizeof(oscNames) / sizeof(oscNames[0]),
+                  "oscNames must stay index-aligned with OscillatorType");
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // ========== OSCILLATORS (Collapsible) ==========
@@ -8864,6 +8873,54 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         }
     } else {
         g_PaletteExpanded_Synths = false;
+    }
+    ImGui::PopStyleColor(3);
+
+    // ========== RECREATIONS (High-accuracy signature sounds) ==========
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.35f, 0.2f, 0.3f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.45f, 0.25f, 0.4f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.55f, 0.3f, 0.5f, 1.0f));
+
+    if (ImGui::CollapsingHeader("Recreations", g_PaletteExpanded_Recreations ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        g_PaletteExpanded_Recreations = true;
+        ImVec2 iconSize(50, 32);
+        for (int i = RECREATIONS_START; i < RECREATIONS_START + NUM_RECREATIONS; ++i) {
+            ImGui::PushID(i);
+            ImVec2 pos = ImGui::GetCursorScreenPos();
+            bool isPaletteSelected = (g_SelectedPaletteItem == i);
+
+            ImU32 bgColor = isPaletteSelected ? IM_COL32(140, 80, 120, 255) : IM_COL32(55, 40, 50, 255);
+            ImU32 waveColor = isPaletteSelected ? IM_COL32(255, 180, 230, 255) : IM_COL32(180, 120, 160, 255);
+            ImU32 borderColor = isPaletteSelected ? IM_COL32(255, 150, 220, 255) : IM_COL32(100, 70, 90, 255);
+
+            drawList->AddRectFilled(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), bgColor, 4.0f);
+            drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y), borderColor, 4.0f, 0, isPaletteSelected ? 2.0f : 1.0f);
+            DrawWaveformIcon(drawList, pos, iconSize, static_cast<OscillatorType>(i), waveColor);
+
+            ImGui::InvisibleButton("##recreation", iconSize);
+            if (ImGui::IsItemClicked()) {
+                if (g_SelectedPaletteItem == i) {
+                    g_SelectedPaletteItem = -1;
+                } else {
+                    g_SelectedPaletteItem = i;
+                    g_SelectedDurationMult = 1.0f;
+                    g_SelectedChordIndex = -1;
+                    ui.pianoRollMode = PianoRollMode::Draw;
+                    project.channels[ui.selectedChannel].oscillator.type = static_cast<OscillatorType>(i);
+                    seq.updateChannelConfigs();
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", oscNames[i]);
+                ImGui::TextDisabled("%s", oscDesc[i]);
+                ImGui::EndTooltip();
+            }
+            if (i < RECREATIONS_START + NUM_RECREATIONS - 1) ImGui::SameLine();
+            ImGui::PopID();
+        }
+    } else {
+        g_PaletteExpanded_Recreations = false;
     }
     ImGui::PopStyleColor(3);
 
@@ -9260,12 +9317,16 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         } else if (g_SelectedPaletteItem < NUM_OSCILLATORS + NUM_SYNTHS) {
             color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
             typeStr = "Synth";
+        } else if (g_SelectedPaletteItem >= RECREATIONS_START) {
+            color = ImVec4(1.0f, 0.6f, 0.9f, 1.0f);
+            typeStr = "Recreation";
         } else {
             color = ImVec4(1.0f, 0.6f, 0.6f, 1.0f);
             typeStr = "Drum";
         }
         ImGui::TextColored(color, "Selected: %s", oscNames[g_SelectedPaletteItem]);
-        if (g_SelectedPaletteItem >= NUM_OSCILLATORS + NUM_SYNTHS) {
+        if (g_SelectedPaletteItem >= NUM_OSCILLATORS + NUM_SYNTHS &&
+            g_SelectedPaletteItem < RECREATIONS_START) {
             // Show duration for drums
             const char* durStr = (g_SelectedDurationMult < 0.75f) ? "Short" :
                                  (g_SelectedDurationMult > 1.5f) ? "Long" : "Normal";
