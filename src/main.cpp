@@ -281,7 +281,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     autosave.setDirectory(".");
     bool showRecoveryPrompt = false;
     std::string recoveryAge;
-    if (!captureRequest.enabled && autosave.hasRecoverableSession()) {
+    // --keep-ini means "behave like a real session with state on disk", so it
+    // also opts into the recovery prompt. Without that the prompt could not
+    // be screenshotted or smoke-tested at all.
+    const bool actLikeRealSession = !captureRequest.enabled || captureRequest.keepSavedLayout;
+    if (actLikeRealSession && autosave.hasRecoverableSession()) {
         showRecoveryPrompt = true;
         recoveryAge = autosave.describeRecoveryAge();
         printf("Recovery file found from %s\n", recoveryAge.c_str());

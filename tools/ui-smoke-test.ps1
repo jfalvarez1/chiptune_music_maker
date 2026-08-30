@@ -90,9 +90,21 @@ foreach ($panel in $panels) {
 # This is the only case that must run WITH a saved layout, so it gets its own
 # working directory with the broken ini staged into it.
 [void]$cases.Add(@{
-    name    = "legacy-layout-repair"
-    args    = "--demo --keep-ini"
-    fixture = "tests/fixtures/legacy-predocking-imgui.ini"
+    name     = "legacy-layout-repair"
+    args     = "--demo --keep-ini"
+    fixtures = @{ "tests/fixtures/legacy-predocking-imgui.ini" = "imgui.ini" }
+})
+
+# A recovery file surviving to launch means the previous session crashed, and
+# the app should offer to restore it. The prompt is skipped in plain capture
+# mode, so this uses --keep-ini, which means "behave like a real session".
+[void]$cases.Add(@{
+    name     = "crash-recovery-prompt"
+    args     = "--demo --keep-ini"
+    fixtures = @{
+        "tests/fixtures/legacy-predocking-imgui.ini" = "imgui.ini"
+        "tests/fixtures/recovery-session.ctp"        = "recovery.ctp"
+    }
 })
 
 # ---------------------------------------------------------------------------
@@ -168,11 +180,13 @@ foreach ($case in $cases) {
     # as imgui.ini, so it exercises the saved-layout path without touching
     # the repo's own layout file.
     $workDir = (Get-Location).Path
-    if ($case.ContainsKey("fixture")) {
+    if ($case.ContainsKey("fixtures")) {
         $workDir = Join-Path $temp "$name-cwd"
         if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
         New-Item -ItemType Directory -Force -Path $workDir | Out-Null
-        Copy-Item $case.fixture (Join-Path $workDir "imgui.ini") -Force
+        foreach ($source in $case.fixtures.Keys) {
+            Copy-Item $source (Join-Path $workDir $case.fixtures[$source]) -Force
+        }
     }
 
     $process = Start-Process -FilePath (Resolve-Path $Exe) -ArgumentList $argList `

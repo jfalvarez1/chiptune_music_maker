@@ -89,7 +89,7 @@ This drives the app's `--capture` mode through the combinations a person
 would otherwise click through by hand.
 
 ```powershell
-./tools/ui-smoke-test.ps1            # 26 cases
+./tools/ui-smoke-test.ps1            # 28 cases
 ./tools/ui-smoke-test.ps1 -Quick     # 12 cases, for a fast loop
 ```
 
@@ -99,7 +99,8 @@ lost GL context or a panel that did not draw looks like.
 
 Covered: all 5 views · all 10 themes · all 3 workspaces · the macro editor
 panel · empty projects in three views · window sizes from 800×600 to
-2560×800 to 900×1200 · a 2-frame startup race.
+2560×800 to 900×1200 · a 2-frame startup race · a pre-docking imgui.ini
+being repaired · the crash-recovery prompt.
 
 It is deliberately **not** a pixel-comparison test. Golden images would fail
 on every legitimate UI change, and a test everyone learns to ignore is worse
@@ -158,9 +159,6 @@ These need hands on a mouse. Run before tagging a release.
 
 Honest list of what nothing currently covers.
 
-0. **The recovery prompt itself.** The autosave *logic* is covered
-   headlessly, but the modal that offers the restore is skipped in capture
-   mode by design, so only the manual checklist exercises it.
 1. **Interactive UI logic.** Every mouse-driven path — dragging notes, box
    selection, clip dragging, knob sweeps — is exercised only by the manual
    checklist. The smoke test proves the screens *draw*, not that they
