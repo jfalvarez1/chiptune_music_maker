@@ -129,7 +129,11 @@ envelopes where chiptune wants step macros.**
 - [ ] **C2. Chord progression generator** with genre-aware voicings, and a
       one-click "arpeggiate this progression" that writes a classic fast
       chiptune arp.
-- [ ] **C3. Scale/key lock on the piano roll** — grey out-of-key rows,
+- [x] **C3. Scale/key lock on the piano roll.** The tables and `snapToScale`
+      already existed but sat several thousand lines below the piano roll in
+      `UI.h`, so the "Snap to Scale" checkbox set a flag nothing could read.
+      Extracted to `Scales.h`; placement honours it, and a To Scale button
+      pulls an existing selection into key. Remaining: grey out-of-key rows,
       optionally snap on draw. (`snapToScale` exists; wire it to the roll.)
 - [ ] **C4. Song structure templates** — intro/verse/chorus scaffolding
       that generates an arrangement, not just a pattern.
@@ -242,3 +246,140 @@ inside beautifully themed windows.
 - [dear-imgui-styles](https://github.com/GraphicsProgramming/dear-imgui-styles)
   and [ImGui styling docs](https://ocornut-imgui.mintlify.app/styling/colors-and-styles)
   — theme structure and what stock ImGui can and cannot do.
+
+
+---
+
+## G. From the 2026-08-30 research pass
+
+Four agents surveyed FL Studio, Furnace, Renoise, OpenMPT, FamiTracker, LSDj
+and Bosca Ceoil, the chiptune community, and NES/Game Boy hardware behaviour.
+
+**A note on provenance, because it matters here.** One agent fabricated
+Reddit citations and vote counts when it could not reach the site, then
+retracted them; a second agent later retrieved much of the same material
+properly and graded every claim by how it was obtained. Items below are
+marked **[verified]** only where the source was fetched and read. Anything
+resting on a single unverified claim is marked **[unverified]** and should be
+checked before it is built.
+
+The strongest material was never the community research at all - it was the
+audit of this codebase, which is reproducible by anyone with `grep`.
+
+### Done in 3.5.0
+
+- [x] Loop range on the timeline — the engine ignored `loopEnd` entirely
+- [x] The four dead note effects — delay, cut, retrigger, echo
+- [x] Pitch sweep UI — implemented in the audio path, no control anywhere
+- [x] Project-wide undo, and an Edit menu that is not a no-op
+- [x] Selectable grid snap with triplets — was hardcoded in fourteen places
+- [x] Transpose — did not exist in any form
+- [x] Note probability — one float, rolled per loop pass
+- [x] Snap to Scale actually snapping
+
+### Next, in rough value order
+
+- [ ] **G1. Make the tracker view editable.** `DrawTrackerView` is read-only
+      *and wrong*: it breaks on the first note whose `startTime` matches the
+      step, ignoring channel, so it prints the same note into all eight
+      columns. Its own comment says "This is a simplification". The app is
+      called a tracker. **Blocker to settle first:** `Pattern` is a flat
+      `vector<Note>` with no channel field — a channel is bound only when a
+      `Clip` is placed. Either add a channel column to notes, or show one
+      channel per open pattern. [verified — our own source]
+
+- [ ] **G2. Non-linear channel mixing.** `output += sample` sums voices
+      linearly; real 2A03 hardware sums through a non-linear table, which is
+      why channels duck each other and why the triangle sits ~3.3 dB louder
+      against the pulses than ours does. Two pulses at full volume make
+      1.73x one pulse, not 2.0x. This is the largest audible-authenticity
+      gain available in the codebase and needs no architectural change.
+      Pair it with the output filter chain (90 Hz HP, 440 Hz HP, 14 kHz LP)
+      and a stepped 4-bit triangle. [verified — NESdev]
+
+- [ ] **G3. Cross-channel ghost notes.** Draw the other channels' notes into
+      the current piano roll at low alpha in their channel colour. For
+      eight-channel chiptune, where a bass is constantly written against a
+      lead you cannot see, this matters more than it does in a 60-track DAW.
+      [verified — Image-Line manual]
+
+- [ ] **G4. Song sections and an arrangement scaffold.** The single densest
+      finding in the community research: people write an eight-bar loop and
+      cannot turn it into a song. They ask for a concrete structure to
+      follow, not a principle. Named sections, Alt-drag duplication, and
+      demo songs shipped so the *structure* can be copied. [verified —
+      archive API, multiple threads]
+
+- [ ] **G5. Groove tables.** Replace the single global `swing`/`swingGrid`
+      pair with a list of named grooves of up to 16 per-row tick counts.
+      Steal LSDj's control that changes the swing percentage while holding
+      the total tick count constant, so swing does not change tempo.
+      Note: our macros run on a free-running 60 Hz `rateHz`, independent of
+      tempo and swing, so a macro arpeggio drifts against a swung pattern.
+      [verified — Furnace, LSDj, OpenMPT docs]
+
+- [ ] **G6. Per-clip transpose.** One `int` on `Clip`. One bassline phrase
+      then covers a whole progression, which directly relieves the 64-pattern
+      cap. `Clip` already decouples pattern from channel; this completes it.
+      [verified — LSDj chain screen]
+
+- [ ] **G7. Pattern matrix with slim vs deep clone.** A grid of order
+      positions by channel, plus the distinction between cloning a reference
+      and cloning the contents, and a pattern manager that de-duplicates and
+      reclaims unused slots. We have no reuse story at all today.
+      [verified — Furnace, LSDj]
+
+- [ ] **G8. Macros belong to instruments, not channels.** `ChannelConfig`
+      owns the macros, so a channel can host exactly one macro'd sound
+      forever — even though `Note` already carries a per-note oscillator.
+      Every further macro feature is capped until this moves. This is a
+      migration, not an afternoon. [verified — our own source]
+
+- [ ] **G9. Macro slots as Sequence / ADSR / LFO.** Furnace's best
+      architectural idea: one macro framework with three types, so an ADSR
+      can sit on volume and an LFO on pitch sharing the same timing
+      controls. We currently maintain `Envelope` and `InstrumentMacros` as
+      separate parallel concepts. [verified — Furnace docs]
+
+- [ ] **G10. Surface the groove tools we already have.** Beginners do not
+      lack drum patterns — they cannot diagnose stiffness. `swing`,
+      `humanize`, `humanizeAmount` and `humanizeVelocity` all exist on
+      `Project` and are buried in a collapsing header. Audible presets
+      (Tight / Loose / Swung) address the actual complaint for almost
+      nothing. [verified — community threads]
+
+- [ ] **G11. Selection transforms with an operation mask.** Interpolate,
+      gradient, scale, randomize, invert, flip, collapse/expand — over a
+      toggle grid deciding which columns each operation touches.
+      `NoteTransforms.h` already holds invert and reverse. [verified —
+      Furnace, Renoise]
+
+- [ ] **G12. Ship strictness as a visible tier, not a policy.** The
+      community requires hardware *legality*, not hardware *origin*, and
+      objects to silent impossibility rather than to impossibility. Battle
+      of the Bits encodes this as a ladder from `nsf_classic` to `fakebit`.
+      Mirror it with a "this would not play on real hardware" indicator
+      rather than picking a side. [verified — BotB rules, chipmusic.org]
+
+### Deliberately not doing
+
+- **VCA faders.** A search of the FL community returned exactly one
+  on-topic result. There is no demand and we have eight channels.
+- **More drum patterns.** No popular thread asks for them; the eight we
+  have are sufficient. The complaint is about feel, which is G10.
+
+### Design constraints carried out of the research
+
+**Ship it off by default.** The highest-engagement feature-request thread in
+r/FL_Studio's history has a 364-point top comment telling the author to go
+use Ableton. A tracker audience self-selects for constraint even harder.
+Every item above should be opt-in, collapsed, or hidden until invoked.
+
+**Two surfaces, one data model.** Bosca Ceoil and Furnace jointly show that
+beginner-friendly and expert-fast are not ends of one slider — they are two
+input surfaces over the same patterns. We already have both. One of them
+does not work, which is G1.
+
+**Sell the constraint.** People buy hardware to escape "too many knobs
+syndrome". Eight fixed channels is a feature we have for free and currently
+never mention.

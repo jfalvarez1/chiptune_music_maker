@@ -7,6 +7,93 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.5.0] - 2026-08-30 - "Reachable"
+
+A research pass across FL Studio, Furnace, Renoise, OpenMPT, FamiTracker,
+LSDj and Bosca Ceoil turned up a lot of features worth building. It also
+turned up something more useful: an audit of this codebase found eight things
+that were already written, stored and serialised, and that no user could
+reach. Those were cheaper to fix than any new feature, and every one of them
+undermined a claim the README already makes. This release is that list.
+
+### Added
+
+- **Loop range on the timeline.** Drag the ruler under the arrangement
+  tracks to set the span playback repeats over, with the looping region
+  shaded across the tracks. Pressing play drops the playhead inside the
+  range, so play always audibly does something.
+- **Transpose.** `Shift+Up`/`Down` by a semitone, `Ctrl+Shift` by an octave,
+  plus toolbar buttons. Applies to the selection, or to the whole pattern
+  when nothing is selected. Notes that would leave the playable range are
+  skipped rather than clamped, so a chord cannot silently collapse onto one
+  pitch.
+- **Note probability.** A per-note chance, rolled fresh on every pass through
+  the loop. A sixteen-step chiptune loop repeats a great deal, and this is
+  the cheapest thing that stops it sounding like one.
+- **Selectable grid snap**, from a bar down to a 1/32, including 1/4, 1/8 and
+  1/16 triplets. `[` and `]` step through the divisions, `Alt` bypasses the
+  grid for a single gesture. Without triplets, shuffle and 6/8 were simply
+  unwritable.
+- **A To Scale button** that pulls a selection into key.
+
+### Fixed
+
+- **The loop range was unreachable, and the engine ignored it anyway.**
+  `loopStart` and `loopEnd` have been on `PlaybackState` since the beginning,
+  but `setLoop()` was called exactly once - at startup, with
+  `(false, 0, 16)` - and the playback loop never read `loopEnd` at all; it
+  wrapped at the end of the content instead. Wrapping now folds with `fmod`
+  rather than a single subtraction, because a range shortened under a running
+  playhead can leave it several windows past the end.
+- **Four note effects were stored but never played.** `noteDelay`,
+  `noteCut`, `retriggerCount` and `echoRepeats` were declared on `Note` and
+  written to the `.ctp` file, with zero references in the synth or the
+  sequencer. They are the classic tracker commands, and they are how chiptune
+  gets flams and stutters without spending another channel. All four are now
+  editable and audible.
+- **Pitch sweep had no control.** Fully implemented in the audio path since
+  the NES sweep unit went in, and reachable from nowhere.
+- **`Edit > Undo` was literally `if (ImGui::MenuItem("Undo")) {}`**, and the
+  real undo covered notes in a single pattern. Editing a macro, a channel
+  effect or the arrangement was not undoable at all. A snapshot is now the
+  whole project, taken through the same serializer the `.ctp` format uses -
+  so a field that survives save and load survives undo automatically.
+- **"Snap to Scale" set a flag that nothing read.** The scale tables and
+  `snapToScale` existed, but sat several thousand lines below the piano roll
+  in `UI.h`, out of reach of the code that places notes.
+- **Grid snap was hardcoded** as `floor(beat * 4) / 4` in fourteen separate
+  places.
+
+### Changed
+
+- Scale tables, snap arithmetic, loop-window resolution, note expansion,
+  selection transforms and the undo history all moved into headers of their
+  own - `Scales.h`, `Snap.h`, `LoopRange.h`, `NoteEvents.h`,
+  `NoteTransforms.h`, `UndoHistory.h`. All are free of ImGui and of `Project`
+  mutation, which is what makes them testable; three of the bugs above
+  existed precisely because the logic was buried inside a 553 KB UI file.
+- `ProjectSerializer` gained stream-level `writeProject`/`readProject`, with
+  the file functions as thin wrappers. Undo snapshots go through the same
+  pair, so the two paths cannot drift apart in what they preserve.
+
+### Testing
+
+1883 headless checks (up from 1752) and 30 UI smoke cases (up from 28).
+
+The new audio tests assert the feature is audible rather than that the code
+ran: note delay silences the start of a note, note cut kills its tail, echo
+keeps sounding past the note's end, retrigger adds dips to the RMS envelope,
+a zero-probability note renders silence, and a loop range limits how far the
+playhead ever travels. Probability also round-trips through save and load.
+
+One of those tests caught a real bug during development: the NaN guard on
+probability was written as `!(x < 1.0f)`, which this project's fast
+floating-point setting lets the compiler fold into `x >= 1.0f` - false for
+NaN, which would have silenced the note rather than playing it. It is a
+bit-level check now.
+
+---
+
 ## [3.4.1] - 2026-08-30
 
 ### Fixed

@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**1752 checks across 26 groups.** Exit code 0 = pass, 1 = failure, and every
+**1883 checks across 31 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -79,6 +79,11 @@ failure names the field or parameter involved.
 | Noise generator | All sixteen NES periods render; they step from bright to dark; short mode is measurably periodic and normal mode is not; four voices are louder than one (they no longer share a clock); the period persists and out-of-range values are repaired. |
 | Euclidean generator | Every E(k,n) up to n=32 produces exactly k onsets; the tresillo's spacing is correct; rotation preserves the count; degenerate input is safe; generated notes are valid, ordered and audible; all nine presets match their stated pattern. |
 | Stem export | One file per non-silent channel, silent ones skipped, mute/solo state restored afterwards, unsafe characters stripped from filenames, real RIFF files on disk, and a bad duration refused. |
+| Grid snap | Every division produces the right step; 1/16 still floors exactly as the old hardcoded constant did, so no existing gesture changed; triplets land on thirds; snap-off passes the value through; a duration never snaps to zero; NaN and infinity are caught rather than propagated; the bracket keys wrap. |
+| Loop range | A user range wins over the content extent; a zero-length range falls back rather than trapping the playhead; a range dragged right-to-left is normalised; a beat many windows past the end still folds inside; play jumps into the loop rather than starting outside it. |
+| Note expansion | A plain note is one hit; delay shifts it; cut shortens it; retrigger produces evenly spaced hits and none rings past the note's end; echoes decay and stop once inaudible; a pathological note cannot exceed the fixed buffer; a zero interval or a null buffer is refused. |
+| Loop and effects in the audio | Delay silences the start, cut kills the tail, echo sounds past the note's end, retrigger adds dips to the RMS envelope, pitch sweep changes the signal, and a loop range limits how far the playhead travels. |
+| Scales and transforms | Every pitch snaps into every scale; transpose preserves the intervals inside a chord; safe mode skips unplayable results instead of clamping them; bad selection indices are ignored rather than crashed on; probability is stable for a given note and pass, varies across passes, is independent between notes on the same beat, survives save/load, and renders silence at zero. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 
@@ -89,7 +94,7 @@ This drives the app's `--capture` mode through the combinations a person
 would otherwise click through by hand.
 
 ```powershell
-./tools/ui-smoke-test.ps1            # 28 cases
+./tools/ui-smoke-test.ps1            # 30 cases
 ./tools/ui-smoke-test.ps1 -Quick     # 12 cases, for a fast loop
 ```
 
