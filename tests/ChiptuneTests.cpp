@@ -721,6 +721,136 @@ static void testSaveLoadRoundTrip() {
     // Spot-check the fields most likely to be silently dropped
     check(reloaded.patterns.size() == original.patterns.size(),
           "pattern count survived the round trip");
+
+    // ---- Everything that used to be silently dropped on save -----------
+    //
+    // The v1 format stored seven fields per note and nothing else: no channel
+    // settings, no effects, no arrangement, no master bus, no groove. Saving
+    // a finished song kept the notes and threw away the mix. These checks are
+    // the guard against that regressing.
+
+    auto nearlyEqual = [](float a, float b) {
+        return std::fabs(a - b) <= 1e-4f * std::max(1.0f, std::fabs(a));
+    };
+
+    check(nearlyEqual(reloaded.bpm, original.bpm),
+          "BPM survived (" + std::to_string(original.bpm) + " -> " +
+          std::to_string(reloaded.bpm) + ")");
+    check(reloaded.beatsPerMeasure == original.beatsPerMeasure,
+          "time signature survived");
+    check(nearlyEqual(reloaded.songLength, original.songLength),
+          "song length survived");
+    check(reloaded.name == original.name, "project name survived");
+
+    // Groove
+    check(nearlyEqual(reloaded.swing, original.swing), "swing amount survived");
+    check(nearlyEqual(reloaded.swingGrid, original.swingGrid), "swing grid survived");
+    check(reloaded.humanize == original.humanize, "humanize flag survived");
+    check(nearlyEqual(reloaded.humanizeAmount, original.humanizeAmount),
+          "humanize amount survived");
+
+    // Master bus
+    check(reloaded.masterEQEnabled == original.masterEQEnabled,
+          "master EQ enable survived");
+    check(nearlyEqual(reloaded.masterEQLowGain, original.masterEQLowGain),
+          "master EQ low gain survived");
+    check(reloaded.masterCompressorEnabled == original.masterCompressorEnabled,
+          "master compressor enable survived");
+    check(nearlyEqual(reloaded.masterCompThreshold, original.masterCompThreshold),
+          "master compressor threshold survived");
+    check(nearlyEqual(reloaded.masterLimiterCeiling, original.masterLimiterCeiling),
+          "master limiter ceiling survived");
+
+    // Channels - the entire mix
+    for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+        const ChannelConfig& want = original.channels[ch];
+        const ChannelConfig& got = reloaded.channels[ch];
+        const std::string at = "channel " + std::to_string(ch) + " ";
+
+        check(got.name == want.name, at + "name survived");
+        check(nearlyEqual(got.volume, want.volume), at + "volume survived");
+        check(nearlyEqual(got.pan, want.pan), at + "pan survived");
+        check(got.oscillator.type == want.oscillator.type, at + "oscillator survived");
+        check(got.filterEnabled == want.filterEnabled, at + "filter enable survived");
+        check(nearlyEqual(got.filterCutoff, want.filterCutoff), at + "filter cutoff survived");
+        check(nearlyEqual(got.filterResonance, want.filterResonance),
+              at + "filter resonance survived");
+        check(got.filterEnvEnabled == want.filterEnvEnabled,
+              at + "filter envelope enable survived");
+        check(nearlyEqual(got.filterEnvAmount, want.filterEnvAmount),
+              at + "filter envelope amount survived");
+        check(got.delayEnabled == want.delayEnabled, at + "delay enable survived");
+        check(nearlyEqual(got.delayTime, want.delayTime), at + "delay time survived");
+        check(got.reverbEnabled == want.reverbEnabled, at + "reverb enable survived");
+        check(nearlyEqual(got.reverbMix, want.reverbMix), at + "reverb mix survived");
+    }
+
+    // Arrangement - the song structure
+    check(reloaded.arrangement.size() == original.arrangement.size(),
+          "clip count survived (" + std::to_string(original.arrangement.size()) +
+          " -> " + std::to_string(reloaded.arrangement.size()) + ")");
+    for (size_t i = 0; i < std::min(reloaded.arrangement.size(), original.arrangement.size()); ++i) {
+        const Clip& want = original.arrangement[i];
+        const Clip& got = reloaded.arrangement[i];
+        const std::string at = "clip " + std::to_string(i) + " ";
+        check(got.patternIndex == want.patternIndex, at + "pattern index survived");
+        check(got.channelIndex == want.channelIndex, at + "channel index survived");
+        check(nearlyEqual(got.startBeat, want.startBeat), at + "start beat survived");
+        check(nearlyEqual(got.lengthBeats, want.lengthBeats), at + "length survived");
+        check(got.color == want.color, at + "colour survived");
+    }
+
+    // Per-note tracker effects
+    if (!reloaded.patterns.empty() && !original.patterns.empty()) {
+        const auto& wantNotes = original.patterns[0].notes;
+        const auto& gotNotes = reloaded.patterns[0].notes;
+        const size_t n = std::min(wantNotes.size(), gotNotes.size());
+
+        int mismatches = 0;
+        std::string firstMismatch;
+        auto compare = [&](bool ok, const char* field, size_t i) {
+            if (!ok) {
+                ++mismatches;
+                if (firstMismatch.empty()) {
+                    firstMismatch = std::string(field) + " on note " + std::to_string(i);
+                }
+            }
+        };
+
+        for (size_t i = 0; i < n; ++i) {
+            const Note& w = wantNotes[i];
+            const Note& g = gotNotes[i];
+            compare(g.pitch == w.pitch, "pitch", i);
+            compare(nearlyEqual(g.velocity, w.velocity), "velocity", i);
+            compare(nearlyEqual(g.startTime, w.startTime), "startTime", i);
+            compare(nearlyEqual(g.duration, w.duration), "duration", i);
+            compare(nearlyEqual(g.fadeIn, w.fadeIn), "fadeIn", i);
+            compare(nearlyEqual(g.fadeOut, w.fadeOut), "fadeOut", i);
+            compare(g.arpeggio == w.arpeggio, "arpeggio", i);
+            compare(nearlyEqual(g.vibrato, w.vibrato), "vibrato", i);
+            compare(nearlyEqual(g.vibratoSpeed, w.vibratoSpeed), "vibratoSpeed", i);
+            compare(nearlyEqual(g.slide, w.slide), "slide", i);
+            compare(g.dutyCycle == w.dutyCycle, "dutyCycle", i);
+            compare(g.useDutyCycle == w.useDutyCycle, "useDutyCycle", i);
+            compare(g.sweepDirection == w.sweepDirection, "sweepDirection", i);
+            compare(nearlyEqual(g.sweepSpeed, w.sweepSpeed), "sweepSpeed", i);
+            compare(nearlyEqual(g.sweepAmount, w.sweepAmount), "sweepAmount", i);
+            compare(g.echoRepeats == w.echoRepeats, "echoRepeats", i);
+            compare(nearlyEqual(g.echoDelay, w.echoDelay), "echoDelay", i);
+            compare(nearlyEqual(g.echoDecay, w.echoDecay), "echoDecay", i);
+            compare(g.retriggerCount == w.retriggerCount, "retriggerCount", i);
+            compare(nearlyEqual(g.retriggerSpeed, w.retriggerSpeed), "retriggerSpeed", i);
+            compare(nearlyEqual(g.noteCut, w.noteCut), "noteCut", i);
+            compare(nearlyEqual(g.noteDelay, w.noteDelay), "noteDelay", i);
+            compare(nearlyEqual(g.tremolo, w.tremolo), "tremolo", i);
+            compare(nearlyEqual(g.tremoloSpeed, w.tremoloSpeed), "tremoloSpeed", i);
+            compare(g.sampleID == w.sampleID, "sampleID", i);
+        }
+
+        check(mismatches == 0,
+              std::to_string(mismatches) + " note effect field(s) lost on save/load" +
+              (firstMismatch.empty() ? "" : " (first: " + firstMismatch + ")"));
+    }
     if (!reloaded.patterns.empty() && !original.patterns.empty()) {
         check(reloaded.patterns[0].notes.size() == original.patterns[0].notes.size(),
               "note count survived the round trip");
@@ -747,6 +877,77 @@ static void testSaveLoadRoundTrip() {
 
     std::remove(pathA.c_str());
     std::remove(pathB.c_str());
+}
+
+// A v1 file has no CHANNEL, MASTER or CLIP lines and only seven fields per
+// note. Those files exist on people's disks, so the v2 reader has to keep
+// opening them: notes intact, everything absent left at its default.
+static void testLoadsVersion1Files() {
+    beginTest("Version 1 project files still load");
+
+    const std::string path = testPath("test_v1.ctp");
+    {
+        std::ofstream f(path);
+        f << "CHIPTUNE_PROJECT v1\n"
+          << "NAME Old Song\n"
+          << "BPM 140\n"
+          << "BEATS_PER_MEASURE 3\n"
+          << "MASTER_VOLUME 0.6\n"
+          << "SONG_LENGTH 32\n"
+          << "\n"
+          << "PATTERN \"Lead\" 16\n"
+          << "NOTE 60 0.0000 1.0000 1.0000 Pulse 0.0000 0.0000\n"
+          << "NOTE 64 1.0000 0.5000 0.8000 Sawtooth 0.0100 0.0200\n"
+          << "NOTE 67 2.0000 0.5000 0.9000 SynthBass 0.0000 0.0000\n"
+          << "END_PATTERN\n"
+          << "\n"
+          << "END_PROJECT\n";
+    }
+
+    Project p;
+    check(loadProject(p, path), "a v1 file loads");
+
+    check(p.name == "Old Song", "v1 project name read (got '" + p.name + "')");
+    check(std::fabs(p.bpm - 140.0f) < 0.01f, "v1 BPM read");
+    check(p.beatsPerMeasure == 3, "v1 time signature read");
+    check(std::fabs(p.masterVolume - 0.6f) < 0.01f, "v1 master volume read");
+    check(std::fabs(p.songLength - 32.0f) < 0.01f, "v1 song length read");
+
+    check(p.patterns.size() == 1, "v1 pattern read");
+    if (!p.patterns.empty()) {
+        check(p.patterns[0].name == "Lead", "v1 pattern name read");
+        check(p.patterns[0].notes.size() == 3,
+              "all three v1 notes read (got " +
+              std::to_string(p.patterns[0].notes.size()) + ")");
+        if (p.patterns[0].notes.size() == 3) {
+            check(p.patterns[0].notes[0].pitch == 60, "v1 note pitch read");
+            check(p.patterns[0].notes[1].oscillatorType == OscillatorType::Sawtooth,
+                  "v1 note oscillator read");
+            check(std::fabs(p.patterns[0].notes[1].fadeIn - 0.01f) < 0.001f,
+                  "v1 note fade-in read");
+            check(p.patterns[0].notes[2].oscillatorType == OscillatorType::SynthBass,
+                  "v1 synth oscillator read");
+        }
+    }
+
+    // Fields v1 never stored must be left at their defaults, not garbage
+    const Project defaults;
+    check(p.channels[0].volume == defaults.channels[0].volume,
+          "v1 load leaves channel volume at its default");
+    check(p.arrangement.empty(), "v1 load leaves the arrangement empty");
+
+    // And re-saving a loaded v1 file must produce a valid v2 file
+    const std::string upgraded = testPath("test_v1_upgraded.ctp");
+    check(saveProject(p, upgraded), "a loaded v1 project saves as v2");
+    Project reloaded;
+    check(loadProject(reloaded, upgraded), "the upgraded file loads back");
+    if (!reloaded.patterns.empty()) {
+        check(reloaded.patterns[0].notes.size() == 3,
+              "notes survive the v1 to v2 upgrade");
+    }
+
+    std::remove(path.c_str());
+    std::remove(upgraded.c_str());
 }
 
 static void testLoadRejectsGarbage() {
@@ -1178,6 +1379,7 @@ int main(int argc, char** argv) {
     testPolyphonyOverflow();
     testSequencerEdgeCases();
     testSaveLoadRoundTrip();
+    testLoadsVersion1Files();
     testLoadRejectsGarbage();
     testMidiExport();
     testWavExport();

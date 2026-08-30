@@ -134,16 +134,24 @@ inline void clampChannelToValidRanges(ChannelConfig& c) {
     c.filterEnvAttack = sanitizeFloat(c.filterEnvAttack, 0.0f, 10.0f, 0.0f);
     c.filterEnvDecay = sanitizeFloat(c.filterEnvDecay, 0.0f, 10.0f, 0.1f);
 
-    // Drive-style effects
-    c.bitDepth = sanitizeInt(c.bitDepth, 1, 16, 8);
-    c.sampleRateDiv = sanitizeInt(c.sampleRateDiv, 1, 128, 1);
-    c.distortionDrive = sanitizeFloat(c.distortionDrive, 0.0f, 100.0f, 1.0f);
+    // Oscillator shaping
+    c.oscillator.pulseWidth = sanitizeFloat(c.oscillator.pulseWidth, 0.01f, 0.99f, 0.5f);
+    c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
+    c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
+    c.oscillator.phase = sanitizeFloat(c.oscillator.phase, 0.0f, 1.0f, 0.0f);
+
+    // Drive-style effects. bitDepth and sampleRateDiv are floats here, not
+    // ints - the bitcrusher accepts fractional depths.
+    c.bitDepth = sanitizeFloat(c.bitDepth, 1.0f, 16.0f, 8.0f);
+    c.sampleRateDiv = sanitizeFloat(c.sampleRateDiv, 1.0f, 128.0f, 4.0f);
+    c.distortionDrive = sanitizeFloat(c.distortionDrive, 0.0f, 100.0f, 2.0f);
     c.distortionMix = sanitizeFloat(c.distortionMix, 0.0f, 1.0f, 0.5f);
 
-    // EQ (dB)
-    c.eqLow = sanitizeFloat(c.eqLow, -24.0f, 24.0f, 0.0f);
-    c.eqMid = sanitizeFloat(c.eqMid, -24.0f, 24.0f, 0.0f);
-    c.eqHigh = sanitizeFloat(c.eqHigh, -24.0f, 24.0f, 0.0f);
+    // EQ. These are linear gain multipliers (1.0 = unity), NOT decibels -
+    // clamping them as dB would let a 0.0 through and silence the band.
+    c.eqLow = sanitizeFloat(c.eqLow, 0.0f, 4.0f, 1.0f);
+    c.eqMid = sanitizeFloat(c.eqMid, 0.0f, 4.0f, 1.0f);
+    c.eqHigh = sanitizeFloat(c.eqHigh, 0.0f, 4.0f, 1.0f);
     c.eqLowFreq = sanitizeFloat(c.eqLowFreq, 20.0f, 20000.0f, 200.0f);
     c.eqMidFreq = sanitizeFloat(c.eqMidFreq, 20.0f, 20000.0f, 1000.0f);
     c.eqHighFreq = sanitizeFloat(c.eqHighFreq, 20.0f, 20000.0f, 5000.0f);
@@ -156,8 +164,24 @@ inline void clampChannelToValidRanges(ChannelConfig& c) {
     c.compRelease = sanitizeFloat(c.compRelease, 0.0f, 5.0f, 0.1f);
     c.compGain = sanitizeFloat(c.compGain, 0.0f, 8.0f, 1.0f);
 
-    // Formant
-    c.formantResonance = sanitizeFloat(c.formantResonance, 0.0f, 1.0f, 0.5f);
+    // Formant. resonance is a Q value (default 5.0), not a 0..1 amount.
+    c.formantResonance = sanitizeFloat(c.formantResonance, 0.1f, 20.0f, 5.0f);
+    c.formantVowel = sanitizeInt(c.formantVowel, 0, 4, 3);
+
+    // Enum-backed selectors stored as ints
+    c.filterType = sanitizeInt(c.filterType, 0, 2, 0);
+    c.distortionType = sanitizeInt(c.distortionType, 0, 3, 0);
+
+    // Channel echo and detune
+    c.echoTime = sanitizeFloat(c.echoTime, 0.0f, 2.0f, 0.25f);
+    c.echoFeedback = sanitizeFloat(c.echoFeedback, 0.0f, 0.9f, 0.4f);
+    c.echoMix = sanitizeFloat(c.echoMix, 0.0f, 1.0f, 0.3f);
+    c.detuneCents = sanitizeFloat(c.detuneCents, -100.0f, 100.0f, 0.0f);
+
+    // A sidechain source is a channel index, or -1 for "none"
+    if (c.sidechainSource < -1 || c.sidechainSource >= Project::MAX_CHANNELS) {
+        c.sidechainSource = -1;
+    }
 
     // Time-based effects. Feedback strictly below 1.0 or they self-oscillate.
     c.delayTime = sanitizeFloat(c.delayTime, 0.0f, 1.0f, 0.25f);
@@ -191,10 +215,11 @@ inline void clampChannelToValidRanges(ChannelConfig& c) {
     c.stereoWidenerHaas = sanitizeFloat(c.stereoWidenerHaas, 0.0f, 0.05f, 0.01f);
     c.stereoWidenerMix = sanitizeFloat(c.stereoWidenerMix, 0.0f, 1.0f, 0.5f);
 
-    c.tapeDrive = sanitizeFloat(c.tapeDrive, 0.0f, 1.0f, 0.3f);
+    // tapeDrive is a drive amount that defaults to 1.5, not a 0..1 mix
+    c.tapeDrive = sanitizeFloat(c.tapeDrive, 0.0f, 10.0f, 1.5f);
     c.tapeWarmth = sanitizeFloat(c.tapeWarmth, 0.0f, 1.0f, 0.5f);
     c.tapeCompression = sanitizeFloat(c.tapeCompression, 0.0f, 1.0f, 0.3f);
-    c.tapeMix = sanitizeFloat(c.tapeMix, 0.0f, 1.0f, 1.0f);
+    c.tapeMix = sanitizeFloat(c.tapeMix, 0.0f, 1.0f, 0.5f);
 }
 
 // ============================================================================
