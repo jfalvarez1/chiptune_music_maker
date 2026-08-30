@@ -2240,6 +2240,556 @@ static void testValidationRepairsEverything() {
 }
 
 // ============================================================================
+// 21. Spectrum analyzer
+// ============================================================================
+static void testSpectrumAnalyzer() {
+    beginTest("Spectrum analyzer");
+
+    const float sampleRate = 44100.0f;
+
+    auto feed = [&](SpectrumAnalyzer& fft, float frequency, float amplitude, int samples) {
+        for (int i = 0; i < samples; ++i) {
+            const float t = float(i) / sampleRate;
+            const float v = (frequency > 0.0f)
+                ? amplitude * std::sin(2.0f * PI * frequency * t)
+                : 0.0f;
+            fft.process(v, v);
+        }
+        fft.update();
+    };
+
+    // ---- A pure tone lands in the right bin -----------------------------
+    {
+        auto fftPtr = std::make_unique<SpectrumAnalyzer>();
+        SpectrumAnalyzer& fft = *fftPtr;
+        fft.setSampleRate(sampleRate);
+
+        const float tone = 1000.0f;
+        feed(fft, tone, 0.9f, SpectrumAnalyzer::FFT_SIZE * 3);
+
+        const float peak = fft.getPeakFrequency();
+        const float binWidth = sampleRate / float(SpectrumAnalyzer::FFT_SIZE);
+        check(std::fabs(peak - tone) <= binWidth * 2.0f,
+              "a 1kHz tone peaks at 1kHz (got " + std::to_string(peak) +
+              " Hz, bin width " + std::to_string(binWidth) + ")");
+    }
+
+    // ---- The display does not saturate ----------------------------------
+    //
+    // This is the regression test for the original bug: the FFT output was
+    // never normalised, so a 2048-point transform of any audible signal
+    // pinned every bin to maximum and the analyzer was a solid wall.
+    {
+        auto fftPtr = std::make_unique<SpectrumAnalyzer>();
+        SpectrumAnalyzer& fft = *fftPtr;
+        fft.setSampleRate(sampleRate);
+        feed(fft, 1000.0f, 0.9f, SpectrumAnalyzer::FFT_SIZE * 3);
+
+        const std::vector<float>& mags = fft.magnitudes();
+        int saturated = 0, quiet = 0;
+        for (float m : mags) {
+            if (m >= 0.99f) ++saturated;
+            if (m <= 0.10f) ++quiet;
+        }
+
+        check(saturated < SpectrumAnalyzer::NUM_BINS / 20,
+              "a single tone lights up few bins, not the whole spectrum (" +
+              std::to_string(saturated) + " of " +
+              std::to_string(SpectrumAnalyzer::NUM_BINS) + " at maximum)");
+        check(quiet > SpectrumAnalyzer::NUM_BINS / 2,
+              "most of the spectrum is quiet for a single tone (" +
+              std::to_string(quiet) + " near zero)");
+    }
+
+    // ---- Level tracks amplitude ------------------------------------------
+    {
+        auto loudPtr = std::make_unique<SpectrumAnalyzer>();
+        auto softPtr = std::make_unique<SpectrumAnalyzer>();
+        loudPtr->setSampleRate(sampleRate);
+        softPtr->setSampleRate(sampleRate);
+
+        feed(*loudPtr, 1000.0f, 0.9f, SpectrumAnalyzer::FFT_SIZE * 3);
+        feed(*softPtr, 1000.0f, 0.05f, SpectrumAnalyzer::FFT_SIZE * 3);
+
+        const int bin = loudPtr->frequencyToBin(1000.0f);
+        const float loud = loudPtr->getMagnitude(bin);
+        const float soft = softPtr->getMagnitude(bin);
+
+        check(loud > soft,
+              "a louder tone reads higher than a quiet one (" +
+              std::to_string(loud) + " vs " + std::to_string(soft) + ")");
+        check(loud > 0.5f,
+              "a near-full-scale tone reads high on the display (" +
+              std::to_string(loud) + ")");
+        check(soft < loud - 0.1f,
+              "a -26dB tone is clearly lower, not clamped to the same value");
+    }
+
+    // ---- Silence reads as silence ----------------------------------------
+    {
+        auto fftPtr = std::make_unique<SpectrumAnalyzer>();
+        SpectrumAnalyzer& fft = *fftPtr;
+        fft.setSampleRate(sampleRate);
+        feed(fft, 0.0f, 0.0f, SpectrumAnalyzer::FFT_SIZE * 3);
+
+        float peak = 0.0f;
+        for (float m : fft.magnitudes()) peak = std::max(peak, m);
+        check(peak < 0.02f,
+              "silence produces an empty spectrum (peak " +
+              std::to_string(peak) + ")");
+    }
+
+    // ---- Robustness -------------------------------------------------------
+    {
+        auto fftPtr = std::make_unique<SpectrumAnalyzer>();
+        SpectrumAnalyzer& fft = *fftPtr;
+        fft.setSampleRate(sampleRate);
+
+        // Non-finite input from a broken effect must not poison the display
+        for (int i = 0; i < SpectrumAnalyzer::FFT_SIZE * 2; ++i) {
+            fft.process(std::numeric_limits<float>::quiet_NaN(),
+                        std::numeric_limits<float>::infinity());
+        }
+        fft.update();
+        bool allFinite = true;
+        for (float m : fft.magnitudes()) {
+            if (!std::isfinite(m)) allFinite = false;
+        }
+        check(allFinite, "non-finite audio does not produce non-finite magnitudes");
+
+        // Reading before enough audio has arrived must be safe
+        auto freshPtr = std::make_unique<SpectrumAnalyzer>();
+        freshPtr->setSampleRate(sampleRate);
+        freshPtr->update();
+        check(freshPtr->getMagnitude(0) == 0.0f, "a fresh analyzer reads zero");
+        check(freshPtr->getMagnitude(-1) == 0.0f && freshPtr->getMagnitude(99999) == 0.0f,
+              "out-of-range bin queries are safe");
+
+        // A sample rate of zero must not divide by zero
+        auto zeroPtr = std::make_unique<SpectrumAnalyzer>();
+        zeroPtr->setSampleRate(0.0f);
+        for (int i = 0; i < SpectrumAnalyzer::FFT_SIZE * 2; ++i) zeroPtr->process(0.5f, 0.5f);
+        zeroPtr->update();
+        check(std::isfinite(zeroPtr->getPeakFrequency()),
+              "a zero sample rate is repaired rather than dividing by zero");
+    }
+}
+
+// ============================================================================
+// 22. Noise generator
+// ============================================================================
+static void testNoiseGenerator() {
+    beginTest("Noise generator");
+
+    const float sampleRate = 44100.0f;
+    const int frames = int(sampleRate * 0.4f);
+
+    auto renderNoise = [&](bool shortMode, int period, int pitch) {
+        ChannelConfig config;
+        config.oscillator.type = OscillatorType::Noise;
+        config.oscillator.noiseShortMode = shortMode;
+        config.oscillator.noisePeriod = period;
+
+        Synthesizer synth;
+        synth.setSampleRate(sampleRate);
+        synth.setChannelConfig(config);
+        synth.noteOn(pitch, 1.0f, 0.0f, 0.0f, 0.0f, 0.35f, OscillatorType::Noise);
+
+        std::vector<float> buf(frames);
+        for (int i = 0; i < frames; ++i) buf[i] = synth.process(float(i) / sampleRate);
+        return buf;
+    };
+
+    // Counts sign changes: a rough measure of how bright the noise is, and
+    // enough to tell the sixteen periods apart without an FFT.
+    auto zeroCrossings = [](const std::vector<float>& buf) {
+        int crossings = 0;
+        for (size_t i = 1; i < buf.size(); ++i) {
+            if ((buf[i - 1] <= 0.0f) != (buf[i] <= 0.0f)) ++crossings;
+        }
+        return crossings;
+    };
+
+    // ---- Basic sanity across every period --------------------------------
+    for (int period = -1; period < 16; ++period) {
+        std::vector<float> buf = renderNoise(false, period, 60);
+        BufferStats st = analyze(buf);
+        const std::string at = "noise period " + std::to_string(period);
+        check(st.nonFiniteCount == 0, at + " produced non-finite audio");
+        check(st.outOfRangeCount == 0, at + " exceeded headroom");
+        check(!st.allZero, at + " produced silence");
+    }
+
+    // ---- The periods are actually different pitches ----------------------
+    //
+    // Real hardware offers sixteen fixed noise rates rather than a sweep,
+    // and that stepping is most of what makes NES noise sound like NES
+    // noise. A low period index must be audibly brighter than a high one.
+    {
+        const int bright = zeroCrossings(renderNoise(false, 2, 60));
+        const int mid    = zeroCrossings(renderNoise(false, 8, 60));
+        const int dark   = zeroCrossings(renderNoise(false, 15, 60));
+
+        check(bright > mid && mid > dark,
+              "the noise periods step from bright to dark (" +
+              std::to_string(bright) + " > " + std::to_string(mid) + " > " +
+              std::to_string(dark) + " crossings)");
+    }
+
+    // ---- Short mode is periodic, normal mode is not ----------------------
+    //
+    // The 2A03's short mode repeats every 93 steps, which the ear hears as a
+    // metallic tone rather than as hiss. Its period is tiny compared with
+    // the 32767 of normal mode, so the waveform repeats within a short
+    // window and normal mode does not.
+    {
+        std::vector<float> shortNoise = renderNoise(true, 4, 60);
+        std::vector<float> whiteNoise = renderNoise(false, 4, 60);
+
+        auto repeatsWithin = [](const std::vector<float>& buf, int lag) {
+            if (int(buf.size()) < lag * 4) return 0.0f;
+            int matches = 0, total = 0;
+            for (int i = lag; i < int(buf.size()); ++i) {
+                if ((buf[i] > 0.0f) == (buf[i - lag] > 0.0f)) ++matches;
+                ++total;
+            }
+            return total ? float(matches) / float(total) : 0.0f;
+        };
+
+        // Best agreement found over plausible short-mode repeat lengths
+        float bestShort = 0.0f, bestWhite = 0.0f;
+        for (int lag = 60; lag <= 400; ++lag) {
+            bestShort = std::max(bestShort, repeatsWithin(shortNoise, lag));
+            bestWhite = std::max(bestWhite, repeatsWithin(whiteNoise, lag));
+        }
+
+        check(bestShort > bestWhite,
+              "short mode repeats more than normal mode (" +
+              std::to_string(bestShort) + " vs " + std::to_string(bestWhite) + ")");
+        check(bestShort > 0.9f,
+              "short mode is strongly periodic (best agreement " +
+              std::to_string(bestShort) + ")");
+    }
+
+    // ---- Voices do not share state ---------------------------------------
+    //
+    // The LFSR clock accumulator used to be a function-local static, so
+    // every voice on every channel advanced one shared counter. Two
+    // simultaneous noise notes must not be the same signal as one.
+    {
+        Synthesizer one;
+        one.setSampleRate(sampleRate);
+        ChannelConfig config;
+        config.oscillator.type = OscillatorType::Noise;
+        one.setChannelConfig(config);
+        one.noteOn(60, 1.0f, 0.0f, 0.0f, 0.0f, 0.35f, OscillatorType::Noise);
+
+        std::vector<float> single(frames);
+        for (int i = 0; i < frames; ++i) single[i] = one.process(float(i) / sampleRate);
+
+        Synthesizer many;
+        many.setSampleRate(sampleRate);
+        many.setChannelConfig(config);
+        for (int n = 0; n < 4; ++n) {
+            many.noteOn(48 + n * 7, 1.0f, 0.0f, 0.0f, 0.0f, 0.35f, OscillatorType::Noise);
+        }
+        std::vector<float> stacked(frames);
+        for (int i = 0; i < frames; ++i) stacked[i] = many.process(float(i) / sampleRate);
+
+        BufferStats singleStats = analyze(single);
+        BufferStats stackedStats = analyze(stacked);
+        check(stackedStats.nonFiniteCount == 0, "stacked noise voices stay finite");
+        check(stackedStats.rms > singleStats.rms * 1.2f,
+              "four noise voices are louder than one - they no longer share "
+              "a single clock (" + std::to_string(singleStats.rms) + " -> " +
+              std::to_string(stackedStats.rms) + ")");
+    }
+
+    // ---- The noise period survives save and load ---------------------------
+    {
+        Project p;
+        p.channels[0].oscillator.type = OscillatorType::Noise;
+        p.channels[0].oscillator.noisePeriod = 11;
+        p.channels[0].oscillator.noiseShortMode = true;
+
+        const std::string path = testPath("test_noise.ctp");
+        check(saveProject(p, path), "a project with a noise period saves");
+
+        Project reloaded;
+        check(loadProject(reloaded, path), "it loads back");
+        check(reloaded.channels[0].oscillator.noisePeriod == 11,
+              "noise period survived (got " +
+              std::to_string(reloaded.channels[0].oscillator.noisePeriod) + ")");
+        check(reloaded.channels[0].oscillator.noiseShortMode,
+              "short mode flag survived");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- Out-of-range periods are repaired --------------------------------
+    {
+        Project p;
+        p.channels[0].oscillator.noisePeriod = 99;
+        p.channels[1].oscillator.noisePeriod = -50;
+        clampProjectToValidRanges(p);
+        check(p.channels[0].oscillator.noisePeriod == -1,
+              "a period above 15 falls back to tracking the note");
+        check(p.channels[1].oscillator.noisePeriod == -1,
+              "a period below -1 falls back to tracking the note");
+    }
+}
+
+// ============================================================================
+// 23. Euclidean rhythm generator
+// ============================================================================
+static void testEuclideanGenerator() {
+    beginTest("Euclidean rhythm generator");
+
+    using namespace generators;
+
+    auto countHits = [](const std::vector<bool>& p) {
+        return int(std::count(p.begin(), p.end(), true));
+    };
+
+    // ---- The classics come out right -------------------------------------
+    //
+    // E(3,8) is the tresillo. Bjorklund's algorithm has one canonical
+    // answer for each (n,k), so these are checkable facts rather than taste.
+    {
+        const std::vector<bool> tresillo = euclideanPattern(8, 3);
+        check(tresillo.size() == 8, "E(3,8) has eight steps");
+        check(countHits(tresillo) == 3, "E(3,8) has three onsets");
+
+        // The onsets must be as evenly spread as eight over three allows,
+        // which means gaps of 3, 3 and 2 in some rotation.
+        std::vector<int> gaps;
+        int last = -1;
+        for (int i = 0; i < 8; ++i) {
+            if (tresillo[size_t(i)]) {
+                if (last >= 0) gaps.push_back(i - last);
+                last = i;
+            }
+        }
+        std::sort(gaps.begin(), gaps.end());
+        check(gaps.size() == 2 && gaps[0] >= 2 && gaps[1] <= 3,
+              "E(3,8) spaces its onsets evenly (gaps of 2 and 3)");
+    }
+
+    // ---- Onset counts are exact for every (n,k) ---------------------------
+    {
+        int wrong = 0;
+        for (int steps = 1; steps <= 32; ++steps) {
+            for (int pulses = 0; pulses <= steps; ++pulses) {
+                if (countHits(euclideanPattern(steps, pulses)) != pulses) ++wrong;
+            }
+        }
+        check(wrong == 0,
+              "every E(k,n) for n up to 32 produces exactly k onsets (" +
+              std::to_string(wrong) + " wrong)");
+    }
+
+    // ---- Rotation moves without adding or losing onsets --------------------
+    {
+        const std::vector<bool> base = euclideanPattern(16, 5, 0);
+        bool countsHold = true, someMoved = false;
+        for (int r = 1; r < 16; ++r) {
+            const std::vector<bool> rotated = euclideanPattern(16, 5, r);
+            if (countHits(rotated) != 5) countsHold = false;
+            if (rotated != base) someMoved = true;
+        }
+        check(countsHold, "rotation preserves the onset count");
+        check(someMoved, "rotation actually changes the pattern");
+    }
+
+    // ---- Degenerate input -------------------------------------------------
+    {
+        check(euclideanPattern(0, 4).empty(), "zero steps gives an empty pattern");
+        check(euclideanPattern(-5, 4).empty(), "negative steps gives an empty pattern");
+        check(countHits(euclideanPattern(8, 0)) == 0, "zero pulses gives no onsets");
+        check(countHits(euclideanPattern(8, 99)) == 8, "more pulses than steps fills it");
+        check(countHits(euclideanPattern(8, -3)) == 0, "negative pulses gives no onsets");
+
+        const std::vector<bool> huge = euclideanPattern(8, 3, 1000000);
+        check(huge.size() == 8 && countHits(huge) == 3,
+              "an absurd rotation still produces a valid pattern");
+    }
+
+    // ---- Generated notes are valid and playable ---------------------------
+    {
+        EuclideanVoice voice;
+        voice.instrument = OscillatorType::Kick808;
+        voice.steps = 16;
+        voice.pulses = 5;
+        const std::vector<Note> notes = generateEuclidean(voice, 4.0f);
+
+        check(notes.size() == 5, "five pulses produce five notes (got " +
+              std::to_string(notes.size()) + ")");
+
+        bool ordered = true, valid = true;
+        for (size_t i = 0; i < notes.size(); ++i) {
+            const Note& n = notes[i];
+            if (n.pitch < 0 || n.pitch > 127) valid = false;
+            if (n.duration <= 0.0f || !std::isfinite(n.duration)) valid = false;
+            if (n.startTime < 0.0f || n.startTime >= 4.0f) valid = false;
+            if (i > 0 && notes[i - 1].startTime > n.startTime) ordered = false;
+        }
+        check(valid, "generated notes are inside valid ranges");
+        check(ordered, "generated notes come out in time order");
+
+        // Zero length must not divide by zero
+        check(generateEuclidean(voice, 0.0f).empty(),
+              "a zero-length bar produces no notes rather than dividing by zero");
+    }
+
+    // ---- The kit produces a playable pattern -------------------------------
+    {
+        const std::vector<Note> kit = generateEuclideanKit();
+        check(!kit.empty(), "the default kit produces notes");
+
+        bool sorted = true;
+        for (size_t i = 1; i < kit.size(); ++i) {
+            if (kit[i - 1].startTime > kit[i].startTime) sorted = false;
+        }
+        check(sorted, "kit notes are sorted by time");
+
+        // Three distinct instruments
+        std::vector<OscillatorType> kinds;
+        for (const Note& n : kit) {
+            if (std::find(kinds.begin(), kinds.end(), n.oscillatorType) == kinds.end()) {
+                kinds.push_back(n.oscillatorType);
+            }
+        }
+        check(kinds.size() == 3, "the kit uses three instruments (got " +
+              std::to_string(kinds.size()) + ")");
+
+        // And it must actually render
+        Project p;
+        Pattern pattern;
+        pattern.notes = kit;
+        p.patterns.clear();
+        p.patterns.push_back(pattern);
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.play();
+
+        std::vector<float> out;
+        std::vector<float> l(512), r(512);
+        for (int b = 0; b < 40; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            out.insert(out.end(), l.begin(), l.end());
+        }
+        BufferStats st = analyze(out);
+        check(st.nonFiniteCount == 0, "a generated kit renders finite audio");
+        check(!st.allZero, "a generated kit is audible");
+    }
+
+    // ---- Every preset is valid --------------------------------------------
+    {
+        int bad = 0;
+        for (const EuclideanPreset& preset : euclideanPresets()) {
+            const std::vector<bool> p =
+                euclideanPattern(preset.steps, preset.pulses, preset.rotation);
+            if (int(p.size()) != preset.steps) ++bad;
+            if (countHits(p) != preset.pulses) ++bad;
+        }
+        check(bad == 0, "all " + std::to_string(euclideanPresets().size()) +
+              " presets produce their stated pattern");
+    }
+}
+
+// ============================================================================
+// 24. Stem export
+// ============================================================================
+static void testStemExport() {
+    beginTest("Stem export");
+
+    Project p;
+    Pattern pattern;
+    // Three channels with content, five silent
+    for (int ch = 0; ch < 3; ++ch) {
+        for (int i = 0; i < 4; ++i) {
+            Note n;
+            n.pitch = 48 + ch * 7 + i;
+            n.startTime = float(i);
+            n.duration = 0.8f;
+            n.velocity = 0.9f;
+            n.oscillatorType = OscillatorType::Sawtooth;
+            pattern.notes.push_back(n);
+        }
+    }
+    p.patterns.clear();
+    p.patterns.push_back(pattern);
+    p.arrangement.clear();
+    for (int ch = 0; ch < 3; ++ch) {
+        p.arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0});
+    }
+    p.channels[0].name = "Lead";
+    p.channels[1].name = "Bass/Sub";      // a name with a path separator in it
+    p.channels[2].name = "";              // and an empty one
+
+    // Deliberate mute/solo state that must survive the export
+    p.channels[4].muted = true;
+    p.channels[5].solo = true;
+
+    auto seqPtr = std::make_unique<Sequencer>();
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&p);
+
+    const std::string dir = testPath("stems");
+    StemExportResult result = exportStems(p, seq, dir, 4.0f, true);
+
+    check(result.failures.empty(),
+          "no stem failed to write (" +
+          (result.failures.empty() ? std::string("none")
+                                   : result.failures.front()) + ")");
+    check(result.written == 3,
+          "one stem per channel with content (wrote " +
+          std::to_string(result.written) + ", expected 3)");
+    check(result.skipped == 5,
+          "silent channels are skipped rather than written as empty files (" +
+          std::to_string(result.skipped) + ")");
+
+    // Exporting must not remix the project
+    check(p.channels[4].muted, "a muted channel is still muted afterwards");
+    check(p.channels[5].solo, "a soloed channel is still soloed afterwards");
+    for (int ch = 0; ch < 4; ++ch) {
+        if (ch == 4) continue;
+        check(!p.channels[ch].muted || ch == 4,
+              "channel " + std::to_string(ch) + " mute state restored");
+    }
+
+    // The files are real WAVs with audio in them
+    int checked = 0;
+    for (int ch = 1; ch <= 3; ++ch) {
+        char name[256];
+        std::snprintf(name, sizeof(name), "stem_%02d_", ch);
+        // Find whichever file starts with this prefix
+        for (const char* suffix : {"Lead.wav", "Bass_Sub.wav", "channel.wav"}) {
+            const std::string path = dir + "/" + name + suffix;
+            std::string data = readWholeFile(path);
+            if (data.empty()) continue;
+            ++checked;
+            check(data.size() > 44, std::string(name) + suffix + " has audio past the header");
+            check(data.compare(0, 4, "RIFF") == 0, std::string(name) + suffix + " is a RIFF file");
+            std::remove(path.c_str());
+        }
+    }
+    check(checked == 3, "all three stem files were found on disk (found " +
+          std::to_string(checked) + ")");
+
+    // A bad duration must be refused, not crash
+    StemExportResult bad = exportStems(p, seq, dir, -1.0f, true);
+    check(bad.written == 0, "a negative duration writes no stems");
+    check(std::isfinite(p.bpm), "a refused export leaves the project intact");
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -2299,6 +2849,10 @@ int main(int argc, char** argv) {
     testWavetables();
     testMasterBusUnits();
     testValidationRepairsEverything();
+    testSpectrumAnalyzer();
+    testNoiseGenerator();
+    testEuclideanGenerator();
+    testStemExport();
     testLongRunStability();
 
     std::printf("\n==========================\n");

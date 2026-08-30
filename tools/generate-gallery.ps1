@@ -63,6 +63,7 @@ $shots = @(
     @{ name = "automation";      args = "--view pianoroll --theme stock --demo --show automation" }
     @{ name = "midi-input";      args = "--view pianoroll --theme stock --demo --show midi" }
     @{ name = "channel-editor";  args = "--view pianoroll --theme minimal --demo --select" }
+    @{ name = "tools-euclidean"; args = "--workspace sounddesign --theme stock --demo" }
 
     # --- Workspaces -------------------------------------------------------
     @{ name = "workspace-sound"; args = "--workspace sounddesign --theme stock --demo --show macros --show wavetable" }

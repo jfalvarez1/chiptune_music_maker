@@ -134,7 +134,13 @@ struct OscillatorConfig {
     float triangleSlope = 0.5f;     // 0.0 = saw down, 0.5 = triangle, 1.0 = saw up
 
     // Noise settings
-    bool noiseShortMode = false;    // NES short mode (more metallic)
+    bool noiseShortMode = false;    // NES short mode (periodic, metallic)
+
+    // Which of the 2A03's sixteen noise periods to clock the shift register
+    // at. -1 tracks the played note instead, which is not what hardware does
+    // but is what you want when a noise instrument should follow the
+    // keyboard. 0 is the highest pitch, 15 the lowest rumble.
+    int noisePeriod = -1;
 
     // General
     float detune = 0.0f;            // Cents (-100 to +100)

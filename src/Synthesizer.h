@@ -94,6 +94,17 @@ struct Voice {
     // Instrument macro playback position (see Macros.h)
     VoiceMacroState macroState;
 
+    // Per-voice oscillator scratch state.
+    //
+    // These four were function-local statics inside the generators, which
+    // meant every voice on every channel shared one copy - two notes on the
+    // same oscillator fed each other's filter, and eight noise voices all
+    // clocked a single accumulator.
+    float noiseAccum = 0.0f;      // LFSR clock accumulator
+    float acidFilterState = 0.0f; // AcidBass resonant lowpass
+    float hissFilterState = 0.0f; // VinylNoise high-pass
+    float gateSmoothState = 1.0f; // GatedPad envelope smoothing
+
     void reset() {
         active = false;
         phase = 0.0f;
@@ -133,6 +144,10 @@ struct Voice {
         // Formant reset
         for(int i=0; i<3; ++i) { formantState[i][0] = 0.0f; formantState[i][1] = 0.0f; }
         macroState.reset();
+        noiseAccum = 0.0f;
+        acidFilterState = 0.0f;
+        hissFilterState = 0.0f;
+        gateSmoothState = 1.0f;
     }
 };
 
@@ -1059,24 +1074,53 @@ private:
     }
 
     // LFSR Noise (NES-style)
+    // The sixteen noise periods the 2A03 actually offers, in CPU cycles.
+    // Real hardware cannot sweep noise continuously - it picks one of these,
+    // which is why NES noise has that stepped, pitched quality rather than
+    // sounding like a filtered hiss.
+    static constexpr int NES_NOISE_PERIODS[16] = {
+        4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
+    };
+    static constexpr float NES_CPU_HZ = 1789773.0f;   // NTSC
+
     float generateNoise(Voice& voice) {
-        // Clock LFSR based on frequency
-        static float noiseAccum = 0.0f;
-        noiseAccum += voice.phaseIncrement * 16.0f;
+        // How fast the shift register is clocked.
+        //
+        // With a period selected we use the hardware rate, which is what
+        // makes noise sound tuned rather than merely bright. Otherwise the
+        // note's own pitch drives it, so a noise instrument still tracks the
+        // keyboard.
+        float clockRate;
+        if (m_oscConfig.noisePeriod >= 0 && m_oscConfig.noisePeriod < 16) {
+            clockRate = NES_CPU_HZ / float(NES_NOISE_PERIODS[m_oscConfig.noisePeriod]);
+            voice.noiseAccum += clockRate / m_sampleRate;
+        } else {
+            voice.noiseAccum += voice.phaseIncrement * 16.0f;
+        }
 
-        while (noiseAccum >= 1.0f) {
-            noiseAccum -= 1.0f;
+        // Bounded: a very short period at a low sample rate could otherwise
+        // ask for thousands of shifts in one sample.
+        int guard = 0;
+        while (voice.noiseAccum >= 1.0f && guard < 64) {
+            voice.noiseAccum -= 1.0f;
+            ++guard;
 
+            // 2A03: feedback is bit0 XOR bit1 normally, bit0 XOR bit6 in
+            // short mode. These were the wrong way round, so "short mode"
+            // produced white noise and the default produced the metallic
+            // periodic tone.
             uint16_t feedback;
             if (m_oscConfig.noiseShortMode) {
-                // Short mode: bits 0 and 1 (more metallic)
-                feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;
+                feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 6)) & 1;  // period 93
             } else {
-                // Long mode: bits 0 and 6 (white noise)
-                feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 6)) & 1;
+                feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;  // period 32767
             }
-            voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
+            voice.lfsr = static_cast<uint16_t>((voice.lfsr >> 1) | (feedback << 14));
         }
+        if (voice.noiseAccum > 1.0f) voice.noiseAccum = 0.0f;
+
+        // The register must never reach zero or it latches there forever.
+        if (voice.lfsr == 0) voice.lfsr = 0x0001;
 
         return (voice.lfsr & 1) ? 1.0f : -1.0f;
     }
@@ -2027,10 +2071,10 @@ private:
         float cutoff = 0.2f + 0.6f * filterEnv;  // Filter opens then closes
 
         // Simple resonant lowpass approximation
-        static float filterState = 0.0f;
         float resonance = 0.85f;
-        filterState += cutoff * (saw - filterState + resonance * (filterState - filterState));
-        float filtered = filterState + (saw - filterState) * cutoff;
+        voice.acidFilterState += cutoff * (saw - voice.acidFilterState +
+                                           resonance * (voice.acidFilterState - voice.acidFilterState));
+        float filtered = voice.acidFilterState + (saw - voice.acidFilterState) * cutoff;
 
         // Add some squelch/accent
         float accent = 1.0f + filterEnv * 0.5f;
@@ -2184,9 +2228,8 @@ private:
         float rumble = std::sin(voice.phase * TWO_PI * 0.1f) * 0.1f;
 
         // High-pass the noise for hiss
-        static float hissFilter = 0.0f;
-        hissFilter = hissFilter * 0.95f + noise * 0.05f;
-        float hiss = noise - hissFilter;
+        voice.hissFilterState = voice.hissFilterState * 0.95f + noise * 0.05f;
+        float hiss = noise - voice.hissFilterState;
 
         return (hiss * 0.3f + crackle + rumble) * 0.4f;
     }
@@ -2235,10 +2278,9 @@ private:
         float gate = (std::sin(voice.envTime * TWO_PI * gateFreq) > 0.0f) ? 1.0f : 0.2f;
 
         // Smooth the gate slightly
-        static float gateSmooth = 1.0f;
-        gateSmooth += (gate - gateSmooth) * 0.1f;
+        voice.gateSmoothState += (gate - voice.gateSmoothState) * 0.1f;
 
-        return pad * gateSmooth * 0.7f;
+        return pad * voice.gateSmoothState * 0.7f;
     }
 
     // PolySynth - Rich polyphonic synth

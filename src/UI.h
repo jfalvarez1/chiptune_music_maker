@@ -3006,43 +3006,62 @@ inline void ApplyTheme(Theme theme) {
             break;
 
         case Theme::Matrix:
-            // The Matrix - green on black
-            colors[ImGuiCol_WindowBg] = ImVec4(0.00f, 0.02f, 0.00f, 1.00f);
-            colors[ImGuiCol_ChildBg] = ImVec4(0.00f, 0.01f, 0.00f, 1.00f);
-            colors[ImGuiCol_PopupBg] = ImVec4(0.00f, 0.04f, 0.00f, 1.00f);
-            colors[ImGuiCol_Border] = ImVec4(0.00f, 0.60f, 0.00f, 0.50f);
-            colors[ImGuiCol_FrameBg] = ImVec4(0.00f, 0.08f, 0.00f, 1.00f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.00f, 0.15f, 0.00f, 1.00f);
-            colors[ImGuiCol_FrameBgActive] = ImVec4(0.00f, 0.22f, 0.00f, 1.00f);
-            colors[ImGuiCol_TitleBg] = ImVec4(0.00f, 0.04f, 0.00f, 1.00f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.00f, 0.20f, 0.00f, 1.00f);
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.00f, 0.06f, 0.00f, 1.00f);
-            // Opaque enough to read a label against the falling code
-            colors[ImGuiCol_Header] = ImVec4(0.00f, 0.34f, 0.02f, 0.92f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.00f, 0.46f, 0.03f, 0.96f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.00f, 0.70f, 0.00f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(0.00f, 0.46f, 0.00f, 0.92f);
-            colors[ImGuiCol_ButtonHovered] = ImVec4(0.00f, 0.60f, 0.00f, 0.96f);
-            colors[ImGuiCol_ButtonActive] = ImVec4(0.00f, 0.70f, 0.00f, 1.00f);
-            colors[ImGuiCol_SliderGrab] = ImVec4(0.00f, 0.80f, 0.00f, 1.00f);
-            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.00f, 1.00f, 0.00f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.00f, 1.00f, 0.00f, 1.00f);
-            colors[ImGuiCol_Text] = ImVec4(0.00f, 1.00f, 0.25f, 1.00f);  // Matrix green
-            colors[ImGuiCol_TextDisabled] = ImVec4(0.00f, 0.40f, 0.10f, 1.00f);
-            colors[ImGuiCol_Tab] = ImVec4(0.00f, 0.15f, 0.00f, 1.00f);
-            colors[ImGuiCol_TabHovered] = ImVec4(0.00f, 0.40f, 0.00f, 0.80f);
-            colors[ImGuiCol_TabActive] = ImVec4(0.00f, 0.25f, 0.00f, 1.00f);
+            // Terminal phosphor, but built so it can be looked at for hours.
+            //
+            // Every colour here used to have R and B pinned at zero, so the
+            // whole theme lived on one axis of the colour cube at maximum
+            // chroma and depth was carried by the green channel alone. Fully
+            // saturated green sits near the eye's peak sensitivity, which
+            // makes it the most tiring hue to max out, and it leaves no
+            // low-chroma surface anywhere to rest on.
+            //
+            // So: VALUE carries the hierarchy, CHROMA is spent only where
+            // something needs noticing. Surfaces are dark green-cast
+            // neutrals with real luminance steps; the accent stays vivid.
+            colors[ImGuiCol_ChildBg] = ImVec4(0.020f, 0.042f, 0.026f, 1.00f);
+            colors[ImGuiCol_WindowBg] = ImVec4(0.032f, 0.062f, 0.038f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.055f, 0.098f, 0.062f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.072f, 0.125f, 0.080f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.078f, 0.138f, 0.088f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.105f, 0.178f, 0.115f, 1.00f);
+            colors[ImGuiCol_Border] = ImVec4(0.180f, 0.420f, 0.235f, 0.55f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.028f, 0.055f, 0.034f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.075f, 0.145f, 0.088f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.040f, 0.075f, 0.046f, 1.00f);
 
-            // Piano roll colors - Matrix
-            g_PianoRollColors.keyWhite = IM_COL32(0, 30, 0, 255);
-            g_PianoRollColors.keyBlack = IM_COL32(0, 15, 0, 255);
-            g_PianoRollColors.gridLine = IM_COL32(0, 50, 0, 255);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(0, 120, 0, 255);
-            g_PianoRollColors.gridLinePattern = IM_COL32(0, 200, 0, 255);
-            g_PianoRollColors.noteDefault = IM_COL32(0, 200, 50, 255);
-            g_PianoRollColors.noteSelected = IM_COL32(0, 255, 100, 255);
-            g_PianoRollColors.playhead = IM_COL32(50, 255, 50, 255);
-            g_PianoRollColors.background = IM_COL32(0, 5, 0, 255);
+            // Headers are surfaces: enough chroma to separate, not enough to
+            // compete with the buttons.
+            colors[ImGuiCol_Header] = ImVec4(0.085f, 0.230f, 0.120f, 0.92f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.115f, 0.310f, 0.160f, 0.96f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.150f, 0.400f, 0.205f, 1.00f);
+
+            colors[ImGuiCol_Button] = ImVec4(0.130f, 0.480f, 0.235f, 0.92f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.175f, 0.590f, 0.300f, 0.96f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.225f, 0.700f, 0.370f, 1.00f);
+
+            // The one place full phosphor still belongs.
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.250f, 0.780f, 0.400f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.340f, 0.900f, 0.500f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.300f, 0.880f, 0.470f, 1.00f);
+
+            // Text keeps the hue but drops to a moderate chroma at high
+            // value. It reads as phosphor without glowing at you.
+            colors[ImGuiCol_Text] = ImVec4(0.640f, 0.940f, 0.700f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.360f, 0.560f, 0.410f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.045f, 0.100f, 0.058f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.130f, 0.330f, 0.180f, 0.95f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.090f, 0.230f, 0.125f, 1.00f);
+
+            // Piano roll - the grid recedes, the notes carry the chroma
+            g_PianoRollColors.keyWhite = IM_COL32(34, 58, 40, 255);
+            g_PianoRollColors.keyBlack = IM_COL32(18, 32, 22, 255);
+            g_PianoRollColors.gridLine = IM_COL32(28, 52, 34, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(58, 104, 68, 255);
+            g_PianoRollColors.gridLinePattern = IM_COL32(96, 176, 112, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(70, 200, 110, 255);
+            g_PianoRollColors.noteSelected = IM_COL32(180, 250, 200, 255);
+            g_PianoRollColors.playhead = IM_COL32(120, 255, 150, 255);
+            g_PianoRollColors.background = IM_COL32(10, 20, 13, 255);
             break;
 
         case Theme::FrutigerAero:
@@ -3060,21 +3079,23 @@ inline void ApplyTheme(Theme theme) {
             colors[ImGuiCol_WindowBg] = ImVec4(0.880f, 0.930f, 0.972f, 1.00f);
             colors[ImGuiCol_ChildBg] = ImVec4(0.845f, 0.905f, 0.958f, 1.00f);
             colors[ImGuiCol_FrameBg] = ImVec4(0.800f, 0.872f, 0.940f, 1.00f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.755f, 0.845f, 0.935f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.752f, 0.878f, 0.888f, 1.00f);
             colors[ImGuiCol_FrameBgActive] = ImVec4(0.705f, 0.815f, 0.930f, 1.00f);
             colors[ImGuiCol_PopupBg] = ImVec4(0.970f, 0.985f, 1.000f, 0.97f);
             // Glass, but only where it costs no legibility
-            colors[ImGuiCol_TitleBg] = ImVec4(0.620f, 0.800f, 0.930f, 0.90f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.430f, 0.705f, 0.920f, 0.95f);
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.780f, 0.890f, 0.968f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.560f, 0.822f, 0.808f, 0.92f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.372f, 0.742f, 0.712f, 0.96f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.760f, 0.902f, 0.905f, 1.00f);
             // On a pale window a widget without a defined edge dissolves.
             colors[ImGuiCol_Border] = ImVec4(0.420f, 0.600f, 0.800f, 0.85f);
 
             // Buttons stay light: labels are drawn in ImGuiCol_Text, which is
             // dark navy here, so a dark button would bury its own label.
-            colors[ImGuiCol_Header] = ImVec4(0.600f, 0.800f, 0.955f, 0.90f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.510f, 0.750f, 0.950f, 0.94f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.420f, 0.685f, 0.930f, 1.00f);
+            // The green half of white/green/blue. Without it the theme reads
+            // as "a light blue theme" no matter what the background does.
+            colors[ImGuiCol_Header] = ImVec4(0.618f, 0.855f, 0.792f, 0.92f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.522f, 0.812f, 0.736f, 0.95f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.412f, 0.752f, 0.668f, 1.00f);
             colors[ImGuiCol_Button] = ImVec4(0.635f, 0.822f, 0.960f, 0.95f);
             colors[ImGuiCol_ButtonHovered] = ImVec4(0.530f, 0.770f, 0.960f, 1.00f);
             colors[ImGuiCol_ButtonActive] = ImVec4(0.425f, 0.690f, 0.935f, 1.00f);
@@ -3082,7 +3103,7 @@ inline void ApplyTheme(Theme theme) {
             // Aqua secondary against the sky blue
             colors[ImGuiCol_SliderGrab] = ImVec4(0.110f, 0.620f, 0.600f, 1.00f);
             colors[ImGuiCol_SliderGrabActive] = ImVec4(0.060f, 0.520f, 0.500f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.090f, 0.420f, 0.780f, 1.00f);
+            colors[ImGuiCol_CheckMark] = ImVec4(0.055f, 0.512f, 0.462f, 1.00f);
             colors[ImGuiCol_Text] = ImVec4(0.100f, 0.180f, 0.300f, 1.00f);
             colors[ImGuiCol_TextDisabled] = ImVec4(0.430f, 0.510f, 0.600f, 1.00f);
             colors[ImGuiCol_Tab] = ImVec4(0.720f, 0.860f, 0.960f, 0.92f);
@@ -3095,7 +3116,7 @@ inline void ApplyTheme(Theme theme) {
             g_PianoRollColors.keyWhite = IM_COL32(250, 253, 255, 255);
             g_PianoRollColors.keyBlack = IM_COL32(148, 176, 204, 255);
             g_PianoRollColors.gridLine = IM_COL32(206, 220, 233, 255);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(146, 174, 202, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(138, 178, 176, 255);
             g_PianoRollColors.gridLinePattern = IM_COL32(52, 124, 196, 255);
             g_PianoRollColors.noteDefault = IM_COL32(38, 116, 202, 255);
             g_PianoRollColors.noteSelected = IM_COL32(232, 138, 16, 255);
@@ -4082,74 +4103,259 @@ inline void InitAeroBubbles(ImVec2 screenSize) {
     g_AeroInitialized = true;
 }
 
+// Tropical fish, drifting across the scene. Frutiger Aero's single most
+// recognisable motif after the bubbles - the Windows 7 beta fish, the
+// aquarium wallpapers, the "technology in harmony with nature" idea made
+// literal.
+struct AeroFish {
+    float x, y;
+    float speed;
+    float scale;
+    float phase;
+    int   direction;   // +1 swims right, -1 swims left
+    ImU32 body;
+    ImU32 fin;
+};
+
+static std::vector<AeroFish> g_AeroFish;
+static bool g_AeroFishInit = false;
+
+inline void InitAeroFish(ImVec2 screenSize) {
+    if (g_AeroFishInit) return;
+    g_AeroFishInit = true;
+    g_AeroFish.clear();
+
+    // Warm tropical colours against the blue-green ground.
+    const ImU32 bodies[] = {
+        IM_COL32(255, 158,  60, 190),   // clownfish orange
+        IM_COL32(255, 206,  80, 180),   // yellow tang
+        IM_COL32( 92, 190, 235, 175),   // powder blue
+        IM_COL32(240, 130, 165, 175),   // coral pink
+        IM_COL32(130, 225, 180, 170),   // mint
+    };
+
+    for (int i = 0; i < 6; ++i) {
+        AeroFish f;
+        f.direction = (i % 2 == 0) ? 1 : -1;
+        f.scale = 0.75f + (i % 3) * 0.28f;
+        f.speed = (18.0f + (i % 4) * 9.0f) * f.scale;
+        f.x = (screenSize.x / 6.0f) * i;
+        f.y = screenSize.y * (0.28f + 0.11f * (i % 5));
+        f.phase = i * 1.37f;
+        f.body = bodies[i % 5];
+        f.fin = IM_COL32(255, 255, 255, 110);
+        g_AeroFish.push_back(f);
+    }
+}
+
+// A fish is a body ellipse, a triangular tail, a dorsal fin and an eye.
+// Drawn small and semi-transparent, that reads unmistakably as a fish
+// without needing a sprite.
+inline void DrawAeroFish(ImDrawList* drawList, const AeroFish& fish, float bob) {
+    const float s = fish.scale;
+    const float dir = static_cast<float>(fish.direction);
+    const float x = fish.x;
+    const float y = fish.y + bob;
+
+    const float bodyW = 22.0f * s;
+    const float bodyH = 11.0f * s;
+
+    // Tail, behind the body
+    const float tailX = x - dir * bodyW * 0.95f;
+    drawList->AddTriangleFilled(
+        ImVec2(tailX, y),
+        ImVec2(tailX - dir * 13.0f * s, y - 9.0f * s),
+        ImVec2(tailX - dir * 13.0f * s, y + 9.0f * s),
+        fish.body);
+
+    // Dorsal fin
+    drawList->AddTriangleFilled(
+        ImVec2(x - dir * 2.0f * s, y - bodyH * 0.85f),
+        ImVec2(x + dir * 7.0f * s, y - bodyH * 1.75f),
+        ImVec2(x + dir * 9.0f * s, y - bodyH * 0.6f),
+        fish.fin);
+
+    drawList->AddEllipseFilled(ImVec2(x, y), ImVec2(bodyW, bodyH), fish.body, 0.0f, 24);
+
+    // Glossy top-light, the skeuomorphic tell
+    drawList->AddEllipseFilled(
+        ImVec2(x - dir * 3.0f * s, y - bodyH * 0.42f),
+        ImVec2(bodyW * 0.52f, bodyH * 0.30f),
+        IM_COL32(255, 255, 255, 90), 0.0f, 16);
+
+    // Eye
+    drawList->AddCircleFilled(
+        ImVec2(x + dir * bodyW * 0.55f, y - bodyH * 0.18f), 2.4f * s,
+        IM_COL32(30, 45, 60, 210), 10);
+}
+
 inline void DrawFrutigerAero(ImDrawList* drawList, ImVec2 screenSize, float deltaTime) {
     InitAeroBubbles(screenSize);
+    InitAeroFish(screenSize);
     g_AeroTime += deltaTime;
 
-    // Sky gradient background
-    ImU32 topColor = IM_COL32(180, 220, 255, 255);
-    ImU32 bottomColor = IM_COL32(240, 248, 255, 255);
+    // ------------------------------------------------------------------
+    // Sky. In this aesthetic a gradient is lighting, not decoration - it
+    // should read as light falling through air and water rather than as a
+    // colour ramp. Deep sky at the top, brightening toward the horizon.
+    // ------------------------------------------------------------------
+    const float horizon = screenSize.y * 0.72f;
+
     drawList->AddRectFilledMultiColor(
-        ImVec2(0, 0), screenSize,
-        topColor, topColor, bottomColor, bottomColor);
+        ImVec2(0, 0), ImVec2(screenSize.x, horizon),
+        IM_COL32( 96, 178, 240, 255), IM_COL32( 96, 178, 240, 255),
+        IM_COL32(214, 242, 252, 255), IM_COL32(214, 242, 252, 255));
 
-    // Soft clouds (large semi-transparent ellipses)
-    for (int i = 0; i < 5; ++i) {
-        float cloudX = std::fmod(g_AeroTime * 8.0f + i * screenSize.x / 4.0f, screenSize.x + 400.0f) - 200.0f;
-        float cloudY = 50.0f + i * 40.0f + sinf(g_AeroTime * 0.5f + i) * 10.0f;
-        float cloudW = 200.0f + i * 30.0f;
-        float cloudH = 60.0f + i * 10.0f;
+    // ------------------------------------------------------------------
+    // Sun and lens flare. The flare is the period signature - a chain of
+    // translucent discs along the axis from the sun through the centre.
+    // ------------------------------------------------------------------
+    const ImVec2 sun(screenSize.x * 0.78f, horizon * 0.26f);
+    for (int i = 7; i >= 1; --i) {
+        drawList->AddCircleFilled(sun, 26.0f * i,
+                                  IM_COL32(255, 252, 226, 12), 40);
+    }
+    drawList->AddCircleFilled(sun, 26.0f, IM_COL32(255, 255, 244, 210), 40);
 
-        drawList->AddEllipseFilled(
-            ImVec2(cloudX, cloudY), ImVec2(cloudW, cloudH),
-            IM_COL32(255, 255, 255, 60), 0.0f, 32);
+    const ImVec2 centre(screenSize.x * 0.5f, screenSize.y * 0.5f);
+    for (int i = 1; i <= 5; ++i) {
+        const float t = i * 0.34f;
+        const ImVec2 pos(sun.x + (centre.x - sun.x) * t * 1.6f,
+                         sun.y + (centre.y - sun.y) * t * 1.6f);
+        const float radius = 9.0f + (i % 3) * 13.0f;
+        const ImU32 tint = (i % 2 == 0) ? IM_COL32(180, 255, 210, 26)
+                                        : IM_COL32(255, 226, 170, 26);
+        drawList->AddCircleFilled(pos, radius, tint, 28);
+        drawList->AddCircle(pos, radius, IM_COL32(255, 255, 255, 20), 28, 1.5f);
     }
 
-    // Floating glossy bubbles
-    for (auto& bubble : g_AeroBubbles) {
-        // Float upward with wobble
-        bubble.y -= bubble.speed * deltaTime;
-        bubble.x += sinf(g_AeroTime * 2.0f + bubble.wobble) * 0.5f;
+    // ------------------------------------------------------------------
+    // Clouds - soft, high, unhurried.
+    // ------------------------------------------------------------------
+    for (int i = 0; i < 6; ++i) {
+        const float cloudX = std::fmod(g_AeroTime * 7.0f + i * screenSize.x / 5.0f,
+                                       screenSize.x + 460.0f) - 230.0f;
+        const float cloudY = 40.0f + i * 34.0f + std::sin(g_AeroTime * 0.4f + i) * 9.0f;
+        const float cloudW = 180.0f + i * 26.0f;
+        const float cloudH = 44.0f + i * 7.0f;
 
-        // Wrap around
+        drawList->AddEllipseFilled(ImVec2(cloudX, cloudY), ImVec2(cloudW, cloudH),
+                                   IM_COL32(255, 255, 255, 62), 0.0f, 32);
+        drawList->AddEllipseFilled(ImVec2(cloudX + cloudW * 0.42f, cloudY + cloudH * 0.18f),
+                                   ImVec2(cloudW * 0.62f, cloudH * 0.78f),
+                                   IM_COL32(255, 255, 255, 48), 0.0f, 32);
+    }
+
+    // ------------------------------------------------------------------
+    // Bokeh. Out-of-focus highlights, the other half of the period look.
+    // ------------------------------------------------------------------
+    for (int i = 0; i < 14; ++i) {
+        const float bx = std::fmod(i * 137.5f + g_AeroTime * 4.0f, screenSize.x);
+        const float by = std::fmod(i * 91.3f + std::sin(g_AeroTime * 0.3f + i) * 24.0f,
+                                   horizon);
+        const float br = 8.0f + (i % 5) * 7.0f;
+        drawList->AddCircleFilled(ImVec2(bx, by), br, IM_COL32(255, 255, 255, 20), 20);
+        drawList->AddCircle(ImVec2(bx, by), br, IM_COL32(255, 255, 255, 26), 20, 1.5f);
+    }
+
+    // ------------------------------------------------------------------
+    // Grass. The green half of the palette, and the half that was missing -
+    // the theme read as "light blue" without it. Two layers, the back one
+    // darker and slower, so the band has depth rather than being a fringe.
+    // ------------------------------------------------------------------
+    drawList->AddRectFilledMultiColor(
+        ImVec2(0, horizon), ImVec2(screenSize.x, screenSize.y),
+        IM_COL32(150, 216, 118, 190), IM_COL32(150, 216, 118, 190),
+        IM_COL32( 58, 148,  62, 235), IM_COL32( 58, 148,  62, 235));
+
+    struct GrassLayer { float step, height, sway, speed; ImU32 color; };
+    const GrassLayer layers[] = {
+        {13.0f, 74.0f, 5.0f, 0.7f, IM_COL32( 74, 158,  74, 205)},   // back
+        { 9.0f, 52.0f, 8.0f, 1.2f, IM_COL32(112, 196,  92, 225)},   // front
+    };
+
+    for (const GrassLayer& layer : layers) {
+        for (float x = -10.0f; x < screenSize.x + 10.0f; x += layer.step) {
+            const float seed = x * 0.09f;
+            const float height = layer.height * (0.62f + 0.38f * std::sin(seed * 3.1f));
+            const float sway = std::sin(g_AeroTime * layer.speed + seed) * layer.sway;
+            const float baseY = screenSize.y + 4.0f;
+            const float tipY = baseY - height;
+
+            drawList->AddTriangleFilled(
+                ImVec2(x - 3.0f, baseY),
+                ImVec2(x + 3.0f, baseY),
+                ImVec2(x + sway, tipY),
+                layer.color);
+        }
+    }
+
+    // Caustic light on the grass, as if seen through water
+    for (int i = 0; i < 9; ++i) {
+        const float cx = std::fmod(i * 173.0f + g_AeroTime * 16.0f, screenSize.x + 120.0f) - 60.0f;
+        const float cy = horizon + 12.0f + (i % 3) * 22.0f;
+        const float cw = 46.0f + (i % 4) * 22.0f;
+        drawList->AddEllipseFilled(ImVec2(cx, cy), ImVec2(cw, 7.0f),
+                                   IM_COL32(255, 255, 255, 26), 0.0f, 20);
+    }
+
+    // ------------------------------------------------------------------
+    // Fish, between the grass and the bubbles.
+    // ------------------------------------------------------------------
+    for (AeroFish& fish : g_AeroFish) {
+        fish.x += fish.speed * static_cast<float>(fish.direction) * deltaTime;
+
+        const float margin = 90.0f * fish.scale;
+        if (fish.direction > 0 && fish.x > screenSize.x + margin) fish.x = -margin;
+        if (fish.direction < 0 && fish.x < -margin) fish.x = screenSize.x + margin;
+
+        const float bob = std::sin(g_AeroTime * 1.6f + fish.phase) * 7.0f;
+        DrawAeroFish(drawList, fish, bob);
+    }
+
+    // ------------------------------------------------------------------
+    // Bubbles last, so they float in front of everything.
+    // ------------------------------------------------------------------
+    for (auto& bubble : g_AeroBubbles) {
+        bubble.y -= bubble.speed * deltaTime;
+        bubble.x += std::sin(g_AeroTime * 2.0f + bubble.wobble) * 0.5f;
+
         if (bubble.y + bubble.radius < 0) {
             bubble.y = screenSize.y + bubble.radius;
             bubble.x = static_cast<float>(rand() % static_cast<int>(screenSize.x));
         }
 
-        // Draw bubble with glossy effect
-        float r = bubble.radius;
+        const float r = bubble.radius;
 
-        // Main bubble body (gradient blue to cyan)
-        int baseR = static_cast<int>(100 + bubble.hue * 50);
-        int baseG = static_cast<int>(180 + bubble.hue * 40);
-        int baseB = static_cast<int>(230 + bubble.hue * 25);
+        const int baseR = static_cast<int>(120 + bubble.hue * 60);
+        const int baseG = static_cast<int>(198 + bubble.hue * 40);
+        const int baseB = static_cast<int>(236 + bubble.hue * 19);
         drawList->AddCircleFilled(ImVec2(bubble.x, bubble.y), r,
-            IM_COL32(baseR, baseG, baseB, 120), 32);
+                                  IM_COL32(baseR, baseG, baseB, 96), 32);
 
-        // Glossy highlight (top-left)
-        float highlightX = bubble.x - r * 0.3f;
-        float highlightY = bubble.y - r * 0.3f;
-        drawList->AddCircleFilled(ImVec2(highlightX, highlightY), r * 0.4f,
-            IM_COL32(255, 255, 255, 180), 16);
+        // Rim light along the lower edge - a real bubble catches light
+        // there too, and it is what stops it reading as a flat disc.
+        drawList->AddCircle(ImVec2(bubble.x, bubble.y + r * 0.10f), r * 0.92f,
+                            IM_COL32(255, 255, 255, 70), 32, 2.0f);
 
-        // Secondary smaller highlight
-        drawList->AddCircleFilled(ImVec2(highlightX + r * 0.15f, highlightY + r * 0.15f), r * 0.15f,
-            IM_COL32(255, 255, 255, 220), 12);
+        const float highlightX = bubble.x - r * 0.32f;
+        const float highlightY = bubble.y - r * 0.32f;
+        drawList->AddCircleFilled(ImVec2(highlightX, highlightY), r * 0.36f,
+                                  IM_COL32(255, 255, 255, 170), 16);
+        drawList->AddCircleFilled(ImVec2(highlightX + r * 0.14f, highlightY + r * 0.14f),
+                                  r * 0.14f, IM_COL32(255, 255, 255, 225), 12);
 
-        // Bubble rim (subtle)
         drawList->AddCircle(ImVec2(bubble.x, bubble.y), r,
-            IM_COL32(100, 150, 200, 80), 32, 2.0f);
+                            IM_COL32(120, 176, 214, 88), 32, 1.6f);
     }
 
-    // Glass reflection bars at top
+    // Glass reflection bars at the very top, the Aero window-chrome nod
     for (int i = 0; i < 3; ++i) {
-        float barY = 20.0f + i * 8.0f;
-        float barWidth = screenSize.x * (0.3f - i * 0.08f);
-        float barX = (screenSize.x - barWidth) / 2.0f + sinf(g_AeroTime + i) * 50.0f;
-        drawList->AddRectFilled(
-            ImVec2(barX, barY), ImVec2(barX + barWidth, barY + 3.0f),
-            IM_COL32(255, 255, 255, 60 - i * 15));
+        const float barY = 18.0f + i * 8.0f;
+        const float barWidth = screenSize.x * (0.30f - i * 0.08f);
+        const float barX = (screenSize.x - barWidth) * 0.5f + std::sin(g_AeroTime + i) * 46.0f;
+        drawList->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barWidth, barY + 3.0f),
+                                IM_COL32(255, 255, 255, 58 - i * 15));
     }
 }
 
@@ -4991,6 +5197,39 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
         }
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export to MIDI file for use in other DAWs");
+
+    ImGui::SameLine();
+    if (ImGui::Button("Stems", ImVec2(58, 25))) {
+        // One WAV per channel, each rendered with the others muted - what
+        // anyone opening them in another DAW expects by "stems".
+        std::string path = saveFileDialog("Folder\0*.*\0", "");
+        if (!path.empty()) {
+            // The dialog returns a file path; use its folder.
+            const size_t slash = path.find_last_of("/\\");
+            const std::string dir = (slash == std::string::npos)
+                                    ? path : path.substr(0, slash);
+
+            calcDefaultDuration();
+            StemExportResult result = exportStems(project, seq, dir, exportDuration, true);
+
+            if (!result.failures.empty()) {
+                exportStatus = "Stem export failed: " + result.failures.front();
+            } else if (result.written == 0) {
+                exportStatus = "Nothing to export - every channel is silent";
+            } else {
+                exportStatus = "Exported " + std::to_string(result.written) +
+                               " stems" +
+                               (result.skipped > 0
+                                    ? " (" + std::to_string(result.skipped) + " silent skipped)"
+                                    : "");
+            }
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Export one WAV per channel, each with the others muted.\n"
+                          "Silent channels are skipped. Pick any file in the target\n"
+                          "folder - only the folder is used.");
+    }
 
     // WAV Export popup
     if (showExportPopup) {
@@ -7744,6 +7983,31 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         if (osc.type == OscillatorType::Noise) {
             if (ImGui::Checkbox("Short Mode (metallic)", &osc.noiseShortMode)) {
                 seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("The 2A03's periodic noise mode: the shift register\n"
+                                  "repeats every 93 steps, so it reads as a metallic\n"
+                                  "tone rather than as hiss.");
+            }
+
+            // Real hardware offers sixteen fixed rates rather than a sweep,
+            // and that stepping is most of what makes NES noise recognisable.
+            const char* periodNames[] = {
+                "Track note",
+                "0 - highest", "1", "2", "3", "4", "5", "6", "7",
+                "8", "9", "10", "11", "12", "13", "14", "15 - lowest"
+            };
+            int periodIndex = osc.noisePeriod + 1;   // -1 becomes 0
+            ImGui::SetNextItemWidth(150.0f);
+            if (ImGui::Combo("Noise Period", &periodIndex, periodNames,
+                             IM_ARRAYSIZE(periodNames))) {
+                osc.noisePeriod = periodIndex - 1;
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("One of the sixteen noise rates the NES actually had.\n"
+                                  "Track note follows the keyboard instead, which no\n"
+                                  "hardware did but is useful for tuned percussion.");
             }
         }
 
@@ -11330,6 +11594,100 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     Pattern& pattern = project.patterns[ui.selectedPattern];
 
     // ========================================================================
+    // 0. Euclidean Rhythms
+    //
+    // Distributing k hits as evenly as possible over n steps produces a
+    // startling number of the world's actual drum patterns - E(3,8) is the
+    // tresillo, E(5,16) the bossa clave. It is the fastest route from an
+    // empty pattern to a rhythm worth keeping.
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Euclidean Rhythms", ImGuiTreeNodeFlags_DefaultOpen)) {
+        static int euclidSteps = 16;
+        static int euclidPulses = 5;
+        static int euclidRotation = 0;
+        static int euclidInstrument = 0;
+        static float euclidBars = 4.0f;
+
+        ImGui::SliderInt("Steps", &euclidSteps, 2, 32);
+        ImGui::SliderInt("Pulses", &euclidPulses, 0, euclidSteps);
+        ImGui::SliderInt("Rotate", &euclidRotation, 0, std::max(0, euclidSteps - 1));
+
+        const char* instruments[] = {"Kick", "Snare", "Hi-Hat", "Clap", "Cowbell", "Selected sound"};
+        ImGui::Combo("Instrument", &euclidInstrument, instruments, IM_ARRAYSIZE(instruments));
+        ImGui::SliderFloat("Over beats", &euclidBars, 1.0f, 16.0f, "%.0f");
+
+        // A live preview of where the hits land, which is far quicker to
+        // read than the numbers are.
+        {
+            const std::vector<bool> preview =
+                generators::euclideanPattern(euclidSteps, euclidPulses, euclidRotation);
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            const float width = ImGui::GetContentRegionAvail().x;
+            const float cell = std::max(4.0f, width / float(std::max(1, euclidSteps)));
+            const float height = 18.0f;
+
+            for (int i = 0; i < euclidSteps; ++i) {
+                const float x0 = origin.x + cell * i + 1.0f;
+                const float x1 = origin.x + cell * (i + 1) - 1.0f;
+                const bool hit = preview[size_t(i)];
+                // Beat boundaries get a brighter ground so the figure can be
+                // read against the pulse.
+                const bool onBeat = (euclidSteps % 4 == 0) && (i % (euclidSteps / 4) == 0);
+                draw->AddRectFilled(ImVec2(x0, origin.y), ImVec2(x1, origin.y + height),
+                                    hit ? widgets::accentColor()
+                                        : ImGui::GetColorU32(onBeat ? ImGuiCol_FrameBgHovered
+                                                                    : ImGuiCol_FrameBg),
+                                    2.0f);
+            }
+            ImGui::Dummy(ImVec2(width, height + 4.0f));
+        }
+
+        if (ImGui::Button("Add to pattern", ImVec2(-1, 0))) {
+            generators::EuclideanVoice voice;
+            voice.steps = euclidSteps;
+            voice.pulses = euclidPulses;
+            voice.rotation = euclidRotation;
+
+            switch (euclidInstrument) {
+                case 0: voice.instrument = OscillatorType::Kick808; voice.pitch = 36; break;
+                case 1: voice.instrument = OscillatorType::Snare;   voice.pitch = 38; break;
+                case 2: voice.instrument = OscillatorType::HiHat;   voice.pitch = 42;
+                        voice.velocity = 0.6f; break;
+                case 3: voice.instrument = OscillatorType::Clap;    voice.pitch = 39; break;
+                case 4: voice.instrument = OscillatorType::Cowbell; voice.pitch = 56; break;
+                default:
+                    voice.instrument = project.channels[ui.selectedChannel].oscillator.type;
+                    voice.pitch = 60;
+                    break;
+            }
+
+            const std::vector<Note> notes = generators::generateEuclidean(voice, euclidBars);
+            for (const Note& n : notes) pattern.notes.push_back(n);
+            seq.updateChannelConfigs();
+        }
+
+        if (ImGui::Button("Generate full kit", ImVec2(-1, 0))) {
+            const std::vector<Note> kit = generators::generateEuclideanKit(
+                euclidSteps, 4, 2, std::max(1, euclidSteps * 2 / 3), euclidBars);
+            for (const Note& n : kit) pattern.notes.push_back(n);
+            seq.updateChannelConfigs();
+        }
+
+        if (ImGui::BeginCombo("Preset", "Classic rhythms...")) {
+            for (const generators::EuclideanPreset& preset : generators::euclideanPresets()) {
+                if (ImGui::Selectable(preset.name)) {
+                    euclidSteps = preset.steps;
+                    euclidPulses = preset.pulses;
+                    euclidRotation = preset.rotation;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", preset.description);
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    // ========================================================================
     // 1. Drum Pattern Generator
     // ========================================================================
     if (ImGui::CollapsingHeader("Drum Pattern Generator", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -11525,6 +11883,10 @@ inline void renderSpectrumAnalyzer(Sequencer& seq) {
     ImGui::Begin("Spectrum Analyzer", nullptr, ImGuiWindowFlags_NoCollapse);
 
     auto& analyzer = seq.getSpectrumAnalyzer();
+
+    // The analyzer does its FFT here, on the UI thread, at whatever rate we
+    // redraw. The audio thread only fills a ring buffer.
+    analyzer.update();
 
     // Get all magnitudes
     std::vector<float> magnitudes = analyzer.getAllMagnitudes();

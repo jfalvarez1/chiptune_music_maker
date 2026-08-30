@@ -1,6 +1,6 @@
 # ChiptuneTracker — Test Plan
 
-**Last updated:** 2026-08-30 (v3.0.0)
+**Last updated:** 2026-08-30 (v3.3.0)
 
 This describes what is tested, how, and — just as importantly — **what is
 not**, so nobody mistakes a green run for full coverage.
@@ -22,6 +22,23 @@ something that was never there. So the tests are built to assert that
 
 ---
 
+## The rule
+
+**Every feature ships with its coverage in the same change.** Assertions in
+`tests/ChiptuneTests.cpp`, and a case in `tools/ui-smoke-test.ps1` if it has
+any UI. No exceptions, because the failure mode here is silence rather than
+a crash — see above.
+
+The assertion must be that the feature *changes the audio*, not that the
+code ran. The test that found the dead stereo widener renders once with the
+effect off and once with it on and fails if the two buffers match. "It
+returned true" would have passed on a feature that did nothing.
+
+This has already paid for itself twice: the stem exporter's test failed the
+moment its temp directory was removed, which is how we learned it never
+created its output folder, and the noise tests caught that voices were
+sharing one LFSR clock.
+
 ## Layer 1 — Headless suite (`ChiptuneTests`)
 
 No window, no audio device. Renders audio into buffers and inspects it.
@@ -31,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**1333 checks across 20 groups.** Exit code 0 = pass, 1 = failure, and every
+**1446 checks across 24 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -58,6 +75,10 @@ failure names the field or parameter involved.
 | Master bus units | Enabling any master effect at its defaults must not change the level by more than ~12 dB, and must never silence. **This is the regression test for the dB-vs-linear bug that muted the whole song.** |
 | Validation | Every field fed NaN, infinity, or a wildly wrong value, then asserted usable — and the repaired project renders. |
 | Long-run stability | 60 seconds of a busy, effect-heavy, looping project: no NaN, limiter holds, level has not drifted, playhead still inside the loop. |
+| Spectrum analyzer | A known tone lands in the right bin; a single tone lights few bins rather than the whole spectrum (the saturation regression); level tracks amplitude; silence reads as silence; NaN input and a zero sample rate are survived. |
+| Noise generator | All sixteen NES periods render; they step from bright to dark; short mode is measurably periodic and normal mode is not; four voices are louder than one (they no longer share a clock); the period persists and out-of-range values are repaired. |
+| Euclidean generator | Every E(k,n) up to n=32 produces exactly k onsets; the tresillo's spacing is correct; rotation preserves the count; degenerate input is safe; generated notes are valid, ordered and audible; all nine presets match their stated pattern. |
+| Stem export | One file per non-silent channel, silent ones skipped, mute/solo state restored afterwards, unsafe characters stripped from filenames, real RIFF files on disk, and a bad duration refused. |
 
 ## Layer 2 — UI smoke test (`tools/ui-smoke-test.ps1`)
 
@@ -156,8 +177,17 @@ Honest list of what nothing currently covers.
 ```powershell
 cmake --build build --config Release
 build/bin/Release/ChiptuneTests.exe        # layer 1
+ctest --test-dir build -C Release          # layer 1, from a different cwd
 ./tools/ui-smoke-test.ps1                  # layer 2
 ./tools/generate-gallery.ps1               # refresh README screenshots
+```
+
+Run the headless suite *both* ways. `ctest` launches it from `build/` rather
+than the repo root, and that difference once exposed an out-of-bounds write
+that the same binary did not fault on when run directly - whether an
+out-of-bounds write faults depends on the process memory layout.
+
+```
 ```
 
 All three must pass before a release tag.

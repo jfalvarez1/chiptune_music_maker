@@ -7,6 +7,76 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.3.0] - 2026-08-30 - "Euclid"
+
+### Fixed
+
+- **The spectrum analyzer was a solid wall at every frequency.** Its FFT
+  output was never normalised, so a 2048-point transform of any audible
+  signal exceeded the "-60 dB to 0 dB" display range and every bin clamped
+  to maximum. Scaling by the transform length and the window's coherent
+  gain puts a full-scale sine at 0 dBFS, where it belongs.
+
+- **The analyzer ran its entire FFT inside the audio callback** - growing a
+  vector, erasing from its front, allocating scratch buffers, and taking a
+  mutex the UI thread also held. Any one of those can stall the callback
+  and produce a dropout. The audio thread now writes one sample into a
+  lock-free ring buffer and nothing else; the windowing, transform and dB
+  conversion happen on the UI thread. The transform itself is iterative
+  with precomputed tables, so it allocates nothing at all.
+
+- **Four oscillators shared state across every voice and channel.** The
+  noise LFSR clock, the acid filter, the vinyl hiss filter and the gated-pad
+  smoother were `static` locals inside their generators, so two notes on the
+  same oscillator - or two channels - fed each other. Eight noise voices all
+  advanced a single accumulator. They are per-voice now.
+
+- **The NES noise LFSR taps were inverted.** On a 2A03 the feedback bit is
+  bit0 XOR bit1 normally and bit0 XOR bit6 in short mode; the code had them
+  the other way round, so "short mode" produced white noise and the default
+  produced the metallic periodic tone.
+
+- **Stem export never created its output folder**, so choosing a new
+  directory wrote nothing. Caught by its own test the first time the temp
+  directory was absent.
+
+### Added
+
+- **Authentic NES noise.** The sixteen fixed noise periods real hardware
+  offers, selectable per channel. That stepping is most of what makes NES
+  noise sound like NES noise rather than like filtered hiss. "Track note"
+  remains available for tuned percussion, which no hardware did but is
+  useful.
+
+- **Euclidean rhythm generator.** Distributing k onsets as evenly as
+  possible over n steps produces a startling number of the world's actual
+  drum patterns - E(3,8) is the tresillo, E(5,16) the bossa clave. In the
+  Tools panel with a live step preview, per-instrument or as a full kit,
+  and nine named presets.
+
+- **Stem export.** One WAV per channel, each rendered with the others
+  muted, so every per-channel effect behaves exactly as it does in the mix.
+  Silent channels are skipped and the project's mute/solo state is restored
+  afterwards.
+
+- **Frutiger Aero, properly.** The theme read as "light blue" because it was
+  missing both halves of its own aesthetic. The background now has a sky
+  gradient with a sun and lens flare, drifting clouds, bokeh, a layered
+  grass band with caustic light, rising glossy bubbles and tropical fish;
+  the palette takes back the green half of white/green/blue.
+
+- **A standalone executable attached to the release.** The build already
+  links the CRT statically, so it runs with nothing else installed.
+
+### Changed
+
+- `writeWavFile` extracted so the mixdown and the stems produce byte-identical
+  files from one implementation.
+- `docs/TEST_PLAN.md` states the policy explicitly: every feature ships with
+  its coverage in the same change.
+
+---
+
 ## [3.2.0] - 2026-08-30 - "Palette"
 
 A full pass over the ten themes, driven by an audit that turned up one

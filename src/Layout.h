@@ -75,7 +75,7 @@ inline ImGuiID BeginDockSpace() {
     // The margin turns them into a frame around the workspace, and the
     // separator gutters let them run between panels. They stay where they
     // belong: behind and around the work, never underneath the text.
-    constexpr float MARGIN = 16.0f;
+    constexpr float MARGIN = 26.0f;
 
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + MARGIN,
                                    viewport->WorkPos.y + MARGIN));
@@ -113,7 +113,7 @@ inline ImGuiID BeginDockSpace() {
 inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec2 size) {
     // Must match the inset in BeginDockSpace, or the tree is built at the
     // wrong size and every panel is laid out slightly off.
-    constexpr float MARGIN = 16.0f;
+    constexpr float MARGIN = 26.0f;
     const ImVec2 inner(std::max(64.0f, size.x - MARGIN * 2.0f),
                        std::max(64.0f, size.y - MARGIN * 2.0f));
 

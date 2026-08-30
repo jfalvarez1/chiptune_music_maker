@@ -12,6 +12,7 @@
 #include "ProjectValidation.h"
 #include "OscillatorNames.h"
 #include "ProjectSerializer.h"
+#include "Generators.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -22,6 +23,8 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shlobj.h>
+#else
+#include <sys/stat.h>   // mkdir, for ensureDirectoryExists
 #endif
 
 namespace ChiptuneTracker {
@@ -121,18 +124,52 @@ inline bool renderToBuffer(Project& project, Sequencer& seq,
     return true;
 }
 
-// Export to WAV file
-inline bool exportWav(Project& project, Sequencer& seq, const std::string& filepath, float durationBeats) {
-    std::vector<float> leftBuffer, rightBuffer;
+// Creates a directory if it is not already there, including parents.
+// Deliberately not std::filesystem: that crashed on this toolchain's static
+// runtime when called early, and this is all the app needs.
+inline bool ensureDirectoryExists(const std::string& path) {
+    if (path.empty()) return true;
 
-    if (!renderToBuffer(project, seq, leftBuffer, rightBuffer, durationBeats)) {
-        return false;
+    std::string partial;
+    partial.reserve(path.size());
+
+    for (size_t i = 0; i <= path.size(); ++i) {
+        const bool atEnd = (i == path.size());
+        const char c = atEnd ? '\0' : path[i];
+
+        if (atEnd || c == '/' || c == '\\') {
+            // Skip a bare drive letter like "C:" - it always exists and
+            // trying to create it fails.
+            if (!partial.empty() && partial.back() != ':') {
+#ifdef _WIN32
+                CreateDirectoryA(partial.c_str(), nullptr);
+#else
+                mkdir(partial.c_str(), 0755);
+#endif
+            }
+            if (atEnd) break;
+        }
+        partial += c;
     }
 
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesA(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+           (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    return true;
+#endif
+}
+
+// Writes a stereo float buffer as 16-bit PCM. Shared by the mixdown export
+// and the per-channel stem export, so both produce identical files.
+inline bool writeWavFile(const std::string& filepath,
+                         const std::vector<float>& leftBuffer,
+                         const std::vector<float>& rightBuffer) {
     std::ofstream file(filepath, std::ios::binary);
     if (!file.is_open()) return false;
 
-    size_t numSamples = leftBuffer.size();
+    size_t numSamples = std::min(leftBuffer.size(), rightBuffer.size());
 
     WavHeader header;
     header.numChannels = 2;
@@ -158,8 +195,19 @@ inline bool exportWav(Project& project, Sequencer& seq, const std::string& filep
         file.write(reinterpret_cast<char*>(&right16), sizeof(int16_t));
     }
 
+    const bool ok = file.good();
     file.close();
-    return true;
+    return ok;
+}
+
+// Export the full mix to a WAV file.
+inline bool exportWav(Project& project, Sequencer& seq,
+                      const std::string& filepath, float durationBeats) {
+    std::vector<float> leftBuffer, rightBuffer;
+    if (!renderToBuffer(project, seq, leftBuffer, rightBuffer, durationBeats)) {
+        return false;
+    }
+    return writeWavFile(filepath, leftBuffer, rightBuffer);
 }
 
 // ============================================================================
@@ -330,6 +378,113 @@ inline std::string saveFileDialog(const char*, const char*) {
 }
 
 #endif
+
+// ============================================================================
+// Stem Export
+//
+// One WAV per channel, each rendered with the other seven muted. That is
+// what "stems" means to anyone who will open them: eight files that sum
+// back to the mix, ready to drop into another DAW.
+//
+// Rendering per channel rather than tapping the mixer keeps every
+// per-channel effect intact - the widener, the sidechain and the channel
+// delay all behave exactly as they do in the full mix.
+// ============================================================================
+struct StemExportResult {
+    int written = 0;
+    int skipped = 0;                    // silent channels, not an error
+    std::vector<std::string> failures;  // channels whose file could not be written
+};
+
+inline StemExportResult exportStems(Project& project, Sequencer& seq,
+                                    const std::string& directory,
+                                    float durationBeats,
+                                    bool skipSilentChannels = true) {
+    StemExportResult result;
+
+    // Remember the mute and solo state so the project is untouched
+    // afterwards - exporting must not quietly remix the song.
+    std::array<bool, Project::MAX_CHANNELS> savedMuted{};
+    std::array<bool, Project::MAX_CHANNELS> savedSolo{};
+    for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+        savedMuted[ch] = project.channels[ch].muted;
+        savedSolo[ch] = project.channels[ch].solo;
+    }
+
+    std::string prefix = directory;
+    if (!prefix.empty()) {
+        const char last = prefix.back();
+        if (last != '/' && last != '\\') prefix += '/';
+
+        // Create the target if it does not exist. Picking a new folder in a
+        // save dialog is the normal way to do this, and without it every
+        // stem silently fails to write.
+        ensureDirectoryExists(directory);
+    }
+
+    for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+        // Solo is the honest way to isolate: it goes through exactly the
+        // same mixer path a listener would hear.
+        for (int other = 0; other < Project::MAX_CHANNELS; ++other) {
+            project.channels[other].muted = false;
+            project.channels[other].solo = (other == ch);
+        }
+        seq.updateChannelConfigs();
+
+        std::vector<float> left, right;
+        if (!renderToBuffer(project, seq, left, right, durationBeats)) {
+            result.failures.push_back("channel " + std::to_string(ch + 1) +
+                                      ": render failed");
+            continue;
+        }
+
+        if (skipSilentChannels) {
+            float peak = 0.0f;
+            for (size_t i = 0; i < left.size(); ++i) {
+                peak = std::max({peak, std::fabs(left[i]), std::fabs(right[i])});
+            }
+            // Below this a stem is silence, and eight silent files help
+            // nobody.
+            if (peak < 1e-4f) {
+                ++result.skipped;
+                continue;
+            }
+        }
+
+        // Two-digit index so the files sort in channel order.
+        char filename[256];
+        std::snprintf(filename, sizeof(filename), "%sstem_%02d_%s.wav",
+                      prefix.c_str(), ch + 1,
+                      project.channels[ch].name.empty()
+                          ? "channel"
+                          : project.channels[ch].name.c_str());
+
+        // Channel names are user text and may contain path separators.
+        std::string path(filename);
+        for (size_t i = prefix.size(); i < path.size(); ++i) {
+            const char c = path[i];
+            if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
+                c == '"' || c == '<' || c == '>' || c == '|') {
+                path[i] = '_';
+            }
+        }
+
+        if (writeWavFile(path, left, right)) {
+            ++result.written;
+        } else {
+            result.failures.push_back("channel " + std::to_string(ch + 1) +
+                                      ": could not write " + path);
+        }
+    }
+
+    for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+        project.channels[ch].muted = savedMuted[ch];
+        project.channels[ch].solo = savedSolo[ch];
+    }
+    seq.updateChannelConfigs();
+
+    return result;
+}
 
 // ============================================================================
 // MIDI Export

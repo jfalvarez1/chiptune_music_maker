@@ -170,6 +170,10 @@ inline constexpr FloatField<OscillatorConfig> OSC_FLOATS[] = {
     {"phase",  &OscillatorConfig::phase},
 };
 
+inline constexpr IntField<OscillatorConfig> OSC_INTS[] = {
+    {"noisePeriod", &OscillatorConfig::noisePeriod},
+};
+
 inline constexpr BoolField<OscillatorConfig> OSC_BOOLS[] = {
     {"shortNoise", &OscillatorConfig::noiseShortMode},
 };
@@ -478,6 +482,7 @@ inline bool saveProjectFile(const Project& project, const std::string& filepath)
 
         // Nested oscillator and envelope settings, namespaced by prefix
         ctp::writeFloats(file, c.oscillator, d.oscillator, ctp::OSC_FLOATS, "osc.");
+        ctp::writeInts(file, c.oscillator, d.oscillator, ctp::OSC_INTS, "osc.");
         ctp::writeBools(file, c.oscillator, d.oscillator, ctp::OSC_BOOLS, "osc.");
         ctp::writeFloats(file, c.envelope, d.envelope, ctp::ENV_FLOATS, "env.");
 
@@ -605,6 +610,7 @@ inline bool loadProjectFile(Project& project, const std::string& filepath) {
                 if (key.rfind("osc.", 0) == 0) {
                     const std::string sub = key.substr(4);
                     ctp::applyFloat(c.oscillator, sub, value, ctp::OSC_FLOATS) ||
+                    ctp::applyInt(c.oscillator, sub, value, ctp::OSC_INTS) ||
                     ctp::applyBool(c.oscillator, sub, value, ctp::OSC_BOOLS);
                 } else if (key.rfind("env.", 0) == 0) {
                     const std::string sub = key.substr(4);

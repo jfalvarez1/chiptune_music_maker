@@ -56,6 +56,15 @@ A `0 4 7` arpeggio macro fakes a whole major chord on a single channel —
 the defining chiptune trick. Right-click a step to make it *fixed* rather
 than relative to the played note.
 
+### Euclidean rhythms
+
+Distributing k onsets as evenly as possible over n steps produces a
+startling number of the world's actual drum patterns — E(3,8) is the
+tresillo, E(5,16) the bossa clave. Live step preview, per instrument or as a
+full kit, with nine named presets.
+
+![Euclidean rhythm generator](docs/images/tools-euclidean.png)
+
 ### Tracker view
 
 The classic hex grid, for when you would rather type than draw.
@@ -132,6 +141,22 @@ pastel, hazy lane. They used to be two shades of the same purple.
 | ![Frutiger Aero](docs/images/theme-frutiger.png) | ![Daylight](docs/images/theme-daylight.png) |
 
 ## What's new
+
+### 3.3 — "Euclid"
+
+- **Authentic NES noise** — the sixteen fixed periods real hardware had, and
+  a corrected LFSR (short mode and normal mode were inverted)
+- **Euclidean rhythm generator** with a live preview and nine presets
+- **Stem export** — one WAV per channel, silent ones skipped
+- **Frutiger Aero, properly** — sky, sun, clouds, bokeh, grass, bubbles and
+  tropical fish, and the green half of its palette restored
+- **Fixed: the spectrum analyzer was a solid wall.** Its FFT was never
+  normalised, so every bin clamped to maximum. It also ran the whole
+  transform *inside the audio callback*, allocating and taking a mutex;
+  the audio thread now only fills a lock-free ring buffer.
+- **Fixed: four oscillators shared state across every voice and channel** —
+  `static` locals in the generators, so eight noise voices advanced one
+  clock
 
 ### 3.1 — "Dockyard"
 

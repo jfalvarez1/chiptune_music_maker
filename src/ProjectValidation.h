@@ -168,6 +168,10 @@ inline void clampChannelToValidRanges(ChannelConfig& c) {
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
     c.oscillator.phase = sanitizeFloat(c.oscillator.phase, 0.0f, 1.0f, 0.0f);
+    // -1 means "track the note"; otherwise one of the sixteen NES periods.
+    if (c.oscillator.noisePeriod < -1 || c.oscillator.noisePeriod > 15) {
+        c.oscillator.noisePeriod = -1;
+    }
 
     // Drive-style effects. bitDepth and sampleRateDiv are floats here, not
     // ints - the bitcrusher accepts fractional depths.

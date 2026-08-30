@@ -161,3 +161,4 @@ imgui.ini
 /recorded_audio.wav
 /recorded_pattern.ctp
 /*.mp3
+dist/
