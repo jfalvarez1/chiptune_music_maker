@@ -30,6 +30,7 @@
 #include "ChipMix.h"
 #include "TrackerGrid.h"
 #include "Genres.h"
+#include "Settings.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -5195,6 +5196,145 @@ static void testGenreFocus() {
 }
 
 // ============================================================================
+// 38. User settings
+// ============================================================================
+static void testUserSettings() {
+    beginTest("User settings");
+
+    const std::string dir = testPath("settings_test");
+    ensureDirectoryExists(dir);
+    const std::string path = dir + "/" + SETTINGS_FILENAME;
+    std::remove(path.c_str());
+
+    // ---- Stable tokens ----------------------------------------------------
+    //
+    // These strings are part of a file format. Saving the enum value would
+    // silently reinterpret an existing setting the moment a genre is
+    // inserted in the middle of the list, and saving the display name would
+    // break the moment one is reworded.
+    {
+        for (int i = 0; i < static_cast<int>(Genre::Count); ++i) {
+            const Genre genre = static_cast<Genre>(i);
+            if (genreFromKey(genreKey(genre)) != genre) {
+                check(false, std::string("the token for ") + genreName(genre) +
+                      " does not read back as itself");
+                break;
+            }
+        }
+        check(true, "every genre's token reads back as that genre");
+
+        // Tokens must be distinct, or two genres collapse into one on load.
+        bool distinct = true;
+        for (int a = 0; a < static_cast<int>(Genre::Count) && distinct; ++a) {
+            for (int b = a + 1; b < static_cast<int>(Genre::Count); ++b) {
+                if (std::strcmp(genreKey(static_cast<Genre>(a)),
+                                genreKey(static_cast<Genre>(b))) == 0) {
+                    check(false, "two genres share a saved token");
+                    distinct = false;
+                    break;
+                }
+            }
+        }
+        check(distinct, "every genre's token is distinct");
+
+        check(genreFromKey("chiptune") == Genre::Chiptune,
+              "a known token loads the genre it names");
+        check(genreFromKey("dubstep") == Genre::Everything,
+              "an unknown token falls back to showing everything, rather than "
+              "hiding tools for a reason the user cannot see");
+        check(genreFromKey(nullptr) == Genre::Everything,
+              "a null token is safe");
+        check(genreFromKey("") == Genre::Everything, "an empty token is safe");
+    }
+
+    // ---- A missing file is the normal first run --------------------------
+    {
+        UserSettings settings;
+        check(!loadSettings(settings, path),
+              "a missing settings file reports that it was not read");
+        check(!settings.welcomed,
+              "and leaves the defaults, so a first run asks the question");
+        check(settings.genre == Genre::Everything, "with no genre assumed");
+    }
+
+    // ---- Round trip -------------------------------------------------------
+    {
+        UserSettings saved;
+        saved.welcomed = true;
+        saved.genre = Genre::Reggaeton;
+        saved.applyGenreDefaults = true;
+        check(saveSettings(saved, path), "settings save");
+
+        UserSettings loaded;
+        check(loadSettings(loaded, path), "and load again");
+        check(loaded.welcomed, "the welcome is remembered");
+        check(loaded.genre == Genre::Reggaeton, "and so is the genre");
+        check(loaded.applyGenreDefaults, "and the defaults answer");
+    }
+
+    // ---- Choosing Everything is a real answer -----------------------------
+    //
+    // If "welcomed" were inferred from the genre, the one person who wants
+    // every tool would be asked again on every launch, forever.
+    {
+        UserSettings saved;
+        saved.welcomed = true;
+        saved.genre = Genre::Everything;
+        check(saveSettings(saved, path), "an Everything choice saves");
+
+        UserSettings loaded;
+        check(loadSettings(loaded, path), "and loads");
+        check(loaded.welcomed && loaded.genre == Genre::Everything,
+              "choosing Everything is remembered as an answer, not as never "
+              "having been asked");
+    }
+
+    // ---- A damaged file must never stop the program starting -------------
+    {
+        {
+            std::ofstream bad(path);
+            bad << "# a comment\n";
+            bad << "\n";
+            bad << "this line has no equals sign\n";
+            bad << "welcomed=1\n";
+            bad << "genre=chiptune\n";
+            bad << "somethingFromTheFuture=42\n";
+            bad << "=novalue\n";
+            bad << "truncated";
+        }
+
+        UserSettings loaded;
+        check(loadSettings(loaded, path), "a file with junk in it still reads");
+        check(loaded.welcomed && loaded.genre == Genre::Chiptune,
+              "and the settings it does understand survive the junk around them");
+    }
+
+    {
+        std::ofstream empty(path);
+        empty.close();
+
+        UserSettings loaded;
+        loadSettings(loaded, path);
+        check(!loaded.welcomed && loaded.genre == Genre::Everything,
+              "an empty file leaves every default in place");
+    }
+
+    // ---- An unwritable target fails quietly -------------------------------
+    //
+    // The cost of not saving is being asked once more. That is not worth
+    // interrupting anyone over.
+    {
+        UserSettings settings;
+        settings.welcomed = true;
+        check(!saveSettings(settings, dir + "/does/not/exist/x.ini"),
+              "saving into a missing directory reports failure rather than throwing");
+        check(true, "and does not crash");
+    }
+
+    std::remove(path.c_str());
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -5271,6 +5411,7 @@ int main(int argc, char** argv) {
     testChipMixReachesAudio();
     testTrackerGrid();
     testGenreFocus();
+    testUserSettings();
     testLongRunStability();
 
     std::printf("\n==========================\n");

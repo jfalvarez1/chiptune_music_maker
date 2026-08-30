@@ -35,6 +35,7 @@
 #include "Screenshot.h"
 #include "CrashHandler.h"
 #include "Autosave.h"
+#include "Settings.h"
 
 #include <cstdio>
 #include <memory>
@@ -284,7 +285,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // --keep-ini means "behave like a real session with state on disk", so it
     // also opts into the recovery prompt. Without that the prompt could not
     // be screenshotted or smoke-tested at all.
+    // Preferences that outlive a session. A missing file is the normal
+    // first-run case and is not an error.
+    ChiptuneTracker::UserSettings userSettings;
+    const std::string settingsFile = ChiptuneTracker::settingsPath();
+    ChiptuneTracker::loadSettings(userSettings, settingsFile);
+
+    bool showWelcome = false;
+
     const bool actLikeRealSession = !captureRequest.enabled || captureRequest.keepSavedLayout;
+
+    // A returning user gets the focus they chose last time, and is not asked
+    // again. Choosing Everything is a real answer, which is why "welcomed"
+    // is tracked separately from the genre itself.
+    if (userSettings.welcomed) {
+        uiState.genre = userSettings.genre;
+        ChiptuneTracker::ApplyGenrePanels(uiState);
+    } else if (actLikeRealSession) {
+        showWelcome = true;
+    }
+
+    if (captureRequest.forceWelcome) showWelcome = true;
+
     if (actLikeRealSession && autosave.hasRecoverableSession()) {
         showRecoveryPrompt = true;
         recoveryAge = autosave.describeRecoveryAge();
@@ -659,6 +681,105 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             ImGui::SameLine();
             if (ImGui::Button("Discard", ImVec2(150, 0))) {
                 autosave.clearOnCleanExit();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // ====================================================================
+        // Welcome: what kind of music is this?
+        //
+        // Asked once. It decides which tools are put in front of you and
+        // nothing else - every panel stays in the View menu either way, and
+        // the choice is changeable at any time from the Views panel.
+        // ====================================================================
+        if (showWelcome) {
+            ImGui::OpenPopup("What are you making?");
+        }
+        ImGui::SetNextWindowSize(ImVec2(560, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("What are you making?", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped(
+                "Pick the kind of music you are here to make. It puts those "
+                "tools in front of you and tucks the rest away.");
+            ImGui::Spacing();
+            ImGui::TextDisabled(
+                "Nothing is removed, and you can change this at any time from "
+                "the Views panel.");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            static bool applyDefaults = true;
+            ChiptuneTracker::Genre chosen = ChiptuneTracker::Genre::Everything;
+            bool picked = false;
+
+            // Everything is listed last, as "Other", so it reads as a real
+            // answer rather than a way of dismissing the question.
+            const float buttonWidth = 168.0f;
+            int column = 0;
+            for (int i = 1; i < static_cast<int>(ChiptuneTracker::Genre::Count); ++i) {
+                const ChiptuneTracker::Genre candidate =
+                    static_cast<ChiptuneTracker::Genre>(i);
+
+                if (column > 0 && (column % 3) != 0) ImGui::SameLine();
+                if (ImGui::Button(ChiptuneTracker::genreName(candidate),
+                                  ImVec2(buttonWidth, 34))) {
+                    chosen = candidate;
+                    picked = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s",
+                        ChiptuneTracker::genreProfile(candidate).blurb);
+                }
+                ++column;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::Checkbox("Also set the tempo and key to suit", &applyDefaults);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "The only option here that changes your project.\n"
+                    "Leave it off and nothing but the layout is touched.");
+            }
+
+            ImGui::Spacing();
+            if (ImGui::Button("Other - show me everything", ImVec2(345, 32))) {
+                chosen = ChiptuneTracker::Genre::Everything;
+                picked = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Every tool on screen, which is how the program has "
+                    "always behaved.");
+            }
+
+            if (picked) {
+                uiState.genre = chosen;
+                uiState.paletteShowEverything = false;
+                ChiptuneTracker::ApplyGenrePanels(uiState);
+
+                if (applyDefaults && chosen != ChiptuneTracker::Genre::Everything) {
+                    const ChiptuneTracker::GenreProfile& profile =
+                        ChiptuneTracker::genreProfile(chosen);
+                    project.bpm = profile.bpm;
+                    project.swing = profile.swing;
+                    ChiptuneTracker::g_ToolsScaleRoot = profile.scaleRoot;
+                    ChiptuneTracker::g_ToolsScaleType = profile.scaleType;
+                    sequencer.setBPM(project.bpm);
+                }
+
+                userSettings.welcomed = true;
+                userSettings.genre = chosen;
+                userSettings.applyGenreDefaults = applyDefaults;
+                // If this cannot be written the only cost is being asked
+                // again next time, so a failure is not worth interrupting
+                // anyone over.
+                ChiptuneTracker::saveSettings(userSettings, settingsFile);
+
+                showWelcome = false;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();

@@ -175,6 +175,10 @@ struct CaptureRequest {
     // Window to bring to the front of its tab group. Several panels are
     // docked behind others and could not be photographed at all.
     std::string focusWindow;
+
+    // Force the first-run welcome, which otherwise only appears once
+    // ever and so could never be captured.
+    bool forceWelcome = false;
 };
 
 // Parses the flags this app understands and ignores anything else.
@@ -190,6 +194,7 @@ struct CaptureRequest {
 //   --ghosts             show cross-channel ghost notes
 //   --chip-panel         open the Chip Accuracy section
 //   --focus <window>     bring a docked window to the front of its tabs
+//   --welcome            force the first-run genre prompt
 //   --genre <name>       everything|chiptune|synthwave|hiphop|reggaeton|
 //                        edm|rock|lofi
 //   --frames <n>         frames to render before capturing
@@ -234,6 +239,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             next(request.genreFocus);
         } else if (arg == "--focus") {
             next(request.focusWindow);
+        } else if (arg == "--welcome") {
+            request.forceWelcome = true;
         } else if (arg == "--select") {
             request.selectNotes = true;
         } else if (arg == "--playing") {

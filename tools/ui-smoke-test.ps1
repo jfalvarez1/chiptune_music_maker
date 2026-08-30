@@ -121,6 +121,12 @@ foreach ($panel in $panels) {
 
 # Genre focus decides what is put in front of you. Two very different ones,
 # so a change that collapsed them into the same palette would show up here.
+# The first-run prompt appears once ever, so it needs forcing to be seen.
+[void]$cases.Add(@{
+    name = "welcome-genre-prompt"
+    args = "--demo --welcome"
+})
+
 [void]$cases.Add(@{
     name = "genre-chiptune"
     args = "--demo --genre chiptune"

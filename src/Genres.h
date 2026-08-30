@@ -191,6 +191,41 @@ inline const char* genreName(Genre genre) {
     return genreProfile(genre).name;
 }
 
+/*
+ * A stable token for saving.
+ *
+ * Not the display name and not the enum value: display names can be reworded
+ * and enum values shift the moment a genre is inserted in the middle, and
+ * either would silently reinterpret an existing saved setting as a different
+ * genre. These strings are part of the file format and should not change.
+ */
+inline const char* genreKey(Genre genre) {
+    switch (genre) {
+        case Genre::Chiptune:  return "chiptune";
+        case Genre::Synthwave: return "synthwave";
+        case Genre::HipHop:    return "hiphop";
+        case Genre::Reggaeton: return "reggaeton";
+        case Genre::EDM:       return "edm";
+        case Genre::Rock:      return "rock";
+        case Genre::Lofi:      return "lofi";
+        case Genre::Everything:
+        default:               return "everything";
+    }
+}
+
+// An unknown token means a setting from a newer version, or a hand-edited
+// file. Everything is the safe reading: it shows all the tools rather than
+// hiding some for a reason the user cannot see.
+inline Genre genreFromKey(const char* key) {
+    if (key == nullptr) return Genre::Everything;
+
+    for (int i = 0; i < static_cast<int>(Genre::Count); ++i) {
+        const Genre candidate = static_cast<Genre>(i);
+        if (std::strcmp(genreKey(candidate), key) == 0) return candidate;
+    }
+    return Genre::Everything;
+}
+
 // An empty list means "everything", which is how Everything avoids being a
 // special case at every call site.
 inline bool listAllowsAll(const char* const* list) {
