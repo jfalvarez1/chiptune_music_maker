@@ -7,6 +7,71 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.6.0] - 2026-08-30 - "Welcome"
+
+The research pass was unambiguous about how projects die: a blank page nobody
+can start, or an eight-bar loop nobody can turn into a song. This release is
+aimed at both - and every piece of it is optional, dismissible, and leaves
+the manual way of working exactly as it was.
+
+### Added
+
+- **A first-run welcome.** The program asks what kind of music you are here
+  to make - Chiptune, Synthwave, Hip Hop, Reggaeton, EDM, Rock, Lofi - with
+  "Other, show me everything" as a real answer beside the rest. Asked once
+  and remembered; choosing Everything is remembered as an answer too, not as
+  never having been asked.
+- **Genre focus.** The choice decides which palette sections, generators and
+  panels are put in front of you. Nothing is removed: the View menu lists
+  every panel, and both the palette and the Tools panel carry a "show
+  everything" switch that says exactly how much is being held back.
+  Changeable at any time from the Views panel.
+- **Starter templates.** Four bars that already play - drums, a bass
+  following a progression, chords and a lead, in the genre's key and tempo.
+  In the welcome and under File > New From Template. Deterministic, and
+  undoable like any other edit. The drums are one bar placed four times,
+  because pattern reuse is the habit that turns bars into songs.
+- **Quick Start kits.** The patterns each style is built on - the dembow,
+  boom bap, four on the floor, octave bass, minor pop chords, a triad arp -
+  as buttons at the top of the Tools panel. Each writes ordinary notes into
+  the selected pattern: one undo step, editable, layerable, and never
+  displacing notes already there. A faster pencil, not a different
+  instrument.
+- **A next-step hint.** One line in the menu bar that reads the project and
+  names one concrete thing to do next. A complete loop in a single pattern
+  is pushed toward a variation rather than another layer, because the layer
+  is the trap. Dismissible with one click, restorable from the View menu,
+  and the dismissal persists.
+- **User settings.** A small tolerant file of its own - deliberately not a
+  corner of imgui.ini, so deleting a broken layout does not also make the
+  program forget who it is talking to. Genres are saved as stable tokens so
+  a reordered enum or a reworded name cannot silently change anyone's
+  choice.
+
+### Fixed
+
+- The next-step hint's bass/melody boundary was C3, so a template in A minor
+  with its bass on A3 was told to add a bassline. A screenshot caught the
+  wrong hint; the boundary is middle C now, with a regression test naming
+  the incident.
+- The first dembow written for the kits had six snare hits including a
+  straight backbeat on beat two - precisely what a dembow is not. The 3-3-2
+  test refused it; the recipe is the canonical four hits in both the kit and
+  the template.
+- The roadmap had drifted from reality: the Euclidean generator, stem
+  export, first-run onboarding and packaged releases were all shipped but
+  unchecked, and four half-done items did not say which half. Audited
+  against the code and corrected.
+
+### Testing
+
+2090 headless checks (up from 1883) and 39 UI smoke cases (up from 32).
+New groups cover the tracker grid, genre focus and its profiles, user
+settings, the templates, the kits, and the next-step ladder - including
+that no starter template is ever told to add something it already has.
+
+---
+
 ## [3.5.0] - 2026-08-30 - "Reachable"
 
 A research pass across FL Studio, Furnace, Renoise, OpenMPT, FamiTracker,
