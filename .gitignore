@@ -152,3 +152,12 @@ coverage/
 screenshots/
 *.bmp
 nul
+
+# Per-user window layout, written by Dear ImGui at runtime.
+# Tracking this shipped one machine's stale layout to every clone.
+imgui.ini
+
+# Scratch recordings and audio dropped in the repo root during testing
+/recorded_audio.wav
+/recorded_pattern.ctp
+/*.mp3
