@@ -1,6 +1,6 @@
 # ChiptuneTracker — Test Plan
 
-**Last updated:** 2026-08-30 (v3.3.0)
+**Last updated:** 2026-08-30 (v3.4.0)
 
 This describes what is tested, how, and — just as importantly — **what is
 not**, so nobody mistakes a green run for full coverage.
@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**1446 checks across 24 groups.** Exit code 0 = pass, 1 = failure, and every
+**1727 checks across 25 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -79,6 +79,7 @@ failure names the field or parameter involved.
 | Noise generator | All sixteen NES periods render; they step from bright to dark; short mode is measurably periodic and normal mode is not; four voices are louder than one (they no longer share a clock); the period persists and out-of-range values are repaired. |
 | Euclidean generator | Every E(k,n) up to n=32 produces exactly k onsets; the tresillo's spacing is correct; rotation preserves the count; degenerate input is safe; generated notes are valid, ordered and audible; all nine presets match their stated pattern. |
 | Stem export | One file per non-silent channel, silent ones skipped, mute/solo state restored afterwards, unsafe characters stripped from filenames, real RIFF files on disk, and a bad duration refused. |
+| Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 
 ## Layer 2 — UI smoke test (`tools/ui-smoke-test.ps1`)
 

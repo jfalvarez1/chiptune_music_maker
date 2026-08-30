@@ -142,6 +142,18 @@ pastel, hazy lane. They used to be two shades of the same purple.
 
 ## What's new
 
+### 3.4 — "Legible"
+
+- **Fixed: nine of ten themes had unreadable button labels** — seven under
+  3:1, the worst at 1.22:1, because hover and active states brighten the
+  fill while ImGui draws every label in one colour. Surfaces now move away
+  from the text automatically until they clear 4.5:1
+- **Game Boy rebuilt on the DMG-01's real colour** — the palette everyone
+  copies is convention, not measurement; the hardware is far more olive and
+  less saturated
+- **Theme legibility is a test now** — 170 runtime contrast assertions plus
+  an order-independence check
+
 ### 3.3 — "Euclid"
 
 - **Authentic NES noise** — the sixteen fixed periods real hardware had, and
@@ -192,8 +204,9 @@ along with an honest list of what is *not* covered.
 ```powershell
 cmake --build build --config Release
 
-build/bin/Release/ChiptuneTests.exe    # 1333 headless checks
+build/bin/Release/ChiptuneTests.exe    # 1727 headless checks
 ./tools/ui-smoke-test.ps1              # 26 rendering checks
+python tools/audit-themes.py           # theme contrast report
 ./tools/generate-gallery.ps1           # refresh the screenshots above
 ```
 

@@ -21,6 +21,11 @@
 #include "FileIO.h"
 #include "MIDIExport.h"
 
+// Pulls in ApplyTheme. No window or GL context is needed: it only writes to
+// ImGuiStyle, and a context can exist without a backend.
+#include "imgui.h"
+#include "UI.h"
+
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -2790,6 +2795,149 @@ static void testStemExport() {
 }
 
 // ============================================================================
+// 25. Theme legibility
+// ============================================================================
+static void testThemeContrast() {
+    beginTest("Theme legibility");
+
+    // ImGui draws every label in ImGuiCol_Text - one colour for the whole UI -
+    // so a surface cannot pick a label colour that suits it. The surface has
+    // to come to the text, which ApplyTheme's derive pass now enforces.
+    //
+    // Nine of the ten themes once had button labels below 4.5:1, seven under
+    // 3:1, the worst at 1.22:1: pressing a button made its own label vanish.
+    // Checking only Text against WindowBg hid all of it, which is why this
+    // walks every surface a label actually lands on.
+
+    auto channel = [](float v) {
+        return (v <= 0.03928f) ? v / 12.92f
+                               : std::pow((v + 0.055f) / 1.055f, 2.4f);
+    };
+    auto luminance = [&](const ImVec4& c) {
+        return 0.2126f * channel(c.x) + 0.7152f * channel(c.y) + 0.0722f * channel(c.z);
+    };
+    auto contrast = [&](const ImVec4& a, const ImVec4& b) {
+        float la = luminance(a), lb = luminance(b);
+        if (la < lb) std::swap(la, lb);
+        return (la + 0.05f) / (lb + 0.05f);
+    };
+
+    struct NamedTheme { const char* name; Theme theme; };
+    const NamedTheme themes[] = {
+        {"Stock",         Theme::Stock},
+        {"Cyberpunk",     Theme::Cyberpunk},
+        {"Synthwave",     Theme::Synthwave},
+        {"Matrix",        Theme::Matrix},
+        {"FrutigerAero",  Theme::FrutigerAero},
+        {"Minimal",       Theme::Minimal},
+        {"Vaporwave",     Theme::Vaporwave},
+        {"RetroTerminal", Theme::RetroTerminal},
+        {"GameBoy",       Theme::GameBoy},
+        {"Daylight",      Theme::Daylight},
+    };
+
+    struct NamedSlot { const char* name; ImGuiCol slot; };
+    const NamedSlot surfaces[] = {
+        {"WindowBg",       ImGuiCol_WindowBg},
+        {"ChildBg",        ImGuiCol_ChildBg},
+        {"PopupBg",        ImGuiCol_PopupBg},
+        {"FrameBg",        ImGuiCol_FrameBg},
+        {"FrameBgHovered", ImGuiCol_FrameBgHovered},
+        {"FrameBgActive",  ImGuiCol_FrameBgActive},
+        {"Button",         ImGuiCol_Button},
+        {"ButtonHovered",  ImGuiCol_ButtonHovered},
+        {"ButtonActive",   ImGuiCol_ButtonActive},
+        {"Header",         ImGuiCol_Header},
+        {"HeaderHovered",  ImGuiCol_HeaderHovered},
+        {"HeaderActive",   ImGuiCol_HeaderActive},
+        {"Tab",            ImGuiCol_Tab},
+        {"TabHovered",     ImGuiCol_TabHovered},
+        {"TabSelected",    ImGuiCol_TabSelected},
+        {"TitleBgActive",  ImGuiCol_TitleBgActive},
+        {"MenuBarBg",      ImGuiCol_MenuBarBg},
+    };
+
+    ImGui::CreateContext();
+
+    for (const NamedTheme& t : themes) {
+        ApplyTheme(t.theme);
+        const ImVec4* colors = ImGui::GetStyle().Colors;
+        const ImVec4 text = colors[ImGuiCol_Text];
+
+        for (const NamedSlot& surface : surfaces) {
+            const float ratio = contrast(text, colors[surface.slot]);
+            check(ratio >= 4.4f,     // 4.4 not 4.5: the search lands just above
+                  std::string(t.name) + ": label on " + surface.name + " is " +
+                  std::to_string(ratio) + ":1, below 4.5:1");
+        }
+
+        // Header and Button must remain distinguishable after the contrast
+        // pass has moved both - otherwise nothing marks what is pressable.
+        const ImVec4 header = colors[ImGuiCol_Header];
+        const ImVec4 button = colors[ImGuiCol_Button];
+        const float delta = std::fabs(header.x - button.x) +
+                            std::fabs(header.y - button.y) +
+                            std::fabs(header.z - button.z);
+        check(delta > 0.03f,
+              std::string(t.name) + ": Header and Button are too close to tell "
+              "apart (delta " + std::to_string(delta) + ")");
+
+        // Interactive surfaces stay opaque enough to read over an animated
+        // background - the contrast pass must not have traded alpha away.
+        for (const NamedSlot& surface : surfaces) {
+            const std::string name = surface.name;
+            if (name.rfind("Button", 0) == 0 || name.rfind("Header", 0) == 0 ||
+                name.rfind("FrameBg", 0) == 0) {
+                check(colors[surface.slot].w >= 0.85f,
+                      std::string(t.name) + ": " + surface.name + " alpha " +
+                      std::to_string(colors[surface.slot].w) + " below 0.85");
+            }
+        }
+
+        // Every colour must be a real colour: the derive pass stamps a
+        // negative sentinel and anything left holding it would render wrong.
+        int negative = 0;
+        for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+            if (colors[i].x < 0.0f || colors[i].y < 0.0f || colors[i].z < 0.0f) ++negative;
+        }
+        check(negative == 0,
+              std::string(t.name) + ": " + std::to_string(negative) +
+              " colour slots left unset by the derive pass");
+    }
+
+    // Switching themes must be order-independent. A theme that inherits a
+    // value from whichever theme preceded it looks different depending on
+    // the route taken to it.
+    {
+        auto snapshot = [&](Theme theme) {
+            ApplyTheme(theme);
+            std::vector<ImVec4> out(ImGuiCol_COUNT);
+            for (int i = 0; i < ImGuiCol_COUNT; ++i) out[i] = ImGui::GetStyle().Colors[i];
+            return out;
+        };
+
+        const std::vector<ImVec4> direct = snapshot(Theme::GameBoy);
+
+        // Reach it the long way round, through every other theme
+        for (const NamedTheme& t : themes) ApplyTheme(t.theme);
+        const std::vector<ImVec4> afterTour = snapshot(Theme::GameBoy);
+
+        int differences = 0;
+        for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+            if (std::fabs(direct[i].x - afterTour[i].x) > 1e-6f ||
+                std::fabs(direct[i].y - afterTour[i].y) > 1e-6f ||
+                std::fabs(direct[i].z - afterTour[i].z) > 1e-6f ||
+                std::fabs(direct[i].w - afterTour[i].w) > 1e-6f) ++differences;
+        }
+        check(differences == 0,
+              std::to_string(differences) + " colours depend on which theme "
+              "was applied before - a theme is missing an assignment");
+    }
+
+    ImGui::DestroyContext();
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -2853,6 +3001,7 @@ int main(int argc, char** argv) {
     testNoiseGenerator();
     testEuclideanGenerator();
     testStemExport();
+    testThemeContrast();
     testLongRunStability();
 
     std::printf("\n==========================\n");

@@ -7,6 +7,66 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.4.0] - 2026-08-30 - "Legible"
+
+### Fixed
+
+- **Nine of the ten themes had unreadable button labels.** Seven were under
+  3:1 and the worst sat at **1.22:1** - pressing a button made its own label
+  almost vanish. The cause was the same everywhere: hover and active states
+  brighten the fill, and ImGui draws every label in a single
+  `ImGuiCol_Text`, so on a dark theme with light text the label got *harder*
+  to read the more you interacted with it.
+
+  This hid for two releases because the contrast audit only compared `Text`
+  against `WindowBg`, where every theme passed comfortably. Labels are drawn
+  on Button, Header, FrameBg, Tab, TitleBg and MenuBar too.
+
+  The derive pass now walks every surface a label lands on and moves it away
+  from the text - darker under light text, lighter under dark text - until
+  it clears 4.5:1. Only value moves, so every theme keeps its hue. It
+  applies automatically to any theme added later.
+
+- **Game Boy, rebuilt on the DMG-01's actual colour.** The palette everyone
+  copies (`0f380f / 306230 / 8bac0f / 9bbc0f`) is community convention, not
+  measurement: the DMG screen is a reflective STN panel with four
+  transmission levels behind a green polariser, so there is no RGB in the
+  hardware to sample. Palettes taken from photographs of a running unit come
+  out markedly more olive and much less saturated - around
+  `1b2a09 / 0e450b / 496b22 / 9a9e3f`.
+
+  Convenient, because the accurate direction and the comfortable direction
+  turned out to be the same direction. The four sampled shades are used
+  literally in the piano roll, where there is no text; the chrome uses the
+  same hue family with the value spacing a label needs.
+
+  This is the DMG-01 specifically. The Pocket and Light moved to FSTN and
+  read as neutral grey; the Color, Advance, SP and Micro share none of it.
+
+- **Channel identity colours ignored the theme**, which is how a four-shade
+  olive Game Boy ended up with orange notes and a red channel label. Both
+  now blend toward the theme rather than overriding it, so identity survives
+  and a monochrome theme stays monochrome.
+
+### Added
+
+- **Theme legibility is now a test, not a hope.** `ChiptuneTests` links
+  ImGui and calls `ApplyTheme` for real, then checks every one of ten themes
+  against seventeen surfaces - 170 contrast assertions - plus that Header
+  and Button stay distinguishable, that interactive alpha survives the
+  correction, and that no colour slot is left unset.
+
+  It also applies all ten themes in sequence and re-applies one, asserting
+  the result is identical: a theme that inherits a value from whichever
+  theme preceded it looks different depending on the route taken to it.
+
+- **`tools/audit-themes.py`** reports each theme's contrast twice: as
+  authored, and as it ships after the automatic correction. A large gap
+  means the palette is leaning on the correction rather than being designed
+  for it - true of nine themes today, and worth knowing when tuning by hand.
+
+---
+
 ## [3.3.0] - 2026-08-30 - "Euclid"
 
 ### Fixed

@@ -2576,6 +2576,52 @@ inline float luminance(const ImVec4& c) {
 
 } // namespace themederive
 
+// WCAG relative luminance, and the contrast ratio between two colours.
+// Used to guarantee that a label can be read on the surface under it.
+inline float relativeLuminance(const ImVec4& c) {
+    auto channel = [](float v) {
+        return (v <= 0.03928f) ? v / 12.92f
+                               : std::pow((v + 0.055f) / 1.055f, 2.4f);
+    };
+    return 0.2126f * channel(c.x) + 0.7152f * channel(c.y) + 0.0722f * channel(c.z);
+}
+
+inline float contrastRatio(const ImVec4& a, const ImVec4& b) {
+    float la = relativeLuminance(a);
+    float lb = relativeLuminance(b);
+    if (la < lb) std::swap(la, lb);
+    return (la + 0.05f) / (lb + 0.05f);
+}
+
+// Moves `surface` away from `text` until the pair clears `minRatio`, by
+// scaling toward black or toward white. Hue survives; only value moves, and
+// only as far as it has to.
+inline ImVec4 ensureReadable(const ImVec4& surface, const ImVec4& text, float minRatio) {
+    if (contrastRatio(surface, text) >= minRatio) return surface;
+
+    // Light text wants a darker surface, dark text a lighter one.
+    const bool darken = relativeLuminance(text) > relativeLuminance(surface) ||
+                        relativeLuminance(text) > 0.4f;
+
+    ImVec4 best = surface;
+    for (int step = 1; step <= 24; ++step) {
+        const float t = step / 24.0f;
+        ImVec4 candidate = surface;
+        if (darken) {
+            candidate.x = surface.x * (1.0f - t);
+            candidate.y = surface.y * (1.0f - t);
+            candidate.z = surface.z * (1.0f - t);
+        } else {
+            candidate.x = surface.x + (1.0f - surface.x) * t;
+            candidate.y = surface.y + (1.0f - surface.y) * t;
+            candidate.z = surface.z + (1.0f - surface.z) * t;
+        }
+        best = candidate;
+        if (contrastRatio(candidate, text) >= minRatio) break;
+    }
+    return best;
+}
+
 // Marks the 39 derived slots as untouched. Called before the theme switch so
 // a theme can override any of them simply by assigning it.
 inline void MarkDerivedThemeColorsUnset(ImVec4* colors) {
@@ -2709,6 +2755,41 @@ inline void DeriveRemainingThemeColors(ImGuiStyle& style) {
     for (int i = 0; i < ImGuiCol_COUNT; ++i) {
         if (isUnset(colors[i])) colors[i] = windowBg;
     }
+
+    // ------------------------------------------------------------------
+    // Label legibility, enforced rather than hoped for.
+    //
+    // ImGui draws every label in ImGuiCol_Text - one colour for the entire
+    // UI - so a surface cannot choose a label colour that suits it. The
+    // surface has to come to the text instead.
+    //
+    // Nine of the ten themes had button labels below 4.5:1 and seven were
+    // under 3:1, the worst at 1.22:1. The cause was the same everywhere:
+    // hover and active states brighten the fill, which under light text
+    // makes the label harder to read the more you interact with it.
+    //
+    // Each surface moves away from the text only as far as it must, and
+    // only in value, so every theme keeps its hue and its identity.
+    // ------------------------------------------------------------------
+    static const ImGuiCol labelSurfaces[] = {
+        ImGuiCol_Button, ImGuiCol_ButtonHovered, ImGuiCol_ButtonActive,
+        ImGuiCol_Header, ImGuiCol_HeaderHovered, ImGuiCol_HeaderActive,
+        ImGuiCol_FrameBg, ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive,
+        ImGuiCol_Tab, ImGuiCol_TabHovered, ImGuiCol_TabSelected,
+        ImGuiCol_TitleBgActive, ImGuiCol_MenuBarBg, ImGuiCol_PopupBg,
+    };
+
+    for (ImGuiCol slot : labelSurfaces) {
+        const float alpha = colors[slot].w;
+        ImVec4 fixed = ensureReadable(colors[slot], text, 4.5f);
+        fixed.w = alpha;                 // never trade away opacity for contrast
+        colors[slot] = fixed;
+    }
+
+    // The derived slots that mirror those surfaces have to follow, or a
+    // table header stops matching the header it was derived from.
+    colors[ImGuiCol_TableHeaderBg] = withAlpha(colors[ImGuiCol_Header], 1.0f);
+    colors[ImGuiCol_TextSelectedBg] = withAlpha(colors[ImGuiCol_Header], 0.45f);
 }
 
 // ============================================================================
@@ -3274,47 +3355,66 @@ inline void ApplyTheme(Theme theme) {
             break;
 
         case Theme::GameBoy:
-            // Game Boy DMG - the original four-shade green LCD. The whole
-            // palette is those four values and nothing else, which is the
-            // point: the constraint is the character.
-            //   darkest 15,56,15  dark 48,98,48  light 139,172,15  lightest 155,188,15
-            colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.22f, 0.06f, 1.00f);
-            colors[ImGuiCol_ChildBg] = ImVec4(0.04f, 0.16f, 0.04f, 1.00f);
-            colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.26f, 0.08f, 1.00f);
-            colors[ImGuiCol_Border] = ImVec4(0.54f, 0.67f, 0.06f, 0.50f);
-            colors[ImGuiCol_FrameBg] = ImVec4(0.19f, 0.38f, 0.19f, 1.00f);
-            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.28f, 0.48f, 0.20f, 1.00f);
-            colors[ImGuiCol_FrameBgActive] = ImVec4(0.38f, 0.58f, 0.16f, 1.00f);
-            colors[ImGuiCol_TitleBg] = ImVec4(0.06f, 0.22f, 0.06f, 1.00f);
-            colors[ImGuiCol_TitleBgActive] = ImVec4(0.19f, 0.38f, 0.19f, 1.00f);
-            colors[ImGuiCol_MenuBarBg] = ImVec4(0.10f, 0.28f, 0.10f, 1.00f);
-            // Header was identical to Button, so nothing marked what was
-            // pressable. It takes the darkest of the four DMG shades now -
-            // separating them without inventing a fifth colour.
-            colors[ImGuiCol_Header] = ImVec4(0.13f, 0.30f, 0.13f, 0.95f);
-            colors[ImGuiCol_HeaderHovered] = ImVec4(0.19f, 0.38f, 0.19f, 1.00f);
-            colors[ImGuiCol_HeaderActive] = ImVec4(0.24f, 0.44f, 0.18f, 1.00f);
-            colors[ImGuiCol_Button] = ImVec4(0.28f, 0.48f, 0.16f, 1.00f);
-            colors[ImGuiCol_ButtonHovered] = ImVec4(0.42f, 0.60f, 0.12f, 1.00f);
-            colors[ImGuiCol_ButtonActive] = ImVec4(0.54f, 0.67f, 0.06f, 1.00f);
-            colors[ImGuiCol_SliderGrab] = ImVec4(0.61f, 0.74f, 0.06f, 1.00f);
-            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.68f, 0.80f, 0.10f, 1.00f);
-            colors[ImGuiCol_CheckMark] = ImVec4(0.61f, 0.74f, 0.06f, 1.00f);
-            colors[ImGuiCol_Text] = ImVec4(0.61f, 0.74f, 0.06f, 1.00f);
-            colors[ImGuiCol_TextDisabled] = ImVec4(0.32f, 0.46f, 0.12f, 1.00f);
-            colors[ImGuiCol_Tab] = ImVec4(0.13f, 0.30f, 0.13f, 1.00f);
-            colors[ImGuiCol_TabHovered] = ImVec4(0.42f, 0.60f, 0.12f, 1.00f);
-            colors[ImGuiCol_TabActive] = ImVec4(0.28f, 0.48f, 0.16f, 1.00f);
+            // DMG-01, 1989. Not the Pocket, not the Color, not the Advance.
+            //
+            // Built on values sampled from photographs of a running DMG -
+            // roughly 1b2a09 / 0e450b / 496b22 / 9a9e3f - rather than the
+            // 0f380f / 306230 / 8bac0f / 9bbc0f palette everyone copies.
+            // That one is community convention, not measurement: the screen
+            // is a reflective STN panel with four transmission levels behind
+            // a green polariser, so there is no RGB in the hardware to
+            // sample. The real thing is markedly more olive and far less
+            // saturated than the meme palette suggests.
+            //
+            // The four shades are used literally in the piano roll, where
+            // there is no text. The chrome needs more steps than four to
+            // separate a surface from a label, so it uses the same hue
+            // family with proper value spacing - and the derive pass darkens
+            // anything a label cannot be read on.
+            colors[ImGuiCol_ChildBg] = ImVec4(0.055f, 0.085f, 0.020f, 1.00f);
+            colors[ImGuiCol_WindowBg] = ImVec4(0.082f, 0.122f, 0.032f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.120f, 0.170f, 0.050f, 1.00f);
+            colors[ImGuiCol_PopupBg] = ImVec4(0.150f, 0.205f, 0.065f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.145f, 0.200f, 0.060f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.185f, 0.250f, 0.080f, 1.00f);
+            // 496b22 - the third shade, used as the panel edge
+            colors[ImGuiCol_Border] = ImVec4(0.286f, 0.420f, 0.133f, 0.85f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.070f, 0.105f, 0.028f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.150f, 0.210f, 0.068f, 1.00f);
+            colors[ImGuiCol_MenuBarBg] = ImVec4(0.095f, 0.140f, 0.038f, 1.00f);
 
-            g_PianoRollColors.keyWhite = IM_COL32(48, 98, 48, 255);
-            g_PianoRollColors.keyBlack = IM_COL32(15, 56, 15, 255);
-            g_PianoRollColors.gridLine = IM_COL32(30, 72, 30, 255);
-            g_PianoRollColors.gridLineMeasure = IM_COL32(80, 130, 40, 255);
-            g_PianoRollColors.gridLinePattern = IM_COL32(139, 172, 15, 255);
-            g_PianoRollColors.noteDefault = IM_COL32(139, 172, 15, 255);
-            g_PianoRollColors.noteSelected = IM_COL32(155, 188, 15, 255);
-            g_PianoRollColors.playhead = IM_COL32(155, 188, 15, 255);
-            g_PianoRollColors.background = IM_COL32(15, 56, 15, 255);
+            colors[ImGuiCol_Header] = ImVec4(0.135f, 0.190f, 0.058f, 1.00f);
+            colors[ImGuiCol_HeaderHovered] = ImVec4(0.175f, 0.240f, 0.075f, 1.00f);
+            colors[ImGuiCol_HeaderActive] = ImVec4(0.220f, 0.300f, 0.095f, 1.00f);
+
+            colors[ImGuiCol_Button] = ImVec4(0.200f, 0.285f, 0.090f, 1.00f);
+            colors[ImGuiCol_ButtonHovered] = ImVec4(0.245f, 0.340f, 0.110f, 1.00f);
+            colors[ImGuiCol_ButtonActive] = ImVec4(0.290f, 0.395f, 0.130f, 1.00f);
+
+            colors[ImGuiCol_SliderGrab] = ImVec4(0.430f, 0.500f, 0.190f, 1.00f);
+            colors[ImGuiCol_SliderGrabActive] = ImVec4(0.545f, 0.585f, 0.230f, 1.00f);
+            // 9a9e3f - a lit pixel
+            colors[ImGuiCol_CheckMark] = ImVec4(0.604f, 0.620f, 0.247f, 1.00f);
+
+            // Slightly brighter than the lightest shade, because a
+            // photograph of a reflective LCD is always darker than the panel
+            // looks in the hand - and because a label has to be readable.
+            colors[ImGuiCol_Text] = ImVec4(0.690f, 0.706f, 0.310f, 1.00f);
+            colors[ImGuiCol_TextDisabled] = ImVec4(0.400f, 0.430f, 0.200f, 1.00f);
+            colors[ImGuiCol_Tab] = ImVec4(0.095f, 0.140f, 0.040f, 1.00f);
+            colors[ImGuiCol_TabHovered] = ImVec4(0.185f, 0.255f, 0.080f, 1.00f);
+            colors[ImGuiCol_TabActive] = ImVec4(0.140f, 0.195f, 0.062f, 1.00f);
+
+            // Piano roll - the four sampled shades, used as shades
+            g_PianoRollColors.background = IM_COL32(27, 42, 9, 255);       // 1b2a09
+            g_PianoRollColors.keyBlack = IM_COL32(22, 34, 8, 255);
+            g_PianoRollColors.keyWhite = IM_COL32(44, 64, 20, 255);
+            g_PianoRollColors.gridLine = IM_COL32(34, 50, 14, 255);
+            g_PianoRollColors.gridLineMeasure = IM_COL32(73, 107, 34, 255); // 496b22
+            g_PianoRollColors.gridLinePattern = IM_COL32(110, 135, 50, 255);
+            g_PianoRollColors.noteDefault = IM_COL32(154, 158, 63, 255);    // 9a9e3f
+            g_PianoRollColors.noteSelected = IM_COL32(240, 242, 205, 255);
+            g_PianoRollColors.playhead = IM_COL32(200, 205, 120, 255);
             break;
 
         case Theme::Daylight:
@@ -5929,8 +6029,12 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         // nothing was reading them, so notes stayed the same eight colours
         // under all ten themes - jarring on Game Boy, invisible on the light
         // ones. The channel tint keeps multi-channel work legible.
+        // Only a hint of the channel colour. At 0.35 it dominated the
+        // theme's own note colour - orange notes on a four-shade olive
+        // Game Boy - and the piano roll only ever shows one channel
+        // anyway, so identity is doing little work here.
         ImU32 noteColor = blendColors(g_PianoRollColors.noteDefault,
-                                      CHANNEL_COLORS[ui.selectedChannel % 8], 0.35f);
+                                      CHANNEL_COLORS[ui.selectedChannel % 8], 0.18f);
 
         if (isSelected) {
             noteColor = g_PianoRollColors.noteSelected;
@@ -7942,11 +8046,19 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
     auto& channel = project.channels[ui.selectedChannel];
     auto& osc = channel.oscillator;
 
-    ImGui::TextColored(ImVec4(
-        ((CHANNEL_COLORS[ui.selectedChannel] >> 0) & 0xFF) / 255.0f,
-        ((CHANNEL_COLORS[ui.selectedChannel] >> 8) & 0xFF) / 255.0f,
-        ((CHANNEL_COLORS[ui.selectedChannel] >> 16) & 0xFF) / 255.0f,
-        1.0f), "Channel: %s", channel.name.c_str());
+    // Half the channel's identity colour, half the theme's text. Enough to
+    // tie this panel to its mixer strip without printing a red label in the
+    // middle of a monochrome theme.
+    {
+        const ImU32 identity = CHANNEL_COLORS[ui.selectedChannel % 8];
+        const ImVec4 themeText = ImGui::GetStyle().Colors[ImGuiCol_Text];
+        const ImVec4 blended(
+            (((identity >> 0) & 0xFF) / 255.0f) * 0.45f + themeText.x * 0.55f,
+            (((identity >> 8) & 0xFF) / 255.0f) * 0.45f + themeText.y * 0.55f,
+            (((identity >> 16) & 0xFF) / 255.0f) * 0.45f + themeText.z * 0.55f,
+            1.0f);
+        ImGui::TextColored(blended, "Channel: %s", channel.name.c_str());
+    }
 
     ImGui::Separator();
 

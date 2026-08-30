@@ -13,11 +13,11 @@
 namespace ChiptuneTracker {
 
 inline constexpr int VERSION_MAJOR = 3;
-inline constexpr int VERSION_MINOR = 3;
+inline constexpr int VERSION_MINOR = 4;
 inline constexpr int VERSION_PATCH = 0;
 
-inline constexpr const char* VERSION_STRING = "3.3.0";
-inline constexpr const char* VERSION_NAME = "Euclid";
+inline constexpr const char* VERSION_STRING = "3.4.0";
+inline constexpr const char* VERSION_NAME = "Legible";
 inline constexpr const char* APP_NAME = "ChiptuneTracker";
 
 inline std::string windowTitle() {

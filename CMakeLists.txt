@@ -243,9 +243,13 @@ target_include_directories(ChiptuneTests PRIVATE
     ${CMAKE_SOURCE_DIR}/vendor/libremidi/include
 )
 
+# Links imgui so the theme tests can call ApplyTheme() and inspect the
+# resulting style. No window and no GL context is needed - ApplyTheme only
+# writes to ImGuiStyle, and a context can exist without a backend.
 target_link_libraries(ChiptuneTests PRIVATE
     miniaudio
     midifile
+    imgui
 )
 
 if(WIN32)
