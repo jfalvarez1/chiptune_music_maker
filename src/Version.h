@@ -16,7 +16,13 @@ inline constexpr int VERSION_MAJOR = 3;
 inline constexpr int VERSION_MINOR = 6;
 inline constexpr int VERSION_PATCH = 0;
 
-inline constexpr const char* VERSION_STRING = "3.4.1";
+// Composed, never written by hand. This was a second hand-written literal
+// once, and it sat at 3.4.1 while two releases shipped around it - the
+// window title was the only place anyone could see the lie.
+inline const std::string VERSION_STRING =
+    std::to_string(VERSION_MAJOR) + "." +
+    std::to_string(VERSION_MINOR) + "." +
+    std::to_string(VERSION_PATCH);
 inline constexpr const char* VERSION_NAME = "Welcome";
 inline constexpr const char* APP_NAME = "ChiptuneTracker";
 

@@ -277,4 +277,46 @@ inline bool IsFloatingTool(const char* name) {
     return std::string(name) == "Voice to Note Converter";
 }
 
+/*
+ * Dock any core panel the saved layout has never heard of.
+ *
+ * An imgui.ini written by an older build restores fine - but a panel added
+ * since then has no entry, so it floats at its fallback position on top of
+ * whatever is underneath. The empty-dockspace health check does not catch
+ * this: the layout is fine except for the orphan.
+ *
+ * Each panel names a sibling it belongs beside. An orphan joins its
+ * sibling's node as a tab; everything the user arranged is left exactly as
+ * it was, which is why this is not a rebuild. Returns how many windows were
+ * adopted, so the caller can log it.
+ *
+ * Add a row here whenever a new dockable window is born - the smoke test
+ * cannot catch a missing row, because a fresh capture has no stale ini.
+ */
+inline int AdoptOrphanedWindows() {
+    struct Adoption { const char* window; const char* sibling; };
+    static const Adoption ADOPTIONS[] = {
+        {"Master Bus",        "Channel Editor"},
+        {"Instrument Macros", "Channel Editor"},
+        {"Wavetable Editor",  "Piano Roll"},
+        {"Spectrum Analyzer", "Piano Roll"},
+        {"Automation",        "Piano Roll"},
+        {"MIDI Input",        "Channel Editor"},
+    };
+
+    int adopted = 0;
+    for (const Adoption& adoption : ADOPTIONS) {
+        ImGuiWindow* window = ImGui::FindWindowByName(adoption.window);
+        if (window == nullptr) continue;          // never opened; nothing to fix
+        if (window->DockId != 0) continue;        // already lives somewhere
+
+        ImGuiWindow* sibling = ImGui::FindWindowByName(adoption.sibling);
+        if (sibling == nullptr || sibling->DockId == 0) continue;
+
+        ImGui::SetWindowDock(window, sibling->DockId, ImGuiCond_Always);
+        ++adopted;
+    }
+    return adopted;
+}
+
 } // namespace ChiptuneTracker

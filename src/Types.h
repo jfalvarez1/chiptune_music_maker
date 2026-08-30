@@ -1246,6 +1246,13 @@ struct UIState {
     // people it is for are the least likely to go looking for it in a menu.
     bool showNextStep = true;
 
+    // Frames left to pull focus back to the main editor. Opening panels
+    // (the genre's macro or wavetable editors) steals the centre tab, and
+    // the score is where anyone starts - so the welcome and a returning
+    // user's first frames push focus back. Counted in frames because the
+    // dock layout needs a frame or two to settle first.
+    int focusEditorFrames = 0;
+
     // Show the other channels' notes faintly behind the edited pattern.
     // Off by default: this audience self-selects for a quiet screen.
     bool showGhostNotes = false;

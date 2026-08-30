@@ -35,6 +35,7 @@
 #include "GenreKits.h"
 #include "NextStep.h"
 #include "GroovePresets.h"
+#include "Version.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -6237,6 +6238,27 @@ static void testGroovePresets() {
 }
 
 // ============================================================================
+// 44. Version coherence
+// ============================================================================
+static void testVersionCoherence() {
+    beginTest("Version coherence");
+
+    // The window title shipped saying 3.4.1 on a 3.6.0 build, because
+    // Version.h held the version twice and only one copy was bumped. The
+    // string is composed from the ints now; this pins that it stays so.
+    const std::string expected = std::to_string(VERSION_MAJOR) + "." +
+                                 std::to_string(VERSION_MINOR) + "." +
+                                 std::to_string(VERSION_PATCH);
+    check(VERSION_STRING == expected,
+          "VERSION_STRING is composed from the version ints (got '" +
+          VERSION_STRING + "', ints say '" + expected + "')");
+    check(windowTitle().find(expected) != std::string::npos,
+          "the window title carries the real version");
+    check(aboutText().find(expected) != std::string::npos,
+          "and so does the About dialog");
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -6319,6 +6341,7 @@ int main(int argc, char** argv) {
     testNextStep();
     testClipTranspose();
     testGroovePresets();
+    testVersionCoherence();
     testLongRunStability();
 
     std::printf("\n==========================\n");

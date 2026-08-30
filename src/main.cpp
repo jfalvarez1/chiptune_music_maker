@@ -304,6 +304,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     if (userSettings.welcomed) {
         uiState.genre = userSettings.genre;
         ChiptuneTracker::ApplyGenrePanels(uiState);
+        uiState.focusEditorFrames = 5;
     } else if (actLikeRealSession) {
         showWelcome = true;
     }
@@ -668,6 +669,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 if (ChiptuneTracker::IsDockSpaceEmpty(dockspaceId)) {
                     printf("Saved layout has no docked panels - rebuilding.\n");
                     uiState.pendingLayoutFrames = 2;
+                } else {
+                    // The layout is standing, but an ini from an older build
+                    // knows nothing about panels added since - those float
+                    // over whatever is underneath. Adopt them into their
+                    // siblings' nodes; touch nothing the user arranged.
+                    const int adopted = ChiptuneTracker::AdoptOrphanedWindows();
+                    if (adopted > 0) {
+                        printf("Adopted %d panel(s) the saved layout predates.\n",
+                               adopted);
+                    }
                 }
                 layoutHealthCheckFrame = -1;   // check once, never again
             }
@@ -852,6 +863,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                     sequencer.setBPM(project.bpm);
                 }
 
+                // The genre panels just opened and one of them has taken
+                // the centre tab; the score is where anyone starts.
+                uiState.focusEditorFrames = 5;
+
                 userSettings.welcomed = true;
                 userSettings.genre = chosen;
                 userSettings.applyGenreDefaults = applyDefaults;
@@ -915,6 +930,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         if (captureRequest.enabled && !captureRequest.focusWindow.empty() &&
             captureFrameCounter < 30) {
             ImGui::SetWindowFocus(captureRequest.focusWindow.c_str());
+        }
+
+        // Pull focus back to the score after genre panels opened over it.
+        // An explicit capture focus wins, or the two would fight.
+        if (uiState.focusEditorFrames > 0) {
+            --uiState.focusEditorFrames;
+            if (!captureRequest.enabled || captureRequest.focusWindow.empty()) {
+                ImGui::SetWindowFocus("Piano Roll");
+            }
         }
 
         // Main editor view (based on current mode)
