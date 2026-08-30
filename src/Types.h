@@ -771,6 +771,13 @@ struct Project {
     float masterLimiterCeiling = -0.3f;  // dB
     float masterLimiterRelease = 0.05f;  // seconds
 
+    // Chip-accurate output. Both off by default: most channels here host a
+    // supersaw or a sample, which a 2A03 never had, so neither setting is
+    // something to impose on an existing project.
+    bool chipMixEnabled = false;      // non-linear pulse / triangle-noise DACs
+    bool chipFilterEnabled = false;   // the console's own output filters
+    bool chipFilterFamicom = false;   // Famicom voicing rather than NES
+
     // Swing/groove settings
     float swing = 0.0f;             // Swing amount: 0.0 = no swing, 1.0 = max swing (triplet feel)
     float swingGrid = 0.5f;         // Grid division for swing (0.5 = 8th notes, 0.25 = 16th notes)

@@ -2503,6 +2503,10 @@ static int g_ToolsScaleRoot = 0;       // Root note, 0=C
 static bool g_ToolsScaleLock = false;  // Snap placed notes to the scale
 static bool g_ToolsScaleHighlight = true;
 
+// Set by the capture harness so a screenshot can show a section that is
+// collapsed by default.
+static bool g_ExpandChipAccuracy = false;
+
 static UndoHistory g_UndoHistory;
 
 // Undo restores the whole project, which rebuilds project.patterns - and
@@ -5043,8 +5047,29 @@ inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& st
         project.masterVolume = masterPct / 100.0f;
     }
 
-    // Master Effects Section
-    ImGui::Separator();
+
+    // Update preview pattern for playback
+    seq.setPreviewPattern(ui.selectedPattern, ui.selectedChannel);
+
+    ImGui::End();
+}
+
+// ============================================================================
+// Master Bus
+//
+// All of this used to sit inside the Transport window. Transport is docked
+// into a 16% strip across the top of the workspace, so the limiter, the
+// compressor, the EQ, the loudness presets and the groove controls were all
+// clipped below the fold - reachable only if you thought to drag the window
+// bigger. Transport now keeps what genuinely fits in a strip, and everything
+// that needs room to be used has a panel of its own.
+// ============================================================================
+inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
+    (void)ui;
+    ImGui::SetNextWindowPos(ImVec2(10, 140), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(340, 540), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Master Bus", nullptr, ImGuiWindowFlags_NoCollapse);
+
     if (ImGui::CollapsingHeader("Master Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
         // Loudness Presets
         ImGui::Text("Target Platform:");
@@ -5063,6 +5088,50 @@ inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& st
             seq.updateMasterEffects();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-configure mastering for streaming platforms");
+
+        ImGui::Spacing();
+
+        // ------------------------------------------------------------------
+        // Chip-accurate output
+        //
+        // Both off by default. Most channels here host a supersaw or a
+        // sample, which a 2A03 never had, so neither setting is something to
+        // impose on a project that is not trying to be a NES.
+        // ------------------------------------------------------------------
+        if (g_ExpandChipAccuracy) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    if (ImGui::CollapsingHeader("Chip Accuracy")) {
+            ImGui::Checkbox("Non-linear mixing", &project.chipMixEnabled);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "A 2A03 shares one DAC between its two pulse channels and\n"
+                    "another between triangle and noise, so channels duck each\n"
+                    "other and the triangle sits louder against the pulses.\n\n"
+                    "Two pulses at full volume become 1.73x one pulse, not 2x.\n"
+                    "Only Pulse, Triangle and Noise channels are affected;\n"
+                    "anything else mixes linearly as before.");
+            }
+
+            ImGui::Checkbox("Output filters", &project.chipFilterEnabled);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "The console's own output filtering.\n\n"
+                    "NES: 90 Hz and 440 Hz high-pass, 14 kHz low-pass. The\n"
+                    "440 Hz stage is the one emulations usually leave out,\n"
+                    "which is why they sound bass-heavy.\n"
+                    "Famicom: a single 37 Hz high-pass and no low-pass -\n"
+                    "brighter and fuller, which is much of why the two\n"
+                    "machines sound different playing the same music.");
+            }
+
+            if (project.chipFilterEnabled) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(110);
+                int voicing = project.chipFilterFamicom ? 1 : 0;
+                if (ImGui::Combo("##chipvoicing", &voicing, "NES\0Famicom\0")) {
+                    project.chipFilterFamicom = (voicing == 1);
+                }
+            }
+        }
 
         ImGui::Spacing();
 
@@ -5141,57 +5210,54 @@ inline void DrawTransportBar(Sequencer& seq, Project& project, PlaybackState& st
         }
     }
 
-    ImGui::Separator();
-
-    // Row 4: Swing/Groove settings
-    ImGui::Text("Swing:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
-    float swingPct = project.swing * 100.0f;
-    if (ImGui::SliderFloat("##swing", &swingPct, 0.0f, 100.0f, "%.0f%%")) {
-        project.swing = swingPct / 100.0f;
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shifts off-beat notes forward for groove feel");
-
-    ImGui::SameLine();
-    ImGui::Text("Grid:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
-    const char* gridItems[] = { "1/8", "1/16", "1/32" };
-    float gridValues[] = { 0.5f, 0.25f, 0.125f };
-    int gridIdx = 0;
-    if (project.swingGrid <= 0.125f) gridIdx = 2;
-    else if (project.swingGrid <= 0.25f) gridIdx = 1;
-    else gridIdx = 0;
-    if (ImGui::Combo("##swingGrid", &gridIdx, gridItems, 3)) {
-        project.swingGrid = gridValues[gridIdx];
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Note grid for swing (8th, 16th, 32nd)");
-
-    ImGui::SameLine();
-    ImGui::Checkbox("Humanize", &project.humanize);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add random timing/velocity variation");
-
-    if (project.humanize) {
+    if (ImGui::CollapsingHeader("Groove", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Row 4: Swing/Groove settings
+        ImGui::Text("Swing:");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        float timePct = project.humanizeAmount * 1000.0f;  // Convert to ms
-        if (ImGui::SliderFloat("##humTime", &timePct, 0.0f, 50.0f, "%.0fms")) {
-            project.humanizeAmount = timePct / 1000.0f;
+        ImGui::SetNextItemWidth(100);
+        float swingPct = project.swing * 100.0f;
+        if (ImGui::SliderFloat("##swing", &swingPct, 0.0f, 100.0f, "%.0f%%")) {
+            project.swing = swingPct / 100.0f;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Timing variation amount");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shifts off-beat notes forward for groove feel");
 
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(60);
-        float velPct = project.humanizeVelocity * 100.0f;
-        if (ImGui::SliderFloat("##humVel", &velPct, 0.0f, 30.0f, "%.0f%%")) {
-            project.humanizeVelocity = velPct / 100.0f;
+        ImGui::Text("Grid:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        const char* gridItems[] = { "1/8", "1/16", "1/32" };
+        float gridValues[] = { 0.5f, 0.25f, 0.125f };
+        int gridIdx = 0;
+        if (project.swingGrid <= 0.125f) gridIdx = 2;
+        else if (project.swingGrid <= 0.25f) gridIdx = 1;
+        else gridIdx = 0;
+        if (ImGui::Combo("##swingGrid", &gridIdx, gridItems, 3)) {
+            project.swingGrid = gridValues[gridIdx];
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Velocity variation amount");
-    }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Note grid for swing (8th, 16th, 32nd)");
 
-    // Update preview pattern for playback
-    seq.setPreviewPattern(ui.selectedPattern, ui.selectedChannel);
+        ImGui::SameLine();
+        ImGui::Checkbox("Humanize", &project.humanize);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add random timing/velocity variation");
+
+        if (project.humanize) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            float timePct = project.humanizeAmount * 1000.0f;  // Convert to ms
+            if (ImGui::SliderFloat("##humTime", &timePct, 0.0f, 50.0f, "%.0fms")) {
+                project.humanizeAmount = timePct / 1000.0f;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Timing variation amount");
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            float velPct = project.humanizeVelocity * 100.0f;
+            if (ImGui::SliderFloat("##humVel", &velPct, 0.0f, 30.0f, "%.0f%%")) {
+                project.humanizeVelocity = velPct / 100.0f;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Velocity variation amount");
+        }
+    }
 
     ImGui::End();
 }

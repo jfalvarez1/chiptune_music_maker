@@ -288,7 +288,7 @@ audit of this codebase, which is reproducible by anyone with `grep`.
       `Clip` is placed. Either add a channel column to notes, or show one
       channel per open pattern. [verified — our own source]
 
-- [ ] **G2. Non-linear channel mixing.** `output += sample` sums voices
+- [x] **G2. Non-linear channel mixing.** `output += sample` sums voices
       linearly; real 2A03 hardware sums through a non-linear table, which is
       why channels duck each other and why the triangle sits ~3.3 dB louder
       against the pulses than ours does. Two pulses at full volume make

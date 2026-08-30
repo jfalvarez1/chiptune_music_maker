@@ -27,6 +27,7 @@
 #include "Scales.h"
 #include "NoteTransforms.h"
 #include "GhostNotes.h"
+#include "ChipMix.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -4242,6 +4243,406 @@ static void testGhostNotes() {
 }
 
 // ============================================================================
+// 33. Non-linear chip mixing and the console output filters
+// ============================================================================
+static void testChipMix() {
+    beginTest("Non-linear chip mixing");
+
+    // The numbers below are not ours to choose - they are what the NESdev
+    // mixer formulas produce, and they are the whole reason for the feature.
+    // If a refactor changes them, the mix has stopped matching hardware.
+
+    // ---- The curves reproduce the documented ratios ----------------------
+    {
+        const float onePulse = nesPulseCurve(15.0f);
+        const float twoPulses = nesPulseCurve(30.0f);
+
+        check(std::fabs(twoPulses / onePulse - 1.73f) < 0.02f,
+              "two pulses at full volume are 1.73x one pulse, not 2x (got " +
+              std::to_string(twoPulses / onePulse) + ")");
+
+        // The triangle sits considerably louder against the pulses than a
+        // linear sum makes it. This is why the bass "sits wrong" in
+        // emulations that mix linearly.
+        const float triangle = nesTndCurve(15.0f, 0.0f);
+        check(std::fabs(triangle / onePulse - 1.65f) < 0.02f,
+              "a full triangle is 1.65x a full pulse (got " +
+              std::to_string(triangle / onePulse) + ")");
+
+        // Channels duck each other: adding noise makes the triangle quieter,
+        // which is compression a linear mixer simply does not have.
+        const float noiseOnly = nesTndCurve(0.0f, 15.0f);
+        const float together = nesTndCurve(15.0f, 15.0f);
+        const float ratio = together / (triangle + noiseOnly);
+        check(std::fabs(ratio - 0.887f) < 0.01f,
+              "triangle plus noise is 88.7% of their separate sum (got " +
+              std::to_string(ratio * 100.0f) + "%)");
+
+        check(nesPulseCurve(0.0f) == 0.0f, "silence in, silence out");
+        check(nesTndCurve(0.0f, 0.0f) == 0.0f, "an empty tnd group is silent");
+        check(nesPulseCurve(-5.0f) == 0.0f, "a negative level cannot produce output");
+    }
+
+    // ---- Only 2A03 voices are grouped ------------------------------------
+    {
+        check(chipMixGroupFor(OscillatorType::Pulse) == ChipMixGroup::Pulse,
+              "a pulse channel joins the pulse DAC");
+        check(chipMixGroupFor(OscillatorType::Triangle) == ChipMixGroup::Triangle,
+              "a triangle channel joins the tnd DAC");
+        check(chipMixGroupFor(OscillatorType::Noise) == ChipMixGroup::Noise,
+              "a noise channel joins the tnd DAC");
+
+        // A 2A03 never had these, so forcing them into a hardware group
+        // would be meaningless. They must mix linearly as before.
+        check(chipMixGroupFor(OscillatorType::Supersaw) == ChipMixGroup::Linear,
+              "a supersaw is not a 2A03 voice and mixes linearly");
+        check(chipMixGroupFor(OscillatorType::Sawtooth) == ChipMixGroup::Linear,
+              "a sawtooth mixes linearly");
+        check(chipMixGroupFor(OscillatorType::Sine) == ChipMixGroup::Linear,
+              "a sine mixes linearly");
+    }
+
+    // ---- The derived gains -----------------------------------------------
+    {
+        ChipMixGains gains = computeChipMixGains(0.0f, 0.0f, 0.0f);
+        check(std::fabs(gains.pulse - 1.0f) < 1e-5f &&
+              std::fabs(gains.tnd - 1.0f) < 1e-5f,
+              "empty groups pass at unity, so silence is untouched");
+
+        // One pulse at full magnitude is the reference, so it must pass
+        // through unchanged - enabling the mode on a single pulse channel
+        // should not alter its level at all.
+        gains = computeChipMixGains(1.0f, 0.0f, 0.0f);
+        check(std::fabs(gains.pulse - 1.0f) < 0.01f,
+              "a lone full pulse passes at unity (got " +
+              std::to_string(gains.pulse) + ")");
+
+        // Two of them duck each other to 1.73x total rather than 2x.
+        gains = computeChipMixGains(2.0f, 0.0f, 0.0f);
+        const float twoPulseTotal = gains.pulse * 2.0f;
+        check(std::fabs(twoPulseTotal - 1.73f) < 0.02f,
+              "two pulses together reach 1.73x, not 2x (got " +
+              std::to_string(twoPulseTotal) + ")");
+        check(gains.pulse < 1.0f, "so each individual pulse is turned down");
+
+        gains = computeChipMixGains(0.0f, 1.0f, 0.0f);
+        check(std::fabs(gains.tnd - 1.65f) < 0.02f,
+              "a lone triangle comes out 1.65x a pulse (got " +
+              std::to_string(gains.tnd) + ")");
+
+        // Adding noise has to reduce the triangle's share.
+        const ChipMixGains alone = computeChipMixGains(0.0f, 1.0f, 0.0f);
+        const ChipMixGains withNoise = computeChipMixGains(0.0f, 1.0f, 1.0f);
+        check(withNoise.tnd < alone.tnd,
+              "adding noise ducks the triangle - the automatic compression a "
+              "linear mixer does not have");
+
+        // The pulse group and the tnd group are independent DACs.
+        const ChipMixGains loud = computeChipMixGains(2.0f, 1.0f, 0.0f);
+        check(std::fabs(loud.tnd - alone.tnd) < 1e-4f,
+              "loud pulses do not duck the triangle - they are separate DACs");
+    }
+
+    // ---- Garbage must never reach the audio thread as NaN ----------------
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        ChipMixGains gains = computeChipMixGains(nan, nan, nan);
+        check(std::isfinite(gains.pulse) && std::isfinite(gains.tnd),
+              "a NaN level yields finite gains rather than silencing everything");
+
+        gains = computeChipMixGains(1e9f, 1e9f, 1e9f);
+        check(std::isfinite(gains.pulse) && std::isfinite(gains.tnd),
+              "an absurd level yields finite gains");
+    }
+}
+
+static void testChipFilters() {
+    beginTest("Console output filters");
+
+    auto measure = [](ChipFilterChain& chain, float frequencyHz, float sampleRate) {
+        // Settle first: a high-pass needs time before its output is
+        // representative, and measuring the transient would test nothing.
+        const int settle = static_cast<int>(sampleRate * 0.25f);
+        const int window = static_cast<int>(sampleRate * 0.25f);
+        double sum = 0.0;
+        for (int i = 0; i < settle + window; ++i) {
+            const float phase = 2.0f * 3.14159265f * frequencyHz * float(i) / sampleRate;
+            float l = std::sin(phase);
+            float r = l;
+            chain.process(l, r);
+            if (i >= settle) sum += double(l) * double(l);
+        }
+        return std::sqrt(sum / double(window));
+    };
+
+    const float sampleRate = 44100.0f;
+
+    // ---- NES voicing ------------------------------------------------------
+    {
+        ChipFilterChain chain;
+
+        chain.configure(sampleRate, ChipFilterChain::Mode::NES);
+        const float lowEnd = measure(chain, 60.0f, sampleRate);
+
+        chain.configure(sampleRate, ChipFilterChain::Mode::NES);
+        const float midRange = measure(chain, 1000.0f, sampleRate);
+
+        chain.configure(sampleRate, ChipFilterChain::Mode::NES);
+        const float topEnd = measure(chain, 16000.0f, sampleRate);
+
+        check(midRange > 0.5f,
+              "the midrange passes essentially untouched (rms " +
+              std::to_string(midRange) + ")");
+        check(lowEnd < midRange * 0.5f,
+              "60 Hz is well attenuated - the 440 Hz high-pass is the stage "
+              "emulations leave out, and its absence is why they sound "
+              "bass-heavy (60 Hz rms " + std::to_string(lowEnd) + " vs 1 kHz " +
+              std::to_string(midRange) + ")");
+        check(topEnd < midRange * 0.8f,
+              "16 kHz is rolled off by the 14 kHz low-pass (rms " +
+              std::to_string(topEnd) + ")");
+    }
+
+    // ---- Famicom voicing --------------------------------------------------
+    //
+    // One 37 Hz high-pass and no low-pass: fuller and brighter. This is much
+    // of why the two machines sound different playing the same music, so the
+    // two modes must genuinely differ.
+    {
+        ChipFilterChain nes, famicom;
+
+        nes.configure(sampleRate, ChipFilterChain::Mode::NES);
+        famicom.configure(sampleRate, ChipFilterChain::Mode::Famicom);
+        const float nesLow = measure(nes, 120.0f, sampleRate);
+        const float famicomLow = measure(famicom, 120.0f, sampleRate);
+
+        check(famicomLow > nesLow * 1.5f,
+              "a Famicom keeps far more low end than an NES (120 Hz: Famicom " +
+              std::to_string(famicomLow) + " vs NES " + std::to_string(nesLow) + ")");
+
+        nes.configure(sampleRate, ChipFilterChain::Mode::NES);
+        famicom.configure(sampleRate, ChipFilterChain::Mode::Famicom);
+        const float nesTop = measure(nes, 16000.0f, sampleRate);
+        const float famicomTop = measure(famicom, 16000.0f, sampleRate);
+
+        check(famicomTop > nesTop * 1.2f,
+              "and far more top end, having no low-pass at all (16 kHz: Famicom " +
+              std::to_string(famicomTop) + " vs NES " + std::to_string(nesTop) + ")");
+    }
+
+    // ---- DC is removed ----------------------------------------------------
+    {
+        ChipFilterChain chain;
+        chain.configure(sampleRate, ChipFilterChain::Mode::NES);
+
+        float last = 1.0f;
+        for (int i = 0; i < 44100; ++i) {
+            float l = 1.0f, r = 1.0f;
+            chain.process(l, r);
+            last = l;
+        }
+        check(std::fabs(last) < 0.01f,
+              "a constant offset is filtered away rather than eating headroom "
+              "(settled at " + std::to_string(last) + ")");
+    }
+
+    // ---- Hygiene ----------------------------------------------------------
+    {
+        ChipFilterChain chain;
+        chain.configure(sampleRate, ChipFilterChain::Mode::NES);
+
+        float l = std::numeric_limits<float>::quiet_NaN();
+        float r = std::numeric_limits<float>::infinity();
+        chain.process(l, r);
+        check(std::isfinite(l) && std::isfinite(r),
+              "a poisoned sample does not become a permanently NaN filter state");
+
+        // And the filter still works afterwards.
+        for (int i = 0; i < 1000; ++i) {
+            float a = 0.5f, b = 0.5f;
+            chain.process(a, b);
+            if (!std::isfinite(a)) {
+                check(false, "the filter state stayed poisoned after a NaN");
+                break;
+            }
+        }
+        check(true, "the filter recovers and keeps producing finite output");
+
+        chain.reset();
+        float a = 0.0f, b = 0.0f;
+        chain.process(a, b);
+        check(a == 0.0f && b == 0.0f, "reset clears the filter state");
+    }
+}
+
+static void testChipMixReachesAudio() {
+    beginTest("Chip mixing reaches the audio");
+
+    // A gain table that nothing applies is worth nothing. These render real
+    // audio and compare levels.
+
+    auto renderPulses = [](int channelCount, bool chipMix) {
+        Project p;
+        p.bpm = 120.0f;
+        // Master processing off: a limiter would flatten the very difference
+        // being measured.
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+        // The chip gain is computed from the channel level, before master
+        // volume - so the channels run at full scale to reach the part of
+        // the DAC curve the 1.73x figure describes, and the headroom is
+        // taken back here instead. That keeps the final soft clip in its
+        // linear region, where it cannot flatten the difference being
+        // measured.
+        p.masterVolume = 0.15f;
+        p.chipMixEnabled = chipMix;
+
+        Pattern pat;
+        Note n;
+        n.pitch = 60;
+        n.startTime = 0.0f;
+        n.duration = 4.0f;
+        n.oscillatorType = OscillatorType::Pulse;
+        pat.notes.push_back(n);
+        p.patterns.clear();
+        p.patterns.push_back(pat);
+
+        p.arrangement.clear();
+        for (int ch = 0; ch < channelCount; ++ch) {
+            p.channels[ch].oscillator.type = OscillatorType::Pulse;
+            // The duty cycle has to match too. Project's constructor gives
+            // channel 0 a 50% pulse and channel 1 a 25% one, and two
+            // different waveforms do not sum coherently - so without this the
+            // ratio measures waveform correlation rather than the mixer.
+            p.channels[ch].oscillator.pulseWidth = 0.5f;
+            p.channels[ch].volume = 1.0f;
+            p.channels[ch].pan = 0.0f;
+            p.arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0});
+        }
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.updateChannelConfigs();
+        seq.updateMasterEffects();
+        seq.play();
+
+        std::vector<float> l(512), r(512);
+        double sum = 0.0;
+        int counted = 0;
+        for (int b = 0; b < 60; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            if (b >= 10) {                       // let the envelope settle
+                for (float v : l) { sum += double(v) * double(v); ++counted; }
+            }
+        }
+        return (counted > 0) ? std::sqrt(sum / counted) : 0.0;
+    };
+
+    {
+        const double oneLinear = renderPulses(1, false);
+        const double twoLinear = renderPulses(2, false);
+        const double oneChip = renderPulses(1, true);
+        const double twoChip = renderPulses(2, true);
+
+        check(oneLinear > 1e-4, "a single pulse channel renders audibly");
+
+        const double linearRatio = twoLinear / oneLinear;
+        const double chipRatio = twoChip / oneChip;
+
+        check(linearRatio > 1.85,
+              "linear mixing sums two identical pulses to about 2x (got " +
+              std::to_string(linearRatio) + ")");
+        check(chipRatio < linearRatio * 0.93,
+              "non-linear mixing makes two pulses quieter than their linear sum - "
+              "the channels duck each other (linear " + std::to_string(linearRatio) +
+              " vs chip " + std::to_string(chipRatio) + ")");
+        check(chipRatio > 1.4 && chipRatio < 1.95,
+              "and lands near the hardware's 1.73x rather than collapsing (got " +
+              std::to_string(chipRatio) + ")");
+    }
+
+    // ---- A voice the 2A03 never had is left alone ------------------------
+    {
+        auto renderSupersaw = [](bool chipMix) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.chipMixEnabled = chipMix;
+
+            Pattern pat;
+            Note n;
+            n.pitch = 60; n.startTime = 0.0f; n.duration = 4.0f;
+            n.oscillatorType = OscillatorType::Supersaw;
+            pat.notes.push_back(n);
+            p.patterns.clear();
+            p.patterns.push_back(pat);
+
+            p.channels[0].oscillator.type = OscillatorType::Supersaw;
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            Sequencer& seq = *seqPtr;
+            seq.setSampleRate(44100.0f);
+            seq.setProject(&p);
+            seq.updateChannelConfigs();
+            seq.updateMasterEffects();
+            seq.play();
+
+            std::vector<float> out, l(512), r(512);
+            for (int b = 0; b < 30; ++b) {
+                seq.process(l.data(), r.data(), 512);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            return out;
+        };
+
+        const auto plain = renderSupersaw(false);
+        const auto chipped = renderSupersaw(true);
+
+        double difference = 0.0;
+        const size_t n = std::min(plain.size(), chipped.size());
+        for (size_t i = 0; i < n; ++i) difference += std::fabs(plain[i] - chipped[i]);
+
+        check(difference < 1e-3,
+              "a supersaw channel is bit-identical with the mode on or off - it "
+              "is not a 2A03 voice and must not be forced into a hardware group "
+              "(difference " + std::to_string(difference) + ")");
+    }
+
+    // ---- The settings survive a save and load ----------------------------
+    {
+        Project original;
+        original.chipMixEnabled = true;
+        original.chipFilterEnabled = true;
+        original.chipFilterFamicom = true;
+
+        const std::string path = testPath("chipmix_roundtrip.ctp");
+        check(saveProjectFile(original, path), "the chip settings save");
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "and load again");
+        check(loaded.chipMixEnabled && loaded.chipFilterEnabled &&
+              loaded.chipFilterFamicom,
+              "all three chip settings survive the round trip");
+        std::remove(path.c_str());
+    }
+
+    // ---- Off by default ---------------------------------------------------
+    {
+        const Project fresh;
+        check(!fresh.chipMixEnabled && !fresh.chipFilterEnabled,
+              "both are off in a new project - most channels here host voices a "
+              "2A03 never had, so neither is imposed on anyone");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -4313,6 +4714,9 @@ int main(int argc, char** argv) {
     testLoopAndEffectsReachAudio();
     testScalesAndTransforms();
     testGhostNotes();
+    testChipMix();
+    testChipFilters();
+    testChipMixReachesAudio();
     testLongRunStability();
 
     std::printf("\n==========================\n");

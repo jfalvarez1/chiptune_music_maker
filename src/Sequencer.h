@@ -8,6 +8,7 @@
  */
 
 #include "Types.h"
+#include "ChipMix.h"
 #include "LoopRange.h"
 #include "NoteEvents.h"
 #include "Synthesizer.h"
@@ -151,6 +152,18 @@ public:
         float bpm = m_project->bpm;
         float beatsPerSample = bpm / 60.0f / m_sampleRate;
 
+        // Console filters are reconfigured here, once per block - the
+        // coefficients depend only on the sample rate and the chosen
+        // voicing, neither of which changes between samples.
+        const ChipFilterChain::Mode wantFilterMode = m_project->chipFilterFamicom
+            ? ChipFilterChain::Mode::Famicom
+            : ChipFilterChain::Mode::NES;
+        if (!m_chipFilterReady || wantFilterMode != m_chipFilterMode) {
+            m_chipFilter.configure(m_sampleRate, wantFilterMode);
+            m_chipFilterMode = wantFilterMode;
+            m_chipFilterReady = true;
+        }
+
         for (uint32_t i = 0; i < frameCount; ++i) {
             float prevBeat = m_state.currentBeat;
 
@@ -221,12 +234,52 @@ public:
                 }
             }
 
+            // Non-linear channel mixing. A real 2A03 shares one DAC between
+            // its two pulses and another between triangle, noise and DMC, so
+            // channels duck each other and the triangle sits louder against
+            // the pulses than a linear sum makes it. Off by default.
+            ChipMixGains chipGains;
+            if (m_project->chipMixEnabled) {
+                float pulseMag = 0.0f;
+                float triangleMag = 0.0f;
+                float noiseMag = 0.0f;
+
+                for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+                    if (m_project->channels[ch].muted) continue;
+                    if (hasSolo && !m_project->channels[ch].solo) continue;
+
+                    const float mag = std::fabs(channelSamples[ch]) *
+                                      m_project->channels[ch].volume;
+                    switch (chipMixGroupFor(m_project->channels[ch].oscillator.type)) {
+                        case ChipMixGroup::Pulse:    pulseMag += mag; break;
+                        case ChipMixGroup::Triangle: triangleMag += mag; break;
+                        case ChipMixGroup::Noise:    noiseMag += mag; break;
+                        default: break;   // not a 2A03 voice; mixed linearly
+                    }
+                }
+                chipGains = computeChipMixGains(pulseMag, triangleMag, noiseMag);
+            }
+
             for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
                 if (m_project->channels[ch].muted) continue;
                 if (hasSolo && !m_project->channels[ch].solo) continue;
 
                 float sample = channelSamples[ch];
                 float volume = m_project->channels[ch].volume;
+
+                if (m_project->chipMixEnabled) {
+                    switch (chipMixGroupFor(m_project->channels[ch].oscillator.type)) {
+                        case ChipMixGroup::Pulse:
+                            sample *= chipGains.pulse;
+                            break;
+                        case ChipMixGroup::Triangle:
+                        case ChipMixGroup::Noise:
+                            sample *= chipGains.tnd;
+                            break;
+                        default:
+                            break;
+                    }
+                }
                 float pan = m_project->channels[ch].pan;
 
                 // Pan law (constant power)
@@ -255,6 +308,14 @@ public:
                     left += sample * leftGain;
                     right += sample * rightGain;
                 }
+            }
+
+            // The console's own output filters, applied before the master
+            // bus: on hardware these are the last thing between the APU and
+            // the RF modulator, and our master bus is the studio processing
+            // that would come after it.
+            if (m_project->chipFilterEnabled) {
+                m_chipFilter.process(left, right);
             }
 
             // Apply master volume
@@ -793,6 +854,10 @@ private:
     Project* m_project = nullptr;
     PlaybackState m_state;
     uint32_t m_loopPass = 0;
+
+    ChipFilterChain m_chipFilter;
+    ChipFilterChain::Mode m_chipFilterMode = ChipFilterChain::Mode::NES;
+    bool m_chipFilterReady = false;
 
     std::array<Synthesizer, MAX_CHANNELS> m_synths;
 

@@ -165,6 +165,9 @@ struct CaptureRequest {
 
     // Show the other channels' notes behind the edited pattern.
     bool showGhostNotes = false;
+
+    // Open the Chip Accuracy section, which is collapsed by default.
+    bool expandChipPanel = false;
 };
 
 // Parses the flags this app understands and ignores anything else.
@@ -178,6 +181,7 @@ struct CaptureRequest {
 //   --loop <a> <b>       set a loop range on the arrangement ruler
 //   --snap <name>        off|bar|1/2|1/4|1/8|1/16|1/32|1/4T|1/8T|1/16T
 //   --ghosts             show cross-channel ghost notes
+//   --chip-panel         open the Chip Accuracy section
 //   --frames <n>         frames to render before capturing
 //   --size <w> <h>       window size
 //   --demo               populate a short demo song first
@@ -214,6 +218,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             next(request.snapName);
         } else if (arg == "--ghosts") {
             request.showGhostNotes = true;
+        } else if (arg == "--chip-panel") {
+            request.expandChipPanel = true;
         } else if (arg == "--select") {
             request.selectNotes = true;
         } else if (arg == "--playing") {
@@ -270,6 +276,7 @@ inline void applyCaptureState(const CaptureRequest& request,
     }
 
     if (request.showGhostNotes) ui.showGhostNotes = true;
+    if (request.expandChipPanel) g_ExpandChipAccuracy = true;
 
     // --- Grid snap ---
     if (!request.snapName.empty()) {

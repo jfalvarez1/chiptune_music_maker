@@ -687,6 +687,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
 
         // Transport bar (always visible)
         ChiptuneTracker::DrawTransportBar(sequencer, project, playbackState, uiState);
+        ChiptuneTracker::DrawMasterBus(sequencer, project, uiState);
 
         // View tabs
         ChiptuneTracker::DrawViewTabs(uiState);

@@ -240,6 +240,9 @@ inline constexpr BoolField<Project> PROJECT_BOOLS[] = {
     {"cmpOn", &Project::masterCompressorEnabled},
     {"limOn", &Project::masterLimiterEnabled},
     {"hum",   &Project::humanize},
+    {"nlmix", &Project::chipMixEnabled},
+    {"nlflt", &Project::chipFilterEnabled},
+    {"nlfam", &Project::chipFilterFamicom},
 };
 
 // ============================================================================

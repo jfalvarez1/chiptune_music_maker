@@ -106,6 +106,11 @@ foreach ($panel in $panels) {
     args = "--demo --view pianoroll --ghosts"
 })
 
+[void]$cases.Add(@{
+    name = "master-bus-chip-accuracy"
+    args = "--demo --workspace mix --chip-panel"
+})
+
 # working directory with the broken ini staged into it.
 [void]$cases.Add(@{
     name     = "legacy-layout-repair"

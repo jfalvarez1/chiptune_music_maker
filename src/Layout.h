@@ -186,6 +186,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Note Editor", rightUpper);
             ImGui::DockBuilderDockWindow("Channel Editor", rightLower);
             ImGui::DockBuilderDockWindow("Instrument Macros", rightLower);
+            ImGui::DockBuilderDockWindow("Master Bus", rightLower);
 
             for (const char* view : EDITOR_VIEWS) {
                 ImGui::DockBuilderDockWindow(view, centre);
@@ -230,6 +231,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Note Editor", lowerRight);
             ImGui::DockBuilderDockWindow("Patterns", lowerLeft);
             ImGui::DockBuilderDockWindow("Automation", lowerMid);
+            ImGui::DockBuilderDockWindow("Master Bus", lowerMid);
             ImGui::DockBuilderDockWindow("MIDI Input", upperLeft);
             break;
         }
@@ -250,6 +252,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             for (const char* view : EDITOR_VIEWS) {
                 ImGui::DockBuilderDockWindow(view, upperMain);
             }
+            ImGui::DockBuilderDockWindow("Master Bus", upperRight);
             ImGui::DockBuilderDockWindow("Channel Editor", upperRight);
             ImGui::DockBuilderDockWindow("Instrument Macros", upperRight);
 
