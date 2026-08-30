@@ -1334,6 +1334,209 @@ static void testOscillatorNameTables() {
 }
 
 // ============================================================================
+// 13. Instrument macros
+// ============================================================================
+static void testInstrumentMacros() {
+    beginTest("Instrument macros");
+
+    // ---- Sequence semantics, independent of audio ----------------------
+    {
+        Macro m;
+        m.enabled = true;
+        m.steps = {15, 10, 5};
+
+        check(m.valueAt(0) == 15 && m.valueAt(1) == 10 && m.valueAt(2) == 5,
+              "macro reads back its steps");
+        check(m.valueAt(3) == 5 && m.valueAt(99) == 5,
+              "a non-looping macro holds its last value");
+        check(m.isFinished(3), "a non-looping macro reports finishing");
+
+        m.loopStart = 1;
+        check(m.valueAt(3) == 10 && m.valueAt(4) == 5 && m.valueAt(5) == 10,
+              "a looping macro cycles from its loop point");
+        check(!m.isFinished(99), "a looping macro never finishes");
+
+        // Degenerate cases must not read out of bounds
+        Macro empty;
+        empty.enabled = true;
+        check(empty.valueAt(0) == 0 && empty.valueAt(-5) == 0 && empty.valueAt(1000) == 0,
+              "an empty macro reads as zero at any position");
+        check(!empty.isActive(), "an empty macro is not active");
+
+        Macro badLoop;
+        badLoop.enabled = true;
+        badLoop.steps = {1, 2};
+        badLoop.loopStart = 99;  // past the end
+        check(std::isfinite(float(badLoop.valueAt(50))),
+              "an out-of-range loop point does not read out of bounds");
+    }
+
+    // ---- Fixed vs relative arpeggio steps ------------------------------
+    {
+        ArpeggioMacro arp;
+        arp.enabled = true;
+        arp.steps = {0, 4, 7};
+        arp.fixed = {0, 1, 0};
+        check(!arp.isFixedAt(0) && arp.isFixedAt(1) && !arp.isFixedAt(2),
+              "arpeggio fixed flags read back per step");
+
+        ArpeggioMacro noFlags;
+        noFlags.enabled = true;
+        noFlags.steps = {0, 4, 7};
+        check(!noFlags.isFixedAt(0) && !noFlags.isFixedAt(2),
+              "an arpeggio with no flags is entirely relative");
+    }
+
+    // ---- Macros audibly change the rendered note -----------------------
+    const float sampleRate = 44100.0f;
+    const int frames = int(sampleRate * 0.5f);
+
+    auto renderWithMacros = [&](const InstrumentMacros& macros, bool quantize) {
+        ChannelConfig config;
+        config.oscillator.type = OscillatorType::Pulse;
+        config.macros = macros;
+        config.quantizeVolume4Bit = quantize;
+
+        Synthesizer synth;
+        synth.setSampleRate(sampleRate);
+        synth.setChannelConfig(config);
+        synth.noteOn(60, 1.0f, 0.0f, 0.0f, 0.0f, 0.45f, OscillatorType::Pulse);
+
+        std::vector<float> buf(frames);
+        for (int i = 0; i < frames; ++i) buf[i] = synth.process(float(i) / sampleRate);
+        return buf;
+    };
+
+    const InstrumentMacros none;
+    std::vector<float> plain = renderWithMacros(none, false);
+    BufferStats plainStats = analyze(plain);
+    check(!plainStats.allZero, "a note with no macros still sounds");
+
+    auto meanDelta = [](const std::vector<float>& a, const std::vector<float>& b) {
+        const size_t n = std::min(a.size(), b.size());
+        double d = 0.0;
+        for (size_t i = 0; i < n; ++i) d += std::fabs(double(a[i]) - double(b[i]));
+        return n ? d / double(n) : 0.0;
+    };
+
+    struct PresetCase { const char* label; InstrumentMacros macros; };
+    std::vector<PresetCase> cases;
+    for (const MacroPreset& preset : macroPresets()) {
+        cases.push_back({preset.name, preset.macros});
+    }
+
+    for (const PresetCase& c : cases) {
+        std::vector<float> withMacro = renderWithMacros(c.macros, false);
+        BufferStats st = analyze(withMacro);
+
+        check(st.nonFiniteCount == 0,
+              std::string(c.label) + " macro produced non-finite audio");
+        check(st.outOfRangeCount == 0,
+              std::string(c.label) + " macro exceeded headroom (peak " +
+              std::to_string(st.peak) + ")");
+        check(!st.allZero, std::string(c.label) + " macro produced silence");
+        check(meanDelta(plain, withMacro) > 1e-5,
+              std::string(c.label) + " macro had no audible effect");
+    }
+
+    // The volume macro should govern the amplitude envelope. A pluck decays
+    // to nothing, so its second half must be far quieter than its first.
+    {
+        std::vector<float> pluck = renderWithMacros(makePluck(), false);
+        const size_t half = pluck.size() / 2;
+        std::vector<float> firstHalf(pluck.begin(), pluck.begin() + half);
+        std::vector<float> secondHalf(pluck.begin() + half, pluck.end());
+        BufferStats a = analyze(firstHalf);
+        BufferStats b = analyze(secondHalf);
+        check(b.rms < a.rms,
+              "the pluck volume macro decays (first half rms " + std::to_string(a.rms) +
+              ", second " + std::to_string(b.rms) + ")");
+    }
+
+    // 4-bit quantisation must change the waveform without breaking it
+    {
+        std::vector<float> quantized = renderWithMacros(none, true);
+        BufferStats st = analyze(quantized);
+        check(st.nonFiniteCount == 0, "4-bit quantisation produced non-finite audio");
+        check(!st.allZero, "4-bit quantisation produced silence");
+    }
+
+    // ---- Macros survive save and load ----------------------------------
+    {
+        Project p;
+        p.channels[0].macros = makeMajorChordArp();
+        p.channels[0].macros.arpeggio.fixed = {0, 1, 0};
+        p.channels[0].macros.rateHz = 45.0f;
+        p.channels[1].macros = makeLaserZap();
+        p.channels[2].macros = makeSustainedLead();
+        p.channels[3].quantizeVolume4Bit = true;
+
+        const std::string path = testPath("test_macros.ctp");
+        check(saveProject(p, path), "a project with macros saves");
+
+        Project reloaded;
+        check(loadProject(reloaded, path), "a project with macros loads");
+
+        const InstrumentMacros& want = p.channels[0].macros;
+        const InstrumentMacros& got = reloaded.channels[0].macros;
+
+        check(got.arpeggio.enabled == want.arpeggio.enabled,
+              "arpeggio macro enable survived");
+        check(got.arpeggio.steps == want.arpeggio.steps,
+              "arpeggio macro steps survived");
+        check(got.arpeggio.loopStart == want.arpeggio.loopStart,
+              "arpeggio macro loop point survived");
+        check(got.arpeggio.fixed == want.arpeggio.fixed,
+              "arpeggio fixed flags survived");
+        check(std::fabs(got.rateHz - want.rateHz) < 0.01f,
+              "macro rate survived (" + std::to_string(want.rateHz) + " -> " +
+              std::to_string(got.rateHz) + ")");
+        check(got.volume.steps == want.volume.steps, "volume macro steps survived");
+
+        check(reloaded.channels[1].macros.pitch.steps == p.channels[1].macros.pitch.steps,
+              "pitch macro steps survived");
+        check(reloaded.channels[2].macros.volume.releaseStep ==
+              p.channels[2].macros.volume.releaseStep,
+              "volume macro release point survived");
+        check(reloaded.channels[2].macros.duty.steps == p.channels[2].macros.duty.steps,
+              "duty macro steps survived");
+        check(reloaded.channels[3].quantizeVolume4Bit,
+              "4-bit quantisation flag survived");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- A malformed macro must not reach the audio thread -------------
+    {
+        Project p;
+        Macro& vol = p.channels[0].macros.volume;
+        vol.enabled = true;
+        vol.steps = {999, -999, 7};      // outside the 0..15 range
+        vol.loopStart = 50;              // past the end
+        vol.releaseStep = -80;
+        p.channels[0].macros.rateHz = -5.0f;
+
+        clampProjectToValidRanges(p);
+
+        check(vol.steps[0] == 15 && vol.steps[1] == 0,
+              "out-of-range volume macro steps are clamped to 0..15");
+        check(vol.loopStart == -1, "an out-of-range loop point is cleared");
+        check(vol.releaseStep == -1, "an out-of-range release point is cleared");
+        check(p.channels[0].macros.rateHz > 0.0f, "a non-positive macro rate is repaired");
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.play();
+        std::vector<float> l(512), r(512);
+        for (int b = 0; b < 20; ++b) seq.process(l.data(), r.data(), 512);
+        BufferStats st = analyze(l);
+        check(st.nonFiniteCount == 0, "a repaired macro renders finite audio");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -1386,6 +1589,7 @@ int main(int argc, char** argv) {
     testChannelConfigReachesSynth();
     testMasterBus();
     testSilenceIsSilent();
+    testInstrumentMacros();
 
     std::printf("\n==========================\n");
     std::printf("%d checks, %d failures\n", g_checks, g_failures);

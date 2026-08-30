@@ -13,6 +13,8 @@
 #include <string>
 #include <algorithm>
 
+#include "Macros.h"
+
 namespace ChiptuneTracker {
 
 // ============================================================================
@@ -372,6 +374,19 @@ struct ChannelConfig {
     bool formantEnabled = false;
     int formantVowel = 3; // 0=A, 1=E, 2=I, 3=O, 4=U (Default O for Nightcall)
     float formantResonance = 5.0f;
+
+    // Instrument macros - the step sequences that make a chip instrument.
+    // See Macros.h. Inactive by default, so channels behave exactly as
+    // before until a macro is switched on.
+    InstrumentMacros macros;
+
+    // Chip-authentic playback options
+    //
+    // Real hardware had a 4-bit volume DAC. Quantising to 16 levels is a
+    // surprisingly large part of why chiptune sounds like chiptune, and it
+    // is the kind of thing that has to be opt-in per channel rather than
+    // imposed on a project that is only chiptune-adjacent.
+    bool quantizeVolume4Bit = false;
 };
 
 // ============================================================================
@@ -1235,6 +1250,10 @@ struct UIState {
 
     // Visual theme
     Theme currentTheme = Theme::Stock;
+
+    // Instrument macro editor (see MacroEditorUI.h)
+    bool showMacroEditor = false;
+    int macroEditorTab = 0;         // 0=volume, 1=arpeggio, 2=duty, 3=pitch
 
     // Pad Controller state
     PadControllerState padController;

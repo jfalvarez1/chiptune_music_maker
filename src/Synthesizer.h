@@ -91,6 +91,9 @@ struct Voice {
     // Formant Filter States (3 bands x 2 states for biquad/svf)
     float formantState[3][2] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}};
 
+    // Instrument macro playback position (see Macros.h)
+    VoiceMacroState macroState;
+
     void reset() {
         active = false;
         phase = 0.0f;
@@ -129,6 +132,7 @@ struct Voice {
         filterState = 0.0f;
         // Formant reset
         for(int i=0; i<3; ++i) { formantState[i][0] = 0.0f; formantState[i][1] = 0.0f; }
+        macroState.reset();
     }
 };
 
@@ -275,6 +279,8 @@ public:
     void setChannelConfig(const ChannelConfig& config) {
         m_oscConfig = config.oscillator;
         m_envelope = config.envelope;
+        m_macros = config.macros;
+        m_quantizeVolume4Bit = config.quantizeVolume4Bit;
         
         // Filter Envelope
         m_filterEnvEnabled = config.filterEnvEnabled;
@@ -474,6 +480,7 @@ public:
                 v.envStage = Voice::EnvStage::Release;
                 v.releaseTime = time;
                 v.envTime = 0.0f;
+                v.macroState.releaseAll(m_macros);
             }
         }
     }
@@ -489,6 +496,7 @@ public:
 
                 v.envStage = Voice::EnvStage::Release;
                 v.envTime = 0.0f;
+                v.macroState.releaseAll(m_macros);
             }
         }
     }
@@ -569,6 +577,41 @@ public:
                 effectFreq *= std::pow(2.0f, sweepSemitones / 12.0f);
             }
 
+            // 5. Apply instrument macros (see Macros.h)
+            //
+            // These run last of the pitch modifiers so a macro arpeggio
+            // composes with vibrato and sweep rather than fighting them.
+            // Drums keep their own internal envelopes and pitch behaviour.
+            if (!isDrum && m_macros.anyActive()) {
+                voice.macroState.advanceAll(m_macros, dt);
+
+                if (m_macros.duty.isActive()) {
+                    const int duty = std::clamp(
+                        m_macros.duty.valueAt(voice.macroState.duty.position), 0, 3);
+                    voice.dutyCycle = static_cast<DutyCycle>(duty);
+                    voice.useDutyCycle = true;
+                }
+
+                if (m_macros.arpeggio.isActive()) {
+                    const int pos = voice.macroState.arpeggio.position;
+                    const int semitones = m_macros.arpeggio.valueAt(pos);
+                    if (m_macros.arpeggio.isFixedAt(pos)) {
+                        // Fixed steps ignore the played note and sound the
+                        // macro value as an absolute offset from the base.
+                        effectFreq = voice.baseFrequency *
+                                     std::pow(2.0f, float(semitones) / 12.0f);
+                    } else {
+                        effectFreq *= std::pow(2.0f, float(semitones) / 12.0f);
+                    }
+                }
+
+                if (m_macros.pitch.isActive()) {
+                    // Pitch macro steps are 1/16ths of a semitone
+                    const float fine = float(m_macros.pitch.valueAt(voice.macroState.pitch.position));
+                    effectFreq *= std::pow(2.0f, fine / (16.0f * 12.0f));
+                }
+            }
+
             // Update phase increment with modified frequency (skip for drums - they manage their own)
             //
             // Clamp below Nyquist first. Vibrato, slide and the sweep unit all
@@ -627,6 +670,7 @@ public:
                     if (voice.realTimeElapsed >= voice.noteDuration && voice.envStage != Voice::EnvStage::Release) {
                         voice.envStage = Voice::EnvStage::Release;
                         voice.envTime = 0.0f;  // Reset envelope time for release phase
+                        voice.macroState.releaseAll(m_macros);
                     }
                     // Hard cutoff: deactivate after duration + short release time
                     if (voice.realTimeElapsed >= voice.noteDuration + 0.2f) {
@@ -653,7 +697,24 @@ public:
                 tremoloGain = 1.0f - voice.tremoloDepth * (1.0f - tremoloMod);
             }
 
+            // Volume macro. A 4-bit level (0..15), the native resolution of
+            // the hardware this is emulating. When a volume macro is present
+            // it replaces the ADSR entirely rather than multiplying with it -
+            // that is what the sequence is for, and stacking the two just
+            // makes both harder to reason about.
+            if (!isDrum && m_macros.volume.isActive()) {
+                const int level = std::clamp(
+                    m_macros.volume.valueAt(voice.macroState.volume.position), 0, 15);
+                envGain = float(level) / 15.0f;
+            }
+
             sample *= envGain * voice.velocity * fadeGain * tremoloGain;
+
+            // Optional 4-bit output quantisation. Real chips had a 16-level
+            // volume DAC, and that staircase is a real part of the character.
+            if (m_quantizeVolume4Bit) {
+                sample = std::round(sample * 15.0f) / 15.0f;
+            }
 
             output += sample;
         }
@@ -2705,6 +2766,10 @@ private:
     float m_filterEnvAmount = 0.0f;
     float m_filterEnvAttack = 0.0f;
     float m_filterEnvDecay = 0.1f;
+
+    // Instrument macros for this channel (see Macros.h)
+    InstrumentMacros m_macros;
+    bool m_quantizeVolume4Bit = false;
 };
 
 } // namespace ChiptuneTracker

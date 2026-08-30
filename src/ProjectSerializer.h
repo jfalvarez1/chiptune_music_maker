@@ -138,6 +138,7 @@ inline constexpr IntField<ChannelConfig> CHANNEL_INTS[] = {
 };
 
 inline constexpr BoolField<ChannelConfig> CHANNEL_BOOLS[] = {
+    {"q4bit",  &ChannelConfig::quantizeVolume4Bit},
     {"mute",   &ChannelConfig::muted},
     {"solo",   &ChannelConfig::solo},
     {"arpOn",  &ChannelConfig::arpeggiatorEnabled},
@@ -326,6 +327,81 @@ inline bool splitToken(const std::string& token, std::string& key, std::string& 
     return true;
 }
 
+// ============================================================================
+// Macro lines
+//
+// Macros are variable-length, so they get their own line rather than a
+// key=value token:
+//
+//   MACRO <channel> <which> <loop> <release> <rate> : <step> <step> ...
+//
+// An arpeggio macro marks fixed steps with a trailing 'f' on the value, so
+//   MACRO 0 arp 0 -1 60 : 0 4f 7
+// means "root, the macro value 4 played fixed, fifth".
+// ============================================================================
+inline void writeMacro(std::ostream& out, int channel, const char* which,
+                       const Macro& macro, float rateHz,
+                       const std::vector<uint8_t>* fixedFlags = nullptr) {
+    if (!macro.isActive()) return;
+
+    out << "MACRO " << channel << ' ' << which << ' '
+        << macro.loopStart << ' ' << macro.releaseStep << ' '
+        << floatToToken(rateHz) << " :";
+
+    for (size_t i = 0; i < macro.steps.size(); ++i) {
+        out << ' ' << macro.steps[i];
+        if (fixedFlags && i < fixedFlags->size() && (*fixedFlags)[i]) out << 'f';
+    }
+    out << "\n";
+}
+
+inline void readMacro(const std::string& line, Project& project) {
+    std::istringstream iss(line);
+    std::string cmd, which;
+    int channel = -1, loop = -1, release = -1;
+    float rate = 60.0f;
+
+    iss >> cmd >> channel >> which >> loop >> release >> rate;
+    if (channel < 0 || channel >= Project::MAX_CHANNELS) return;
+
+    std::string colon;
+    iss >> colon;
+    if (colon != ":") return;
+
+    std::vector<int> steps;
+    std::vector<uint8_t> fixedFlags;
+    std::string token;
+    while (iss >> token && steps.size() < static_cast<size_t>(Macro::MAX_STEPS)) {
+        bool isFixed = false;
+        if (!token.empty() && (token.back() == 'f' || token.back() == 'F')) {
+            isFixed = true;
+            token.pop_back();
+        }
+        try {
+            steps.push_back(std::stoi(token));
+            fixedFlags.push_back(isFixed ? 1u : 0u);
+        } catch (...) {
+            // A damaged step is skipped rather than aborting the macro
+        }
+    }
+    if (steps.empty()) return;
+
+    InstrumentMacros& macros = project.channels[channel].macros;
+    macros.rateHz = rate;
+
+    auto fill = [&](Macro& m) {
+        m.enabled = true;
+        m.steps = steps;
+        m.loopStart = loop;
+        m.releaseStep = release;
+    };
+
+    if (which == "vol")       fill(macros.volume);
+    else if (which == "arp") { fill(macros.arpeggio); macros.arpeggio.fixed = fixedFlags; }
+    else if (which == "duty") fill(macros.duty);
+    else if (which == "pitch") fill(macros.pitch);
+}
+
 // Quote a string for a single-line field, escaping the quote character.
 inline std::string quote(const std::string& s) {
     std::string out = "\"";
@@ -406,6 +482,13 @@ inline bool saveProjectFile(const Project& project, const std::string& filepath)
         ctp::writeFloats(file, c.envelope, d.envelope, ctp::ENV_FLOATS, "env.");
 
         file << "\n";
+
+        // Instrument macros follow their channel, one line each
+        ctp::writeMacro(file, ch, "vol",   c.macros.volume,   c.macros.rateHz);
+        ctp::writeMacro(file, ch, "arp",   c.macros.arpeggio, c.macros.rateHz,
+                        &c.macros.arpeggio.fixed);
+        ctp::writeMacro(file, ch, "duty",  c.macros.duty,     c.macros.rateHz);
+        ctp::writeMacro(file, ch, "pitch", c.macros.pitch,    c.macros.rateHz);
     }
     file << "\n";
 
@@ -532,6 +615,9 @@ inline bool loadProjectFile(Project& project, const std::string& filepath) {
                     ctp::applyBool(c, key, value, ctp::CHANNEL_BOOLS);
                 }
             }
+        }
+        else if (cmd == "MACRO") {
+            ctp::readMacro(line, project);
         }
         else if (cmd == "PATTERN") {
             size_t pos = 0;

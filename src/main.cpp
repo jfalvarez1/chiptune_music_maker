@@ -29,6 +29,7 @@
 #include "Types.h"
 #include "Sequencer.h"
 #include "UI.h"
+#include "MacroEditorUI.h"
 
 #include <cstdio>
 #include <memory>
@@ -327,6 +328,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
                     uiState.currentView = ChiptuneTracker::ViewMode::Mixer;
                 }
                 ImGui::Separator();
+                if (ImGui::MenuItem("Instrument Macros", "F4", uiState.showMacroEditor)) {
+                    uiState.showMacroEditor = !uiState.showMacroEditor;
+                }
+                ImGui::Separator();
                 if (ImGui::BeginMenu("Theme")) {
                     if (ImGui::MenuItem("Stock (Default)", nullptr, uiState.currentTheme == ChiptuneTracker::Theme::Stock)) {
                         uiState.currentTheme = ChiptuneTracker::Theme::Stock;
@@ -402,6 +407,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         // Tools panel (always visible)
         ChiptuneTracker::DrawToolsPanel(project, uiState, sequencer);
 
+        // Instrument macro editor (see MacroEditorUI.h)
+        ChiptuneTracker::DrawMacroEditor(project, uiState, sequencer);
+
         // Spectrum Analyzer (always visible)
         ChiptuneTracker::renderSpectrumAnalyzer(sequencer);
 
@@ -434,6 +442,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
         }
 
         // Keyboard shortcuts
+        if (ImGui::IsKeyPressed(ImGuiKey_F4) && !ImGui::GetIO().WantTextInput) {
+            uiState.showMacroEditor = !uiState.showMacroEditor;
+        }
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Space)) {
             if (playbackState.isPlaying) sequencer.pause();
             else sequencer.play();

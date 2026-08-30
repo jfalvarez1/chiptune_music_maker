@@ -117,6 +117,35 @@ inline void clampNoteToValidRanges(Note& note) {
     if (note.sampleID < -1) note.sampleID = -1;
 }
 
+// Macro sequences come from a file like everything else. An out-of-range
+// loop or release index would send the playback position somewhere the step
+// vector does not go.
+inline void clampMacroToValidRanges(Macro& macro, int valueLo, int valueHi) {
+    if (macro.steps.size() > static_cast<size_t>(Macro::MAX_STEPS)) {
+        macro.steps.resize(Macro::MAX_STEPS);
+    }
+    for (int& step : macro.steps) {
+        step = std::max(valueLo, std::min(step, valueHi));
+    }
+
+    const int count = static_cast<int>(macro.steps.size());
+    if (macro.loopStart < -1 || macro.loopStart >= count) macro.loopStart = -1;
+    if (macro.releaseStep < -1 || macro.releaseStep >= count) macro.releaseStep = -1;
+
+    // An enabled macro with no steps would claim to be active and do nothing
+    if (macro.steps.empty()) macro.enabled = false;
+}
+
+inline void clampMacrosToValidRanges(InstrumentMacros& macros) {
+    clampMacroToValidRanges(macros.volume, 0, 15);      // 4-bit level
+    clampMacroToValidRanges(macros.arpeggio, -96, 96);  // semitones
+    clampMacroToValidRanges(macros.duty, 0, 3);         // four NES duties
+    clampMacroToValidRanges(macros.pitch, -2048, 2048); // 1/16 semitones
+
+    macros.arpeggio.fixed.resize(macros.arpeggio.steps.size(), 0u);
+    macros.rateHz = sanitizeFloat(macros.rateHz, 1.0f, 600.0f, 60.0f);
+}
+
 inline void clampChannelToValidRanges(ChannelConfig& c) {
     c.volume = sanitizeFloat(c.volume, 0.0f, 2.0f, 0.8f);
     c.pan = sanitizeFloat(c.pan, -1.0f, 1.0f, 0.0f);
@@ -182,6 +211,8 @@ inline void clampChannelToValidRanges(ChannelConfig& c) {
     if (c.sidechainSource < -1 || c.sidechainSource >= Project::MAX_CHANNELS) {
         c.sidechainSource = -1;
     }
+
+    clampMacrosToValidRanges(c.macros);
 
     // Time-based effects. Feedback strictly below 1.0 or they self-oscillate.
     c.delayTime = sanitizeFloat(c.delayTime, 0.0f, 1.0f, 0.25f);
