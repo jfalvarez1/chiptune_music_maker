@@ -635,6 +635,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 if (ImGui::MenuItem("Lesson: make your first track")) {
                     ChiptuneTracker::StartTutorial();
                 }
+                if (ImGui::MenuItem("Welcome screen...")) {
+                    // The first-run question, re-askable. One stray click on
+                    // "Other" used to bury it forever behind a file the user
+                    // does not know exists.
+                    showWelcome = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Pick a genre focus again, start from a\n"
+                                      "template, or begin the lesson.");
+                }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
                         "A guided walk from empty project to saved track.\n"
