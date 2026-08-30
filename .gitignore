@@ -151,3 +151,4 @@ coverage/
 # Screenshot output from the in-app F12 capture
 screenshots/
 *.bmp
+nul

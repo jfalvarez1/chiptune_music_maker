@@ -13,214 +13,85 @@ Chiptune Tracker is a lightweight, real-time digital audio workstation designed 
 - **LFSR noise generation** - Authentic NES-style percussion
 - **Minimal dependencies** - Only miniaudio + Dear ImGui
 
-### What's New in v2.11.0
+## Screenshots
 
-**Stereo Widener & Tape Saturation - Classic 80s Sound:**
-New effects for authentic synthwave production:
+### Piano roll
 
-- **Stereo Widener** - Create that lush, wide 80s pad sound
-  - Uses Haas effect and mid/side processing
-  - Width control (0 = mono, 1 = ultra wide)
-  - Haas delay (10-35ms) for stereo perception
-  - Presets: Subtle, Wide Pad, Ultra Wide
+Draw notes directly, or place whole chords and drum patterns from the sound
+palette. Sixty-five instruments across oscillators, synths, drums and genre
+kits.
 
-- **Tape Saturation** - Warm analog character
-  - Models tape compression and harmonic saturation
-  - Drive (1-3x), Warmth, Compression controls
-  - Adds even harmonics for vintage warmth
-  - Presets: Subtle Warmth, Cassette, Hot Tape
+![Piano roll](docs/images/piano-roll.png)
 
-- **Unison Helper** - For thick synthwave sounds
-  - Multiple detuned voice calculations
-  - Stereo spread parameter
-  - Used internally by synth presets
+### Instrument macros
 
-**How to Use:**
-1. Open **Channel Editor** (click channel in Mixer)
-2. Scroll to Effects section
-3. Enable **Stereo Widener** for wide pads
-4. Enable **Tape Saturation** for analog warmth
-5. Use presets or dial in custom settings
+The heart of chiptune sound design. Four step sequences per instrument -
+volume, arpeggio, duty cycle and fine pitch - each with its own loop and
+release point. Drag across the bar graph to draw the shape; a `0 4 7`
+arpeggio macro fakes a whole chord on a single channel.
 
-### What's New in v2.10.0
+![Instrument macro editor](docs/images/macro-editor.png)
 
-**Reverb Effect & Genre Effect Presets:**
-Professional-quality reverb and automatic genre-based effect presets for authentic sound:
+### Mixer
 
-- **Algorithmic Reverb** (Schroeder-style)
-  - 8 parallel comb filters + 4 series allpass filters
-  - Adjustable: Room Size, Damping, Mix, Predelay
-  - Creates depth and space for any sound
+Eight channels with per-channel level metering, pan, mute and solo, and a
+full effects chain behind each one.
 
-- **Genre Effect Presets** - Automatic effects when placing sample tracks:
-  - **Synthwave**: Heavy reverb (0.4 mix), chorus, dotted 8th delay, sidechain
-  - **Chiptune**: Minimal effects for authentic 8-bit (subtle delay only)
-  - **Techno**: Room reverb, heavy delay feedback, sidechain compression
-  - **Hip Hop/Trap**: Lo-fi vibes, subtle reverb, vintage delay
-  - **House**: Big room reverb, chorus, sidechain pumping
-  - **Reggaeton**: Tight room reverb, short delay for punch
+![Mixer](docs/images/mixer.png)
 
-- **Per-Note Dynamics** - Sample tracks now include:
-  - Velocity variation for expressive dynamics
-  - Vibrato on sustained notes for warmth
-  - Genre-appropriate effect settings
+### Tracker view
 
-**How to Use:**
-1. Open **Mixer** window (View > Mixer or keyboard shortcut)
-2. Click on a channel to select it
-3. Effects are in the **Channel Editor** panel
-4. Adjust Reverb, Chorus, and Delay settings
-5. Sample tracks auto-apply genre effects when placed
+The classic hex grid, for when you would rather type than draw.
 
-### What's New in v2.9.0
+![Tracker view](docs/images/tracker.png)
 
-**Tools Panel - 9 Synthwave Production Tools:**
-A comprehensive suite of music creation tools in a dedicated panel:
+### Arrangement
 
-1. **Drum Pattern Generator** - Create genre-specific drum patterns instantly
-   - 6 genre presets: Synthwave, Outrun, Darksynth, Italo Disco, Techno, Retrowave
-   - Density slider (25-100%) for pattern fullness
-   - Variation control (0-100%) for fills and variations
-   - Auto-generates kick, snare, and hi-hat patterns
+Lay patterns out along a timeline to build the full song structure.
 
-2. **Arpeggiator** - Convert selected notes into arpeggiated patterns
-   - Modes: Up, Down, Up-Down, Random
-   - Rate control: 8th, 16th, 32nd notes
-   - Gate control (25-100%) for note lengths
-   - Transforms chords into flowing sequences
+![Arrangement](docs/images/arrangement.png)
 
-3. **Bass Pattern Generator** - Create basslines automatically
-   - Styles: Octave Pulse, Root+Fifth, Walking, Arp
-   - Root note selection (C through B)
-   - Pattern length control (1-8 bars)
-   - Generates rhythmic bass patterns
+### Pad controller
 
-4. **Scale Lock + Highlighting** - Stay in key effortlessly
-   - 7 scales: Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian
-   - Root note selection for any key
-   - Highlight scale notes in piano roll
-   - Snap-to-scale for perfect pitch
+MPC-style pads for playing drums and auditioning sounds live.
 
-5. **Velocity Curve Painter** - Shape dynamics across notes
-   - Curve types: Linear, Exponential, Logarithmic, S-Curve
-   - Start/End velocity control
-   - Apply to selected notes for crescendos/decrescendos
+![Pad controller](docs/images/pad.png)
 
-6. **Fill Generator** - Add drum fills at pattern end
-   - Fill styles: Snare Roll, Tom Cascade, Cymbal Crash, Build-Up
-   - Position control (last 1-4 beats)
-   - Density control (Medium, Dense, Sparse)
+### Themes
 
-7. **Pattern Variation** - Create variations of existing patterns
-   - Variation types: Timing, Velocity, Pitch, All
-   - Amount control for subtle or dramatic changes
-   - Preserves musical structure while adding interest
+Ten themes, several with animated backgrounds. The theme reaches the piano
+roll and the custom widgets, not just the window chrome.
 
-8. **Quick Layer** - Layer sounds for thicker textures
-   - Octave offset (-2 to +2 octaves)
-   - Detune amount for chorus effects
-   - Velocity scaling for layered dynamics
-   - Duplicate selected notes with modifications
+| Game Boy DMG | Matrix |
+|---|---|
+| ![Game Boy theme](docs/images/theme-gameboy.png) | ![Matrix theme](docs/images/theme-matrix.png) |
 
-9. **Humanize Selected** - Add natural feel to mechanical patterns
-   - Timing variation (0-50ms)
-   - Velocity variation (0-30%)
-   - Makes robotic patterns feel more human
+| Retro Terminal | Daylight |
+|---|---|
+| ![Retro terminal theme](docs/images/theme-terminal.png) | ![Daylight theme](docs/images/theme-daylight.png) |
 
-### What's New in v2.8.2
+Also included: Stock, Cyberpunk, Synthwave, Frutiger Aero, Minimal and
+Vaporwave.
 
-**Chord Presets (45 chords across 8 genres!):**
-Place entire chords with a single click - perfect for quickly building progressions.
-- **Pop** (6): C Major, G Major, Am, F Major, Dm7, Cadd9
-- **Jazz** (6): Cmaj7, Dm9, G13, Fm7, Bbmaj7, Am7b5
-- **Rock** (5): E5, A5, D5, G5, B5 (power chords)
-- **EDM** (6): Am, F, C, G, Em7, Dm
-- **Hip Hop** (5): Cm7, Fm9, Bbmaj7, Gm7, Ebmaj9
-- **Reggaeton** (5): Am, F, Dm, E, G
-- **Synthwave** (7): Fm, Cm, Ab, Eb, Bbm7, Fm9, Db - uses authentic synthwave pads/leads
-- **Chiptune** (8): C/Am/G/Em/F Arps, C5, E5, Dm - 8-bit arpeggios and power chords
+*Screenshots are generated from the app itself with
+`tools/generate-gallery.ps1`, which drives its `--capture` mode. They can be
+regenerated after any UI change rather than going stale.*
 
-**How Chords Work:**
-1. Open the Sound Palette and expand the "Chords" section
-2. Click a genre header to expand it
-3. Click a chord to select it (auto-enters Draw mode)
-4. Click in the piano roll to place all chord notes at once
-5. All notes are placed at the same time with genre-appropriate instruments
+## What's new in 3.0
 
-**Pattern Management:**
-- **Delete patterns** with the Delete button or Delete key
-- Select a pattern and press Delete to remove it (must have at least 1 pattern)
+- **Instrument macros** - the step sequences chip instruments are actually
+  built from, with eight ready-made presets
+- **Project format v2** - v1 saved the notes and silently discarded the
+  entire mix, arrangement and every tracker effect
+- **Workspace layouts** - Compose, Sound Design and Mix, computed from the
+  display size so panels tile instead of overlapping
+- **Custom widgets** - knobs, meters with peak hold, animated toggles
+- **A headless test suite** - 1112 checks, which found a startup crash, two
+  effects that never ran at all, and an oscillator that could reach an
+  amplitude of 2.4 x 10^7
 
-### What's New in v2.8.1
-
-**Piano Roll Beat Grid Enhancement:**
-- **Hierarchical beat grid lines** - Visual rhythm hierarchy for easy note placement
-  - Measure lines (beat 0, 4, 8...): Brightest, 2px thick
-  - Quarter notes (whole beats): Bright, 1.5px thick
-  - 8th notes (half beats): Medium brightness, 1px
-  - 16th notes (quarter beats): Dimmest, 1px
-  - Pattern end marker: Red line, 3px thick
-- Makes it easy to identify half notes, quarter notes, and subdivisions at a glance
-
-### What's New in v2.8.0
-
-**New NES-Authentic Chiptune Effects:**
-- **Duty Cycle Control** (NES-style) - Per-note pulse width for authentic chiptune sounds
-  - 12.5%: Thin, reedy sound (NES classic)
-  - 25%: Hollow, slightly nasal
-  - 50%: Full square wave
-  - 75%: Same as 25%, inverted phase
-- **Pitch Sweep** (NES sweep unit) - Automatic pitch bend for laser sounds and effects
-  - Sweep Up: Pitch rises over time
-  - Sweep Down: Pitch falls (classic laser/zap sound)
-  - Adjustable speed and range (semitones)
-- **Tremolo** - Volume modulation for wavering, pulsing sounds
-  - Adjustable depth (0-100%)
-  - Adjustable speed (Hz)
-
-**Technical Improvements:**
-- Extended Note struct with new effect parameters
-- Effects processed in real-time audio thread
-- Full integration with existing vibrato, arpeggio, and portamento effects
-
-### What's New in v2.7.0
-
-**Window Layout & Workflow Improvements:**
-- **Proper initial window layout** - Windows now open in organized positions on first launch
-  - Top row: Transport, File, Views
-  - Left column: Sound Palette, Patterns, Pad Controller
-  - Main area: Piano Roll (center)
-  - Right column: Note Editor, Channel Editor
-  - Bottom: Mixer, Tracker, Arrangement
-
-**Groove & Feel System:**
-- **Swing control** (0-100%) - Shift off-beat notes forward for groove feel
-  - Grid options: 8th notes, 16th notes, 32nd notes
-  - Creates shuffle/swing rhythm patterns automatically
-- **Humanize** - Add random variation for natural, human-like timing
-  - Timing variation: 0-50ms
-  - Velocity variation: 0-30%
-
-**Hi-Hat Roll Generator Tool:**
-- Quickly create drum fills and rapid hi-hat patterns
-- **Density options**: 8th, 16th, 32nd, 64th notes
-- **Velocity modes**: Flat, Crescendo, Decrescendo
-- **Hi-hat types**: Closed, Open, Pedal
-
-**Sidechain Compression Effect:**
-- Classic EDM "pumping" effect - duck one channel based on another
-- Perfect for making bass duck when kick plays
-- **Presets**: Subtle (5dB), Normal (10dB), Heavy (15dB), Pumping (20dB)
-- Adjustable attack, release, ratio, and threshold
-
-### What's New in v2.6.0
-
-**Drum Synthesis Engine Overhaul** - Complete rewrite of drum sound generation for authentic 808/909 character:
-- **Kicks**: Proper pitch sweeps (150Hz → 45Hz) with exponential decay for that classic "thump"
-- **Snares**: Sharp "tsk" attack with 200Hz tonal body + LFSR noise burst
-- **Hi-Hats**: Metallic ring using inharmonic frequency ratios (1.0, 1.47, 1.83, 2.67)
-- **Toms**: Pitch envelope (180Hz → 100Hz) for authentic "bom" sound
-- **Technical**: Drums now manage their own phase increment for pitch control, bypassing ADSR
+See [CHANGELOG.md](CHANGELOG.md) for the full list, including the eleven
+bugs fixed in this release.
 
 ## Features
 
@@ -549,41 +420,32 @@ lfsr = (lfsr >> 1) | (feedback << 14);
 
 ## Roadmap
 
-- [x] Pattern sequencer (tracker-style)
-- [x] Piano roll editor
-- [x] Multiple channels/voices
-- [x] Envelope generators (ADSR)
-- [x] WAV export
-- [x] Project save/load
-- [x] Undo/Redo (50 levels)
-- [x] Copy/Paste with preview
-- [x] Box selection
-- [x] 26 drum sounds (including Reggaeton: Guira, Bongo, Timbale, Dembow 808, Dembow Snare)
-- [x] 18 synth presets (10 classic + 6 synthwave + 2 reggaeton)
-- [x] Supersaw oscillator (7 detuned saws)
-- [x] MP3 export (via LAME/FFmpeg)
-- [x] Visual themes (8 themes: Stock, Cyberpunk, Synthwave, Matrix, Frutiger Aero, Minimal, Vaporwave, Retro Terminal)
-- [x] Multi-note selection and drag
-- [x] Expandable sound palette with duration variants
-- [x] Sound preview on note placement
-- [x] Piano roll zoom controls
-- [x] High-DPI theme scaling (1440p, 4K support)
-- [x] Sample tracks (7 genres: Synthwave, Techno, Chiptune, Hip Hop, Trap, House, Reggaeton)
-- [x] Reggaeton instruments (bass, brass, drums)
-- [x] Per-note effects (Vibrato, Arpeggio, Portamento/Slide)
-- [x] Swing and humanize for groove feel
-- [x] Hi-hat roll generator tool
-- [x] Sidechain compression (classic EDM pumping)
-- [x] Pattern arrangement view with drag & drop
-- [x] Proper initial window layout (v2.7.0)
-- [x] Chord presets (45 chords across 8 genres: Pop, Jazz, Rock, EDM, Hip Hop, Reggaeton, Synthwave, Chiptune)
-- [x] Pattern deletion (Delete key + button)
-- [x] Tools Panel with 9 production tools (Drum Pattern Generator, Arpeggiator, Bass Pattern Generator, Scale Lock, Velocity Curve, Fill Generator, Pattern Variation, Quick Layer, Humanize)
-- [x] Reverb effect (Schroeder-style algorithmic with presets)
-- [x] Genre effect presets (auto-apply effects for sample tracks)
+The full plan lives in [docs/ROADMAP.md](docs/ROADMAP.md). The short version:
+
+**Done in 3.0**
+
+- [x] Instrument macros (volume, arpeggio, duty, pitch) with presets
+- [x] Project format v2 - saves the mix, arrangement and every effect
+- [x] Workspace layouts and a custom widget set
+- [x] Headless test suite (1112 checks)
+- [x] 4-bit volume quantisation
+- [x] Ten visual themes, applied to the editor as well as the chrome
+
+**Next**
+
+- [ ] Chip emulation modes - NES 2A03, Game Boy, C64 SID, AY-3-8910,
+      YM2612 - with a strict mode that enforces each chip's real limits
+- [ ] Authentic noise: white vs periodic LFSR and the NES's 16 noise periods
+- [ ] VGM export - the chiptune scene's interchange format
+- [ ] NSF export for real NES playback
+- [ ] Groove patterns (per-row speed lists) alongside the existing swing
+- [ ] Legato / tie notes and true tone portamento
+- [ ] Euclidean rhythm generator and a chord progression generator
+- [ ] Finish sample import - the loader exists, the playback path does not
+- [ ] MIDI import
+- [ ] Autosave and crash recovery
 - [ ] FLAC export
 - [ ] VST plugin version
-- [ ] MIDI import/export
 
 ## Contributing
 

@@ -30,6 +30,7 @@
 #include "Sequencer.h"
 #include "UI.h"
 #include "MacroEditorUI.h"
+#include "Version.h"
 #include "Layout.h"
 #include "Screenshot.h"
 
@@ -114,7 +115,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     HWND hwnd = CreateWindowExA(
         0,
         CLASS_NAME,
-        "Chiptune Tracker DAW v0.2",
+        ChiptuneTracker::windowTitle().c_str(),
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         captureRequest.enabled ? captureRequest.windowWidth : 1600,
@@ -234,6 +235,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     static ChiptuneTracker::Sequencer sequencer;
     printf("Sequencer created\n");
     ChiptuneTracker::UIState uiState;
+    bool showAboutDialog = false;
     ChiptuneTracker::PlaybackState playbackState;
 
     sequencer.setSampleRate(44100.0f);
@@ -447,11 +449,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             }
             if (ImGui::BeginMenu("Help")) {
                 if (ImGui::MenuItem("About")) {
-                    // TODO: Show about dialog
+                    showAboutDialog = true;
                 }
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
+        }
+
+        // About dialog
+        if (showAboutDialog) {
+            ImGui::OpenPopup("About ChiptuneTracker");
+            showAboutDialog = false;
+        }
+        ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("About ChiptuneTracker", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted(ChiptuneTracker::aboutText().c_str());
+            ImGui::Separator();
+            if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
 
         // ====================================================================

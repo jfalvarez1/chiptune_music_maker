@@ -1,0 +1,130 @@
+# Changelog
+
+All notable changes to ChiptuneTracker.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [3.0.0] — 2026-08-30 — "Macro"
+
+The release that makes this a chiptune tool rather than a synth that can
+play chiptune, and the release that makes it trustworthy: a headless test
+suite now covers 1112 assertions, and it found the bugs listed below.
+
+### Added
+
+- **Instrument macros.** Four step sequences per instrument — volume
+  (4-bit), arpeggio (relative or fixed per step), duty cycle and fine
+  pitch — each with its own loop and release point, advancing at a
+  configurable rate that defaults to the NES frame counter's 60 Hz. This
+  is how chip instruments are actually designed; an ADSR envelope is a
+  synthesiser idea. Eight ready-made instruments included: Pluck,
+  Sustained, Major/Minor Arp, Laser Zap, Vibrato Lead, Bass Stab, Octave
+  Echo.
+- **Macro editor** (`F4`). Drag across a bar graph to draw a sequence,
+  right-click an arpeggio step to make it fixed, with loop and release
+  markers drawn on the graph.
+- **Per-channel 4-bit volume quantisation.** Real chips had a 16-level
+  volume DAC, and that staircase is a genuine part of the character.
+- **Workspace layouts** (`Ctrl+0`, or View ▸ Workspace). Compose, Sound
+  Design and Mix. Computed from the display size, so panels tile instead
+  of overlapping and the layout scales from a laptop to an ultrawide.
+- **Custom widget set.** Knobs with a proper sweep and shift-for-fine,
+  level meters with peak hold, animated toggle switches, accent buttons.
+  The mixer is rebuilt around them, fed by new per-channel level metering.
+- **Two themes:** Game Boy DMG and Daylight, the first light theme.
+- **Screenshot capture.** `F12` writes the rendered frame; `--capture`
+  drives it from the command line with `--theme`, `--view`, `--show` and
+  `--demo`, so `tools/generate-gallery.ps1` can regenerate the README
+  gallery after any UI change.
+- **Headless test suite** (`ChiptuneTests`). 1112 checks over every
+  oscillator, note effect and channel effect at its parameter extremes,
+  polyphony overflow, sequencer and arrangement edge cases, save/load
+  round-trips, malformed project files, and both exporters.
+- **About dialog**, and a single source of version truth in `Version.h`.
+
+### Changed
+
+- **Project file format v2.** v1 stored seven fields per note and nothing
+  else. Saving a finished song kept the notes and silently discarded every
+  channel setting, all 21 per-channel effects, the entire arrangement, the
+  master bus, swing and groove, and all 19 per-note tracker effects. v2
+  stores all of it. v1 files still load, with fields they never had left
+  at their defaults, and re-saving upgrades them in place.
+- Save and load now walk the same field tables, so a setting cannot be
+  written but not read.
+- The spectrum analyzer, MIDI input, automation and wavetable panels are
+  opened from the View menu instead of being drawn unconditionally.
+- Tool windows are submitted after the main editor view, so they open in
+  front of it rather than behind it.
+- The piano roll takes its background, keys and grid from the active
+  theme. It was hardcoded, so the main editor looked identical under every
+  theme while only the window chrome changed.
+- Shared style metrics — padding, rounding, spacing — applied under every
+  theme.
+
+### Fixed
+
+- **Startup crash** (`STATUS_STACK_OVERFLOW`). `Flanger` held a
+  `std::array<float, 96000>` — 384 KB — by value for an effect that needs
+  at most 11 ms of delay. Eight of those inside a `Sequencer` on
+  `WinMain`'s stack overflowed the 1 MB limit before the first frame.
+- **Oscillator phase ran away above the sample rate.** The wrap subtracted
+  1.0 once, so any phase increment over 1.0 left the phase above 1 and it
+  grew every sample; PolyBLEP then squared it. An extreme pitch sweep
+  peaked at 2.4 × 10⁷ instead of ~1.0.
+- **The stereo widener never ran.** The effects chain deferred it to the
+  sequencer "for proper L/R handling" and the sequencer never did it.
+- **Sidechain never ran.** `sidechainSource` was never copied from the
+  channel config, and the sequencer skips the pass when it is unset.
+- **The filter envelope, EQ, compressor and formant filter never reached
+  the synth.** They were settable in the UI and by the genre presets, but
+  nothing copied them across. Channel config sync is now one code path.
+- **Instruments loaded back as `Pulse`.** `Vocoder`, `KavinskyBass`,
+  `Supersaw` and all seven reggaeton instruments were missing from the
+  save/load name tables.
+- **The compressor inverted and amplified** when given a threshold at or
+  below zero — the computed gain went negative.
+- **`exportWav()` crashed** on a zero or negative duration: a negative
+  float cast to `size_t` produced a colossal length inside `resize()`.
+- **A second MIDI export in one session emitted no program changes**, so
+  every instrument played back as piano. The tracking flag was a
+  function-local `static` that never reset.
+- **Project files were accepted with impossible values** — a BPM of 10³⁰,
+  a negative song length — which then reached the audio thread.
+  `ProjectValidation.h` now decides what a usable value is for every
+  field, on load.
+- `vendor/midifile` was committed as an embedded git repository, so a
+  fresh clone would not build.
+- Two new instruments, Vocoder and Kavinsky Bass, existed in the synth but
+  could not be selected. They now have a Recreations section in the sound
+  palette, with a `static_assert` keeping the palette index-aligned with
+  the oscillator enum.
+
+---
+
+## [2.16.0] — Wavetable Editor
+
+Visual waveform drawing, morphing between tables, save/load presets.
+
+## [2.15.0] — Parameter Automation
+
+Visual curve editor and per-channel automation lanes.
+
+## [2.14.0] — MIDI Input Recording
+
+Real-time MIDI keyboard input with Replace/Overdub modes and quantisation.
+
+## [2.13.0] — Spectrum Analyzer
+
+Real-time FFT frequency visualisation.
+
+## [2.12.0] — Master Bus Effects
+
+Limiter, glue compressor, EQ and LUFS metering with platform presets.
+
+## [2.11.0] — Stereo Widener and Tape Saturation
+
+## [2.10.0] — Reverb, Genre Effect Presets

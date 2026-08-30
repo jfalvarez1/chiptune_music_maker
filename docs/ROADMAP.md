@@ -1,7 +1,7 @@
 # ChiptuneTracker — Roadmap
 
 **Last updated:** 2026-08-30
-**Current version:** v2.16.0 (+ unreleased fixes on `main`)
+**Current version:** v3.0.0
 
 This is the living plan. It supersedes the point-in-time notes in
 `features_implementation_summary.md` and `implementation_plan.md`, which
@@ -23,9 +23,10 @@ than the older docs claim. Already **built and working**:
 | Master bus: EQ, glue compressor, brick-wall limiter, LUFS meter, platform presets | ✅ |
 | Spectrum analyzer (FFT), wavetable editor, parameter automation curves | ✅ |
 | MIDI export (GM mapped), MIDI input recording, voice-to-note tool | ✅ |
-| WAV export, undo/redo, scale snapping, 8 visual themes | ✅ |
+| WAV export, undo/redo, scale snapping, 10 visual themes | ✅ |
+| Instrument macros, workspace layouts, custom widgets, test suite | ✅ (3.0) |
 
-Recently **fixed** (unreleased):
+Fixed in **3.0** (see `CHANGELOG.md` for the full list):
 
 - Startup crash — `STATUS_STACK_OVERFLOW` from a 384 KB flanger delay line
   held by value across eight effect chains on `WinMain`'s stack.
@@ -62,7 +63,7 @@ drops data.
 - [x] **A1. Fix the startup stack overflow.**
 - [x] **A2. One channel-config sync path** so UI settings cannot go dead.
 - [x] **A3. Save/load name-table symmetry** for all 65 oscillators.
-- [ ] **A4. Headless test harness** (`ChiptuneTests` target). Exercises the
+- [x] **A4. Headless test harness** (`ChiptuneTests` target). Exercises the
       synth, sequencer, file I/O and exporters with no window. Must cover:
       - Every oscillator renders finite, in-range audio at the extremes of
         pitch (MIDI 0 and 127), velocity (0.0 and 1.0) and duration.
@@ -77,8 +78,8 @@ drops data.
       injects a NaN and asserts the mixer recovers rather than going silent.
 - [ ] **A6. Autosave and crash recovery.** Rolling autosave to a temp file;
       offer to restore on next launch.
-- [ ] **A7. Fix the `nul` file** and other stray artifacts committed to the
-      repo root; tighten `.gitignore`.
+- [x] **A7. Fix the `nul` file** and other stray artifacts in the repo
+      root; tighten `.gitignore`.
 
 ## Phase B — Chiptune authenticity (the differentiator)
 
@@ -86,7 +87,7 @@ Research across Furnace, FamiTracker/FamiStudio, ProTracker and the NES
 2A03 documentation points at one dominant gap: **this synth has ADSR
 envelopes where chiptune wants step macros.**
 
-- [ ] **B1. Instrument Macro System.** ⭐ The single highest-value feature.
+- [x] **B1. Instrument Macro System.** ⭐ The single highest-value feature.
       Per-instrument step sequences that advance on a tick, each with an
       optional loop point and release point:
       - Volume macro, arpeggio macro (with Furnace's per-step
@@ -106,7 +107,7 @@ envelopes where chiptune wants step macros.**
       A "strict mode" toggle enforces the limits; off, they are suggestions.
 - [ ] **B3. Authentic noise.** White vs periodic (metallic) LFSR modes and
       the NES's 16 discrete noise periods, not a continuous noise knob.
-- [ ] **B4. Volume quantization.** 4-bit (16-step) volume as a per-channel
+- [x] **B4. Volume quantization.** 4-bit (16-step) volume as a per-channel
       toggle — a surprisingly large part of why real chiptune sounds like
       chiptune.
 - [ ] **B5. Hardware envelope shapes** (AY-style) and the NES sweep unit
@@ -149,7 +150,7 @@ The theme system (8 themes with animated backgrounds) is a real asset and
 better than most trackers. The gap is that the *widgets* are stock ImGui
 inside beautifully themed windows.
 
-- [ ] **E1. Custom widget vocabulary.** Knobs, faders, meters and toggles
+- [x] **E1. Custom widget vocabulary.** Knobs, faders, meters and toggles
       drawn on the draw list, with gradient fills, inner shadow and a glow
       on the active element. This is what separates "an ImGui app" from
       "our app".
@@ -157,9 +158,10 @@ inside beautifully themed windows.
       assignments to a data-driven `ThemeSpec` (palette + accent + glow
       intensity + background effect + rounding), so a new theme is a
       struct literal rather than 40 lines of copy-paste.
-- [ ] **E3. New themes with real effects:** Game Boy DMG (4-shade green,
-      dot-matrix grid), Bubblegum Bass, Deep Sea (caustics), Solar Flare,
-      and a genuine light theme for daylight work.
+- [~] **E3. New themes with real effects.** Game Boy DMG (four-shade
+      green with a dot-matrix grid) and Daylight (the first light theme)
+      shipped in 3.0. Still wanted: Bubblegum Bass, Deep Sea (caustics),
+      Solar Flare.
 - [ ] **E4. Typography.** Ship a bitmap/pixel font for headers and a clean
       UI font for body text; stock ImGui font is the single biggest
       "unfinished" tell.
@@ -168,7 +170,7 @@ inside beautifully themed windows.
       that pulse in time with the BPM.
 - [ ] **E6. Command palette** (`Ctrl+P`) over every action, and a
       discoverable shortcut overlay (`?`).
-- [ ] **E7. Layout presets** — Compose / Mix / Sound Design workspaces,
+- [x] **E7. Layout presets** — Compose / Mix / Sound Design workspaces,
       plus per-user layout persistence beyond `imgui.ini`.
 - [ ] **E8. First-run onboarding** — a three-step overlay that gets a
       complete 8-bar loop playing in under a minute.
@@ -177,15 +179,15 @@ inside beautifully themed windows.
 
 ## Phase F — Release engineering
 
-- [ ] **F1. `CHANGELOG.md`** with real version history.
-- [ ] **F2. Versioning in one place** — a `Version.h` the About dialog,
+- [x] **F1. `CHANGELOG.md`** with real version history.
+- [x] **F2. Versioning in one place** — a `Version.h` the About dialog,
       window title and save-file header all read from.
-- [ ] **F3. About dialog** (currently a `TODO` in `main.cpp`).
+- [x] **F3. About dialog** (currently a `TODO` in `main.cpp`).
 - [ ] **F4. Packaged release** — zip with the exe, docs and demo projects;
       tagged in git.
 - [ ] **F5. Demo project pack** — one finished song per genre, which is
       also the best possible regression test.
-- [ ] **F6. Screenshot gallery for GitHub.** Once features are polished and
+- [x] **F6. Screenshot gallery for GitHub.** Once features are polished and
       tested, capture the app window per feature — piano roll, tracker
       view, arrangement, mixer, pad controller, wavetable editor,
       automation, spectrum analyzer, MIDI input, master effects, and each
