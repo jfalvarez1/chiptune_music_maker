@@ -6453,6 +6453,55 @@ static void testTutorial() {
               "deleting the drums afterwards does not un-complete the step");
     }
 
+    // ---- A restart is a restart -------------------------------------------
+    //
+    // The user restarted the lesson and found steps pre-completed. Two
+    // leaks: the has-played latch lived in a panel static that outlived the
+    // reset, and the old project's notes satisfied the early conditions.
+    // The first is pinned here; the second is the fresh-project rule in
+    // main.cpp, whose observable half - a fresh progress claims nothing -
+    // is pinned too.
+    {
+        TutorialProgress finished;
+        finished.active = true;
+        finished.step = 5;
+        finished.completedMask = 0x3F;
+        finished.hasPlayed = true;
+        finished.focusedStep = 5;
+
+        finished = TutorialProgress{};     // what StartTutorial does
+        finished.active = true;
+
+        check(finished.step == 0, "a restarted lesson is on step one");
+        check(finished.completedMask == 0, "with nothing marked done");
+        check(!finished.hasPlayed,
+              "and no memory of playback from the previous run - the latch "
+              "lives inside the progress precisely so a reset clears it");
+        check(finished.focusedStep < 0, "and re-raises the first step's window");
+
+        Project empty;
+        empty.patterns.clear();
+        empty.arrangement.clear();
+        TutorialContext context;
+        context.project = &empty;
+
+        // Step 0 is an Info step and reports advanceable by design - that
+        // is what Next means. The claim under test belongs on the first
+        // ACTION step: an empty project must not satisfy it.
+        int stepTotal = 0;
+        const TutorialStep* table = tutorialSteps(stepTotal);
+        for (int i = 0; i < stepTotal; ++i) {
+            if (table[i].kind == TutorialStepKind::Action) {
+                finished.step = i;
+                break;
+            }
+        }
+        check(!updateTutorial(finished, context),
+              "on an empty project a fresh lesson's first action step is "
+              "not already done");
+        check(finished.completedMask == 0, "and nothing is latched");
+    }
+
     // ---- Hygiene ----------------------------------------------------------
     {
         TutorialProgress progress;
@@ -6472,6 +6521,77 @@ static void testTutorial() {
         check(!progress.stepDone(-1) && !progress.stepDone(64),
               "out-of-range latch queries are safely false");
     }
+}
+
+// ============================================================================
+// 46. Play again after the end
+// ============================================================================
+static void testPlayFromEnd() {
+    beginTest("Play again after the end");
+
+    // The user's report, verbatim: "when the track finished playing and
+    // click on play again it doesnt, i have to click on stop even though
+    // theres nothing playing". The playhead parks at the end; play() must
+    // rewind rather than let the first block re-stop itself.
+
+    Project p;
+    p.bpm = 240.0f;                     // short beats, fast test
+    p.masterLimiterEnabled = false;
+    p.patterns.clear();
+    p.arrangement.clear();
+
+    Pattern pat;
+    Note n;
+    n.pitch = 69;
+    n.startTime = 0.0f;
+    n.duration = 1.0f;
+    n.oscillatorType = OscillatorType::Pulse;
+    pat.notes.push_back(n);
+    p.patterns.push_back(pat);
+    p.arrangement.push_back(Clip{0, 0, 0.0f, 2.0f, 0});
+
+    auto seqPtr = std::make_unique<Sequencer>();
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&p);
+    seq.setLoopEnabled(false);
+    seq.play();
+
+    // Run to the end. With no preview pattern the content window falls
+    // back to the fixed 16-beat loop end, so the stop lands at beat 16 -
+    // 4 seconds at 240 BPM, about 350 blocks.
+    std::vector<float> l(512), r(512);
+    for (int b = 0; b < 420 && seq.isPlaying(); ++b) {
+        seq.process(l.data(), r.data(), 512);
+    }
+    check(!seq.isPlaying(), "non-looping playback stops at the end");
+    check(seq.getCurrentBeat() > 15.9f, "with the playhead parked there");
+
+    // The bug: this second play() used to die inside its first block.
+    seq.play();
+    double energy = 0.0;
+    for (int b = 0; b < 10; ++b) {
+        seq.process(l.data(), r.data(), 512);
+        for (float v : l) energy += double(v) * double(v);
+    }
+    check(seq.isPlaying(),
+          "pressing play at the end starts playback instead of instantly "
+          "re-stopping");
+    check(energy > 0.01,
+          "and it is audible from the top, with no STOP press required "
+          "(energy " + std::to_string(energy) + ")");
+
+    // Pausing mid-song must still resume from the pause point, not the top.
+    seq.stop();
+    seq.play();
+    for (int b = 0; b < 10; ++b) seq.process(l.data(), r.data(), 512);
+    seq.pause();
+    const float pausedAt = seq.getCurrentBeat();
+    check(pausedAt > 0.05f && pausedAt < 15.9f, "paused somewhere mid-song");
+    seq.play();
+    check(std::fabs(seq.getCurrentBeat() - pausedAt) < 0.05f,
+          "play after pause resumes where it paused - the rewind is only "
+          "for a playhead parked at the very end");
 }
 
 // ============================================================================
@@ -6559,6 +6679,7 @@ int main(int argc, char** argv) {
     testGroovePresets();
     testVersionCoherence();
     testTutorial();
+    testPlayFromEnd();
     testLongRunStability();
 
     std::printf("\n==========================\n");

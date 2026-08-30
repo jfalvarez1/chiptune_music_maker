@@ -13841,13 +13841,11 @@ inline void DrawTutorialPanel(Project& project, UIState& ui,
                               bool isPlaying, bool loopRangeActive) {
     if (!g_Tutorial.active) return;
 
-    // "Has pressed play" is an event, not a state the project remembers.
-    static bool hasPlayedLatch = false;
-    if (isPlaying) hasPlayedLatch = true;
+    if (isPlaying) g_Tutorial.hasPlayed = true;
 
     TutorialContext context;
     context.project = &project;
-    context.hasPlayed = hasPlayedLatch;
+    context.hasPlayed = g_Tutorial.hasPlayed;
     context.loopRangeActive = loopRangeActive;
     context.projectSaved = !ui.projectFilePath.empty();
 
@@ -13862,12 +13860,11 @@ inline void DrawTutorialPanel(Project& project, UIState& ui,
     const TutorialStep& step = steps[g_Tutorial.step];
 
     // Raise the window a step points at, once per step.
-    static int lastFocusedStep = -1;
-    if (lastFocusedStep != g_Tutorial.step) {
+    if (g_Tutorial.focusedStep != g_Tutorial.step) {
         if (step.focusWindow != nullptr) {
             ImGui::SetWindowFocus(step.focusWindow);
         }
-        lastFocusedStep = g_Tutorial.step;
+        g_Tutorial.focusedStep = g_Tutorial.step;
     }
 
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 420.0f, 60.0f),
@@ -13929,7 +13926,7 @@ inline void DrawTutorialPanel(Project& project, UIState& ui,
         if (g_Tutorial.step > 0) {
             if (ImGui::Button("Back")) {
                 --g_Tutorial.step;
-                lastFocusedStep = -1;
+                g_Tutorial.focusedStep = -1;
             }
             ImGui::SameLine();
         }
@@ -13941,7 +13938,7 @@ inline void DrawTutorialPanel(Project& project, UIState& ui,
                     g_Tutorial.active = false;
                 } else {
                     ++g_Tutorial.step;
-                    lastFocusedStep = -1;
+                    g_Tutorial.focusedStep = -1;
                 }
             }
         } else {
@@ -13951,7 +13948,7 @@ inline void DrawTutorialPanel(Project& project, UIState& ui,
                     g_Tutorial.active = false;
                 } else {
                     ++g_Tutorial.step;
-                    lastFocusedStep = -1;
+                    g_Tutorial.focusedStep = -1;
                 }
             }
             if (ImGui::IsItemHovered()) {

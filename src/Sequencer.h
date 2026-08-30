@@ -69,6 +69,17 @@ public:
             m_state.currentBeat = clampStartBeat(m_state.currentBeat,
                                                  currentLoopWindow(), true);
             m_state.currentTime = beatToTime(m_state.currentBeat);
+        } else {
+            // Non-looping playback stops with the playhead parked exactly
+            // at the end. Without this, pressing PLAY there set isPlaying
+            // and the first audio block immediately stopped it again - the
+            // user had to press STOP first, with nothing playing that STOP
+            // could plausibly be for. Play at the end means from the top.
+            const LoopWindow window = currentLoopWindow();
+            if (window.valid && m_state.currentBeat >= window.end - 1e-4f) {
+                m_state.currentBeat = 0.0f;
+                m_state.currentTime = 0.0f;
+            }
         }
         m_state.isPlaying = true;
     }

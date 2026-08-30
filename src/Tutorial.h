@@ -194,6 +194,16 @@ struct TutorialProgress {
     int step = 0;
     uint32_t completedMask = 0;
 
+    // "Has pressed play" is an event, latched here rather than in a static
+    // in the panel - a restart must reset it, and state a reset must clear
+    // may not live outside the thing being reset. That static was exactly
+    // how a finished step leaked into the next run of the lesson.
+    bool hasPlayed = false;
+
+    // Which step last pulled window focus, so each step raises its window
+    // once. Lives here for the same reason.
+    int focusedStep = -1;
+
     bool stepDone(int index) const {
         if (index < 0 || index > 31) return false;
         return (completedMask & (1u << index)) != 0;

@@ -294,6 +294,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
 
     bool showWelcome = false;
 
+    // Starting the lesson means starting a genuinely fresh project - its
+    // conditions read the live project, so leftover notes from the last
+    // session would tick "draw a melody" before the user drew anything.
+    // Undoable, so a mis-click costs nothing.
+    auto startFreshLesson = [&](ChiptuneTracker::Project& proj,
+                                ChiptuneTracker::UIState& ui,
+                                ChiptuneTracker::Sequencer& seq) {
+        ChiptuneTracker::g_UndoHistory.saveState(proj, "Start Lesson");
+        proj = ChiptuneTracker::Project();
+        ui.projectFilePath.clear();          // the save step must gate again
+        ui.selectedPattern = 0;
+        ui.selectedNoteIndex = -1;
+        ui.selectedNoteIndices.clear();
+        seq.setProject(&proj);
+        seq.updateChannelConfigs();
+        seq.setBPM(proj.bpm);
+        ChiptuneTracker::StartTutorial();
+    };
+
     const bool actLikeRealSession = !captureRequest.enabled || captureRequest.keepSavedLayout;
 
     // A returning user gets the focus they chose last time, and is not asked
@@ -443,6 +462,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 if (ImGui::MenuItem("New Project")) {
                     ChiptuneTracker::g_UndoHistory.saveState(project, "New Project");
                     project = ChiptuneTracker::Project();
+                    // Or Ctrl+S on the new song silently overwrites the old
+                    // song's file - and the lesson's save step never gates.
+                    uiState.projectFilePath.clear();
                     sequencer.setProject(&project);
                 }
 
@@ -633,7 +655,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             }
             if (ImGui::BeginMenu("Help")) {
                 if (ImGui::MenuItem("Lesson: make your first track")) {
-                    ChiptuneTracker::StartTutorial();
+                    startFreshLesson(project, uiState, sequencer);
                 }
                 if (ImGui::MenuItem("Welcome screen...")) {
                     // The first-run question, re-askable. One stray click on
@@ -877,12 +899,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 // A starting point already arrives in the right key and
                 // tempo, so the two options do not fight over the project.
                 if (startLesson) {
-                    // The lesson's whole point is building it yourself, so
-                    // it starts from the empty project the goals assume.
-                    // Not exclusive with the tempo-and-key option, though -
-                    // the else-if chain accidentally made it so, and a
-                    // chiptune lesson snapped to C major instead of A minor.
-                    ChiptuneTracker::StartTutorial();
+                    // A fresh project, not just a fresh lesson: conditions
+                    // read the live project, and leftover notes from last
+                    // session would pre-complete the early steps.
+                    startFreshLesson(project, uiState, sequencer);
                     if (applyDefaults && chosen != ChiptuneTracker::Genre::Everything) {
                         const ChiptuneTracker::GenreProfile& profile =
                             ChiptuneTracker::genreProfile(chosen);
