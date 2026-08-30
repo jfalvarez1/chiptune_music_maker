@@ -389,7 +389,15 @@ audit of this codebase, which is reproducible by anyone with `grep`.
       controls. We currently maintain `Envelope` and `InstrumentMacros` as
       separate parallel concepts. [verified — Furnace docs]
 
-- [ ] **G10. Surface the groove tools we already have.** Beginners do not
+- [x] **G10. Surface the groove tools we already have.** Feel presets -
+      Machine, Tight, Loose, Swung, Hard Swing, Lofi Drag - in the Master
+      Bus groove section, each one click and each only setting the sliders
+      beneath it. Fixing it exposed the real bug: `applySwing` and
+      `applyHumanize` were called only in the pattern-preview path, so the
+      Swing slider had never once affected a song played from the
+      arrangement. Both now apply there, with a regression test measuring
+      the onset of an off-beat note. Original wording follows for the
+      record. Beginners do not
       lack drum patterns — they cannot diagnose stiffness. `swing`,
       `humanize`, `humanizeAmount` and `humanizeVelocity` all exist on
       `Project` and are buried in a collapsing header. Audible presets

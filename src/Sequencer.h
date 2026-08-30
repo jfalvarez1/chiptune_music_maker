@@ -530,16 +530,31 @@ private:
                 for (int t = 0; t < triggerCount; ++t) {
                     const NoteTrigger& trigger = triggers[t];
 
+                    // Swing, which the arrangement path never applied: the
+                    // slider moved a value only the pattern preview read, so
+                    // a song played from the timeline was always straight.
+                    // applySwing is periodic in the grid, so absolute beats
+                    // are fine. The hit moves; its length does not, or a
+                    // swung note would also be a shorter one.
+                    const float swungStart = applySwing(trigger.startBeat);
+                    const float swungEnd = swungStart +
+                        (trigger.endBeat - trigger.startBeat);
+
                     // Note on
-                    if (trigger.startBeat >= fromBeat && trigger.startBeat < toBeat) {
+                    if (swungStart >= fromBeat && swungStart < toBeat) {
                         // Convert fade times from beats to seconds
                         float fadeInSec = beatsToSeconds(note.fadeIn);
                         float fadeOutSec = beatsToSeconds(note.fadeOut);
                         float durationSec =
                             beatsToSeconds(trigger.endBeat - trigger.startBeat);
 
+                        // Humanize was preview-only for the same reason.
+                        float startTime = m_state.currentTime;
+                        float velocity = trigger.velocity;
+                        applyHumanize(startTime, velocity);
+
                         m_synths[clip.channelIndex].noteOn(
-                            soundingPitch, trigger.velocity, m_state.currentTime,
+                            soundingPitch, velocity, startTime,
                             fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
                             note.vibrato, note.arpeggio, note.slide,
                             note.dutyCycle, note.useDutyCycle,
@@ -548,7 +563,7 @@ private:
                     }
 
                     // Note off
-                    if (trigger.endBeat >= fromBeat && trigger.endBeat < toBeat) {
+                    if (swungEnd >= fromBeat && swungEnd < toBeat) {
                         m_synths[clip.channelIndex].noteOff(
                             soundingPitch, m_state.currentTime);
                     }

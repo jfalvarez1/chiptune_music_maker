@@ -34,6 +34,7 @@
 #include "Templates.h"
 #include "GenreKits.h"
 #include "NextStep.h"
+#include "GroovePresets.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -6063,6 +6064,179 @@ static void testClipTranspose() {
 }
 
 // ============================================================================
+// 43. Groove presets, and swing reaching the arrangement
+// ============================================================================
+static void testGroovePresets() {
+    beginTest("Groove presets");
+
+    // ---- The presets themselves -------------------------------------------
+    {
+        int count = 0;
+        const GroovePreset* presets = groovePresets(count);
+        check(count >= 4, "there are enough presets to be worth having");
+
+        for (int i = 0; i < count; ++i) {
+            const GroovePreset& preset = presets[i];
+            if (preset.name == nullptr || preset.description == nullptr ||
+                preset.description[0] == '\0') {
+                check(false, "a preset lacks a name or description"); break;
+            }
+            if (preset.swing < 0.0f || preset.swing > 1.0f ||
+                preset.humanizeAmount < 0.0f || preset.humanizeAmount > 0.1f ||
+                preset.humanizeVelocity < 0.0f || preset.humanizeVelocity > 0.5f) {
+                check(false, std::string(preset.name) + " has unusable values");
+                break;
+            }
+        }
+        check(true, "every preset is named, described, and in range");
+
+        // Two presets that set identical values would be indistinguishable
+        // and matchGroovePreset could only ever report one of them.
+        bool distinct = true;
+        for (int a = 0; a < count && distinct; ++a) {
+            for (int b = a + 1; b < count; ++b) {
+                Project pa, pb;
+                applyGroovePreset(pa, presets[a]);
+                applyGroovePreset(pb, presets[b]);
+                if (std::fabs(pa.swing - pb.swing) < 1e-6f &&
+                    std::fabs(pa.swingGrid - pb.swingGrid) < 1e-6f &&
+                    pa.humanize == pb.humanize &&
+                    std::fabs(pa.humanizeAmount - pb.humanizeAmount) < 1e-6f) {
+                    check(false, std::string(presets[a].name) + " and " +
+                          presets[b].name + " are identical");
+                    distinct = false;
+                    break;
+                }
+            }
+        }
+        check(distinct, "no two presets set the same feel");
+
+        // Applying then matching must round-trip, or the highlight lies.
+        for (int i = 0; i < count; ++i) {
+            Project project;
+            applyGroovePreset(project, presets[i]);
+            if (matchGroovePreset(project) != i) {
+                check(false, std::string(presets[i].name) +
+                      " does not match itself after being applied (got " +
+                      std::to_string(matchGroovePreset(project)) + ")");
+                break;
+            }
+        }
+        check(true, "every preset matches itself after being applied");
+
+        // Moving a slider off the preset must unmatch it.
+        Project custom;
+        applyGroovePreset(custom, presets[0]);
+        custom.swing = 0.123f;
+        check(matchGroovePreset(custom) < 0,
+              "hand-moved sliders read as custom, so the highlight is honest");
+    }
+
+    // ---- Swing reaches the arrangement ------------------------------------
+    //
+    // The bug this fixed: applySwing was called only in the pattern preview,
+    // so the Swing slider never changed a song played from the timeline. The
+    // test plays an off-beat note from the ARRANGEMENT and measures when its
+    // audio actually starts.
+    {
+        auto onsetSample = [](float swing) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.swing = swing;
+            p.swingGrid = 0.5f;
+            p.humanize = false;              // isolate the swing
+            p.patterns.clear();
+            p.arrangement.clear();
+
+            Pattern pat;
+            Note n;
+            n.pitch = 69;
+            n.startTime = 0.5f;              // an off-beat 8th - what swing moves
+            n.duration = 1.0f;
+            n.oscillatorType = OscillatorType::Pulse;
+            pat.notes.push_back(n);
+            p.patterns.push_back(pat);
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            Sequencer& seq = *seqPtr;
+            seq.setSampleRate(44100.0f);
+            seq.setProject(&p);
+            seq.updateChannelConfigs();
+            seq.play();
+
+            std::vector<float> out, l(512), r(512);
+            for (int b = 0; b < 60; ++b) {
+                seq.process(l.data(), r.data(), 512);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            for (size_t i = 0; i < out.size(); ++i) {
+                if (std::fabs(out[i]) > 0.01f) return static_cast<int>(i);
+            }
+            return -1;
+        };
+
+        const int straight = onsetSample(0.0f);
+        const int swung = onsetSample(0.8f);
+
+        check(straight > 0, "the off-beat note sounds at all (onset " +
+              std::to_string(straight) + ")");
+        check(swung > straight + 1000,
+              "with heavy swing the note starts audibly later when played "
+              "from the ARRANGEMENT - the slider was preview-only before "
+              "(straight onset " + std::to_string(straight) + ", swung " +
+              std::to_string(swung) + ")");
+
+        // A note ON the beat must not move - swing displaces off-beats only.
+        auto onbeatOnset = [&](float swing) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.swing = swing;
+            p.swingGrid = 0.5f;
+            p.humanize = false;
+            p.patterns.clear();
+            p.arrangement.clear();
+
+            Pattern pat;
+            Note n;
+            n.pitch = 69;
+            n.startTime = 1.0f;              // squarely on the beat
+            n.duration = 1.0f;
+            n.oscillatorType = OscillatorType::Pulse;
+            pat.notes.push_back(n);
+            p.patterns.push_back(pat);
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            Sequencer& seq = *seqPtr;
+            seq.setSampleRate(44100.0f);
+            seq.setProject(&p);
+            seq.updateChannelConfigs();
+            seq.play();
+
+            std::vector<float> out, l(512), r(512);
+            for (int b = 0; b < 120; ++b) {
+                seq.process(l.data(), r.data(), 512);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            for (size_t i = 0; i < out.size(); ++i) {
+                if (std::fabs(out[i]) > 0.01f) return static_cast<int>(i);
+            }
+            return -1;
+        };
+
+        const int onbeatStraight = onbeatOnset(0.0f);
+        const int onbeatSwung = onbeatOnset(0.8f);
+        check(std::abs(onbeatSwung - onbeatStraight) < 500,
+              "a note on the beat does not move - swing displaces only the "
+              "off-beats (straight " + std::to_string(onbeatStraight) +
+              ", swung " + std::to_string(onbeatSwung) + ")");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -6144,6 +6318,7 @@ int main(int argc, char** argv) {
     testGenreKits();
     testNextStep();
     testClipTranspose();
+    testGroovePresets();
     testLongRunStability();
 
     std::printf("\n==========================\n");

@@ -24,6 +24,7 @@
 #include "Templates.h"
 #include "NextStep.h"
 #include "GenreKits.h"
+#include "GroovePresets.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -5216,6 +5217,43 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
     }
 
     if (ImGui::CollapsingHeader("Groove", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // ------------------------------------------------------------------
+        // Feel presets
+        //
+        // The research finding these answer: nobody asks how to program a
+        // beat - they ask why theirs feels mechanical and cannot pinpoint
+        // what everyone else has. These are named answers. Each only sets
+        // the sliders below, so a preset is a starting point, not a mode.
+        // ------------------------------------------------------------------
+        {
+            int presetCount = 0;
+            const GroovePreset* presets = groovePresets(presetCount);
+            const int active = matchGroovePreset(project);
+
+            for (int i = 0; i < presetCount; ++i) {
+                if (i % 3 != 0) ImGui::SameLine();
+
+                const bool isActive = (i == active);
+                if (isActive) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,
+                        ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                }
+                if (ImGui::Button(presets[i].name, ImVec2(92, 24))) {
+                    g_UndoHistory.saveState(project, "Groove Preset");
+                    applyGroovePreset(project, presets[i]);
+                }
+                if (isActive) ImGui::PopStyleColor();
+
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", presets[i].description);
+                }
+            }
+            if (active < 0) {
+                ImGui::TextDisabled("(custom - the sliders below are yours)");
+            }
+        }
+        ImGui::Separator();
+
         // Row 4: Swing/Groove settings
         ImGui::Text("Swing:");
         ImGui::SameLine();
