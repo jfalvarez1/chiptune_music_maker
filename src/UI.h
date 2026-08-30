@@ -18,6 +18,7 @@
 #include "Snap.h"
 #include "Scales.h"
 #include "NoteTransforms.h"
+#include "GhostNotes.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -5550,6 +5551,38 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                           "[ and ] step through the divisions.");
     }
 
+    // Ghost notes. A pattern only has neighbours once it is on the timeline,
+    // because a channel is bound by the clip and not by the pattern - so the
+    // toggle says why it has nothing to show rather than appearing broken.
+    ImGui::SameLine();
+    {
+        bool ghostsOn = ui.showGhostNotes;
+        if (ImGui::Checkbox("Ghosts", &ghostsOn)) {
+            ui.showGhostNotes = ghostsOn;
+        }
+        if (ImGui::IsItemHovered()) {
+            const size_t ghostCount =
+                collectGhostNotes(project, ui.selectedPattern).size();
+            bool placed = false;
+            for (const Clip& clip : project.arrangement) {
+                if (clip.patternIndex == ui.selectedPattern) { placed = true; break; }
+            }
+
+            if (!placed) {
+                ImGui::SetTooltip(
+                    "Show what the other channels play here (Alt+V).\n\n"
+                    "This pattern is not on the timeline yet, so it has no\n"
+                    "neighbours to show - a channel is decided by the clip\n"
+                    "that places a pattern, not by the pattern itself.");
+            } else {
+                ImGui::SetTooltip(
+                    "Show what the other channels play here (Alt+V).\n"
+                    "%zu note(s) from other channels overlap this pattern.",
+                    ghostCount);
+            }
+        }
+    }
+
     // Zoom controls
     ImGui::SameLine(0, 15);
     ImGui::Text("Zoom:");
@@ -6110,6 +6143,39 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     }
 
     // ========================================================================
+    // Cross-channel ghost notes
+    //
+    // What the other channels are playing while this pattern plays, drawn
+    // faintly in their own channel colour. Off by default; Alt+V toggles.
+    // Drawn before the real notes so it can never sit on top of them.
+    // ========================================================================
+    if (ui.showGhostNotes) {
+        const std::vector<GhostNote> ghosts =
+            collectGhostNotes(project, ui.selectedPattern);
+
+        for (const GhostNote& ghost : ghosts) {
+            if (ghost.pitch < lowestNote || ghost.pitch >= highestNote) continue;
+
+            const float gx = canvasPos.x + keyWidth + ghost.startTime * beatWidth - ui.scrollX;
+            const float gy = canvasPos.y + (highestNote - ghost.pitch - 1) * noteHeight - ui.scrollY;
+            const float gw = ghost.duration * beatWidth;
+
+            if (gx + gw < canvasPos.x + keyWidth || gx > canvasPos.x + canvasSize.x) continue;
+            if (gy + noteHeight < canvasPos.y || gy > canvasPos.y + effectiveCanvasHeight) continue;
+
+            const ImU32 base = CHANNEL_COLORS[ghost.channelIndex & 7];
+            drawList->AddRectFilled(
+                ImVec2(std::max(gx + 1, canvasPos.x + keyWidth), gy + 2),
+                ImVec2(gx + gw - 1, gy + noteHeight - 2),
+                widgets::withAlpha(base, 0.20f), 2.0f);
+            drawList->AddRect(
+                ImVec2(std::max(gx + 1, canvasPos.x + keyWidth), gy + 2),
+                ImVec2(gx + gw - 1, gy + noteHeight - 2),
+                widgets::withAlpha(base, 0.45f), 2.0f);
+        }
+    }
+
+    // ========================================================================
     // Draw notes with selection highlight and fade indicators
     // ========================================================================
     for (size_t i = 0; i < pattern.notes.size(); ++i) {
@@ -6460,6 +6526,11 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 ui.selectedNoteIndex = -1;
                 ui.selectedNoteIndices.clear();
             }
+        }
+
+        // Alt+V shows what the other channels are playing underneath.
+        if (ImGui::GetIO().KeyAlt && ImGui::IsKeyPressed(ImGuiKey_V)) {
+            ui.showGhostNotes = !ui.showGhostNotes;
         }
 
         // ---- Transpose -------------------------------------------------

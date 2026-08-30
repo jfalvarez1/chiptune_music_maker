@@ -26,6 +26,7 @@
 #include "NoteEvents.h"
 #include "Scales.h"
 #include "NoteTransforms.h"
+#include "GhostNotes.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -4054,6 +4055,193 @@ static void testScalesAndTransforms() {
 }
 
 // ============================================================================
+// 32. Cross-channel ghost notes
+// ============================================================================
+static void testGhostNotes() {
+    beginTest("Cross-channel ghost notes");
+
+    // A Pattern has no channel and neither does a Note - a channel is bound
+    // only when a Clip places a pattern on the timeline. So "what the other
+    // channels are playing" is a question about the arrangement, and it has
+    // no answer until the pattern has been placed. These tests pin that down,
+    // because the alternative is a feature that silently shows nothing.
+
+    auto makeProject = []() {
+        Project p;
+        p.patterns.clear();
+
+        // Pattern 0: the one being edited, two notes.
+        Pattern lead;
+        for (int i = 0; i < 2; ++i) {
+            Note n; n.pitch = 72 + i; n.startTime = float(i); n.duration = 1.0f;
+            lead.notes.push_back(n);
+        }
+        p.patterns.push_back(lead);
+
+        // Pattern 1: a bassline, three notes.
+        Pattern bass;
+        for (int i = 0; i < 3; ++i) {
+            Note n; n.pitch = 40 + i; n.startTime = float(i); n.duration = 0.5f;
+            bass.notes.push_back(n);
+        }
+        p.patterns.push_back(bass);
+
+        p.arrangement.clear();
+        return p;
+    };
+
+    // ---- A pattern that is not on the timeline has no neighbours ---------
+    {
+        Project p = makeProject();
+        check(collectGhostNotes(p, 0).empty(),
+              "an unplaced pattern yields no ghosts rather than inventing some");
+    }
+
+    // ---- Nonsense indices ------------------------------------------------
+    {
+        Project p = makeProject();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        check(collectGhostNotes(p, -1).empty(), "a negative pattern index is safe");
+        check(collectGhostNotes(p, 99).empty(), "an out-of-range pattern index is safe");
+    }
+
+    // ---- The basic case --------------------------------------------------
+    {
+        Project p = makeProject();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});   // lead on ch 0
+        p.arrangement.push_back(Clip{1, 3, 0.0f, 4.0f, 0});   // bass on ch 3
+
+        const std::vector<GhostNote> ghosts = collectGhostNotes(p, 0);
+        check(ghosts.size() == 3,
+              "the bassline's three notes show as ghosts (got " +
+              std::to_string(ghosts.size()) + ")");
+        check(ghosts[0].pitch == 40, "ghost pitches come from the other pattern");
+        check(ghosts[0].channelIndex == 3,
+              "each ghost remembers its channel, so it can be drawn in that colour");
+    }
+
+    // ---- A clip on the same channel is not a neighbour -------------------
+    {
+        Project p = makeProject();
+        p.arrangement.push_back(Clip{0, 2, 0.0f, 4.0f, 0});
+        p.arrangement.push_back(Clip{1, 2, 0.0f, 4.0f, 0});   // same channel
+
+        check(collectGhostNotes(p, 0).empty(),
+              "a clip on the same channel cannot sound at the same time, so it "
+              "is not something to write against");
+    }
+
+    // ---- Clips elsewhere in the song are not neighbours ------------------
+    {
+        Project p = makeProject();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p.arrangement.push_back(Clip{1, 3, 64.0f, 4.0f, 0});  // far later
+
+        check(collectGhostNotes(p, 0).empty(),
+              "a clip that does not overlap in time contributes no ghosts");
+    }
+
+    // ---- Offsets are translated into the edited pattern's timebase -------
+    //
+    // The piano roll draws in pattern-local beats, so a neighbouring clip
+    // that starts two beats later has to have its notes shifted, or the
+    // ghosts would line up with the wrong beat and be actively misleading.
+    {
+        Project p = makeProject();
+        p.arrangement.push_back(Clip{0, 0, 8.0f, 4.0f, 0});   // lead at beat 8
+        p.arrangement.push_back(Clip{1, 3, 10.0f, 4.0f, 0});  // bass at beat 10
+
+        const std::vector<GhostNote> ghosts = collectGhostNotes(p, 0);
+        check(!ghosts.empty(), "the overlapping clip produces ghosts");
+        check(std::fabs(ghosts[0].startTime - 2.0f) < 1e-5f,
+              "a neighbour starting two beats later is drawn two beats in (got " +
+              std::to_string(ghosts[0].startTime) + ")");
+    }
+
+    // ---- A neighbour that begins earlier reads as negative ---------------
+    {
+        Project p = makeProject();
+        p.arrangement.push_back(Clip{0, 0, 8.0f, 4.0f, 0});
+        // 7.75, not 7.5: the bass notes are half a beat long, so at 7.5 the
+        // first one would end exactly on beat 0 and be correctly discarded as
+        // having no visible extent. That would test the filter, not the offset.
+        p.arrangement.push_back(Clip{1, 3, 7.75f, 4.0f, 0});  // starts earlier
+
+        const std::vector<GhostNote> ghosts = collectGhostNotes(p, 0);
+        check(!ghosts.empty(), "an earlier-starting neighbour still overlaps");
+        check(ghosts[0].startTime < 0.0f,
+              "a note that began before this pattern did has a negative position, "
+              "rather than being clamped onto beat zero");
+    }
+
+    // ---- Notes outside the visible window are dropped --------------------
+    {
+        Project p = makeProject();
+        Pattern late;
+        Note n; n.pitch = 50; n.startTime = 30.0f; n.duration = 1.0f;
+        late.notes.push_back(n);
+        p.patterns.push_back(late);                           // pattern 2
+
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p.arrangement.push_back(Clip{2, 3, 0.0f, 40.0f, 0});  // overlaps, but
+                                                              // its note is at 30
+        check(collectGhostNotes(p, 0).empty(),
+              "a note past the end of the edited window is not collected");
+    }
+
+    // ---- The result is bounded -------------------------------------------
+    //
+    // A dense song could otherwise build thousands of ghosts every frame.
+    {
+        Project p;
+        p.patterns.clear();
+        p.patterns.push_back(Pattern());          // pattern 0, edited
+
+        Pattern crowded;
+        for (int i = 0; i < 200; ++i) {
+            Note n; n.pitch = 40 + (i % 30); n.startTime = float(i) * 0.01f;
+            n.duration = 0.1f;
+            crowded.notes.push_back(n);
+        }
+        p.patterns.push_back(crowded);
+
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 16.0f, 0});
+        for (int ch = 1; ch < 8; ++ch) {
+            p.arrangement.push_back(Clip{1, ch, 0.0f, 16.0f, 0});
+        }
+
+        const std::vector<GhostNote> ghosts = collectGhostNotes(p, 0, 64);
+        check(ghosts.size() <= 64,
+              "the ghost list respects its cap (got " +
+              std::to_string(ghosts.size()) + ")");
+        check(!ghosts.empty(), "and still returns something useful");
+    }
+
+    // ---- Only the first placement counts ---------------------------------
+    //
+    // A pattern used in three places has three sets of neighbours. Drawing
+    // all of them at once would be a pile of overlapping ghosts, so the
+    // first placement wins.
+    {
+        Project p = makeProject();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p.arrangement.push_back(Clip{0, 0, 16.0f, 4.0f, 0});  // same pattern again
+        p.arrangement.push_back(Clip{1, 3, 0.0f, 4.0f, 0});   // neighbour of the first
+        p.arrangement.push_back(Clip{1, 4, 16.0f, 4.0f, 0});  // neighbour of the second
+
+        const std::vector<GhostNote> ghosts = collectGhostNotes(p, 0);
+        for (const GhostNote& ghost : ghosts) {
+            if (ghost.channelIndex == 4) {
+                check(false, "ghosts leaked in from a second placement of the pattern");
+                break;
+            }
+        }
+        check(true, "only the first placement's neighbours are shown");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -4124,6 +4312,7 @@ int main(int argc, char** argv) {
     testNoteExpansion();
     testLoopAndEffectsReachAudio();
     testScalesAndTransforms();
+    testGhostNotes();
     testLongRunStability();
 
     std::printf("\n==========================\n");

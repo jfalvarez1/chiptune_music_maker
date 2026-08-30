@@ -162,6 +162,9 @@ struct CaptureRequest {
 
     // Grid snap division by name, so a shot can show triplets selected.
     std::string snapName;
+
+    // Show the other channels' notes behind the edited pattern.
+    bool showGhostNotes = false;
 };
 
 // Parses the flags this app understands and ignores anything else.
@@ -174,6 +177,7 @@ struct CaptureRequest {
 //   --show <name>        macros|spectrum|midi   (repeatable)
 //   --loop <a> <b>       set a loop range on the arrangement ruler
 //   --snap <name>        off|bar|1/2|1/4|1/8|1/16|1/32|1/4T|1/8T|1/16T
+//   --ghosts             show cross-channel ghost notes
 //   --frames <n>         frames to render before capturing
 //   --size <w> <h>       window size
 //   --demo               populate a short demo song first
@@ -208,6 +212,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             }
         } else if (arg == "--snap") {
             next(request.snapName);
+        } else if (arg == "--ghosts") {
+            request.showGhostNotes = true;
         } else if (arg == "--select") {
             request.selectNotes = true;
         } else if (arg == "--playing") {
@@ -262,6 +268,8 @@ inline void applyCaptureState(const CaptureRequest& request,
             break;
         }
     }
+
+    if (request.showGhostNotes) ui.showGhostNotes = true;
 
     // --- Grid snap ---
     if (!request.snapName.empty()) {
@@ -332,12 +340,14 @@ inline void applyCaptureState(const CaptureRequest& request,
         project.bpm = 140.0f;
         project.patterns.clear();
 
-        Pattern pattern;
-        pattern.name = "Demo";
-        pattern.length = 16;
-
-        auto addNote = [&](int pitch, float start, float duration,
-                           OscillatorType osc, float velocity) {
+        // One pattern per part, each on its own channel. This used to be a
+        // single pattern holding the lead, the bass and the drums together,
+        // placed on four channels - so every channel played everything,
+        // which is not how the program is used and made the arrangement
+        // screenshot meaningless. It also hid the ghost notes, since every
+        // ghost sat exactly behind its own real note.
+        auto addNote = [](Pattern& pattern, int pitch, float start,
+                          float duration, OscillatorType osc, float velocity) {
             Note note;
             note.pitch = pitch;
             note.startTime = start;
@@ -348,32 +358,59 @@ inline void applyCaptureState(const CaptureRequest& request,
         };
 
         // Lead - a rising then falling arpeggio figure
+        Pattern lead;
+        lead.name = "Lead";
+        lead.length = 16;
         const int leadPitches[] = {72, 76, 79, 84, 79, 76, 72, 69};
         for (int i = 0; i < 8; ++i) {
-            addNote(leadPitches[i], float(i) * 0.5f, 0.45f,
+            addNote(lead, leadPitches[i], float(i) * 0.5f, 0.45f,
                     OscillatorType::SynthwaveLead, 0.85f);
         }
 
+        // Harmony - a counter-line a third under the lead, on its own
+        // channel. This is the case ghost notes exist for: writing one part
+        // against another that lives in the same register, where the piano
+        // roll can only show you one of them at a time.
+        Pattern harmony;
+        harmony.name = "Harmony";
+        harmony.length = 16;
+        const int harmonyPitches[] = {67, 72, 76, 79, 76, 72, 67, 64};
+        for (int i = 0; i < 8; ++i) {
+            addNote(harmony, harmonyPitches[i], float(i) * 0.5f, 0.45f,
+                    OscillatorType::Pulse, 0.7f);
+        }
+
         // Bass - root notes on the beat
+        Pattern bass;
+        bass.name = "Bass";
+        bass.length = 16;
         const int bassPitches[] = {36, 36, 43, 41};
         for (int i = 0; i < 4; ++i) {
-            addNote(bassPitches[i], float(i), 0.9f, OscillatorType::SynthBass, 0.9f);
+            addNote(bass, bassPitches[i], float(i), 0.9f,
+                    OscillatorType::SynthBass, 0.9f);
         }
 
         // Drums - kick on the beat, hats on the offbeat, snare on 2 and 4
+        Pattern drums;
+        drums.name = "Drums";
+        drums.length = 16;
         for (int i = 0; i < 4; ++i) {
-            addNote(36, float(i), 0.25f, OscillatorType::Kick808, 1.0f);
-            addNote(42, float(i) + 0.5f, 0.15f, OscillatorType::HiHat, 0.5f);
+            addNote(drums, 36, float(i), 0.25f, OscillatorType::Kick808, 1.0f);
+            addNote(drums, 42, float(i) + 0.5f, 0.15f, OscillatorType::HiHat, 0.5f);
         }
-        addNote(38, 1.0f, 0.25f, OscillatorType::Snare, 0.9f);
-        addNote(38, 3.0f, 0.25f, OscillatorType::Snare, 0.9f);
+        addNote(drums, 38, 1.0f, 0.25f, OscillatorType::Snare, 0.9f);
+        addNote(drums, 38, 3.0f, 0.25f, OscillatorType::Snare, 0.9f);
 
-        project.patterns.push_back(pattern);
+        project.patterns.push_back(lead);
+        project.patterns.push_back(harmony);
+        project.patterns.push_back(bass);
+        project.patterns.push_back(drums);
 
         project.arrangement.clear();
-        for (int ch = 0; ch < 4; ++ch) {
-            project.arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0xFF4488FFu});
-        }
+        project.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0xFF4488FFu});
+        project.arrangement.push_back(Clip{1, 1, 0.0f, 4.0f, 0xFFAA66FFu});
+        project.arrangement.push_back(Clip{2, 2, 0.0f, 4.0f, 0xFF44CC88u});
+        project.arrangement.push_back(Clip{3, 4, 0.0f, 4.0f, 0xFFCC6644u});
 
         // Give the first channel a macro so the macro editor screenshot has
         // something in it

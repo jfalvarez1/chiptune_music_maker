@@ -1223,6 +1223,10 @@ struct UIState {
     // the old behaviour exactly, so nothing changes until the user asks.
     SnapDivision snapDivision = DEFAULT_SNAP;
 
+    // Show the other channels' notes faintly behind the edited pattern.
+    // Off by default: this audience self-selects for a quiet screen.
+    bool showGhostNotes = false;
+
     // Loop range being dragged on the timeline ruler.
     bool isDraggingLoopRange = false;
     float loopDragAnchorBeat = 0.0f;

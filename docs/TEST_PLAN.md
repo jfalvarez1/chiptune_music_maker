@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**1883 checks across 31 groups.** Exit code 0 = pass, 1 = failure, and every
+**1899 checks across 32 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -84,6 +84,7 @@ failure names the field or parameter involved.
 | Note expansion | A plain note is one hit; delay shifts it; cut shortens it; retrigger produces evenly spaced hits and none rings past the note's end; echoes decay and stop once inaudible; a pathological note cannot exceed the fixed buffer; a zero interval or a null buffer is refused. |
 | Loop and effects in the audio | Delay silences the start, cut kills the tail, echo sounds past the note's end, retrigger adds dips to the RMS envelope, pitch sweep changes the signal, and a loop range limits how far the playhead travels. |
 | Scales and transforms | Every pitch snaps into every scale; transpose preserves the intervals inside a chord; safe mode skips unplayable results instead of clamping them; bad selection indices are ignored rather than crashed on; probability is stable for a given note and pass, varies across passes, is independent between notes on the same beat, survives save/load, and renders silence at zero. |
+| Ghost notes | An unplaced pattern yields nothing rather than inventing neighbours; a clip on the same channel is not a neighbour; a clip elsewhere in the song is not one either; offsets translate into the edited pattern timebase, including negative ones; notes outside the window are dropped; the list is capped; only the first placement of a repeated pattern contributes. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 
@@ -94,7 +95,7 @@ This drives the app's `--capture` mode through the combinations a person
 would otherwise click through by hand.
 
 ```powershell
-./tools/ui-smoke-test.ps1            # 30 cases
+./tools/ui-smoke-test.ps1            # 31 cases
 ./tools/ui-smoke-test.ps1 -Quick     # 12 cases, for a fast loop
 ```
 

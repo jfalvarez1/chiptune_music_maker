@@ -101,6 +101,11 @@ foreach ($panel in $panels) {
     args = "--demo --view pianoroll --snap 1/8T"
 })
 
+[void]$cases.Add(@{
+    name = "pianoroll-ghost-notes"
+    args = "--demo --view pianoroll --ghosts"
+})
+
 # working directory with the broken ini staged into it.
 [void]$cases.Add(@{
     name     = "legacy-layout-repair"

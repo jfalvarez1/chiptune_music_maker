@@ -297,7 +297,7 @@ audit of this codebase, which is reproducible by anyone with `grep`.
       Pair it with the output filter chain (90 Hz HP, 440 Hz HP, 14 kHz LP)
       and a stepped 4-bit triangle. [verified — NESdev]
 
-- [ ] **G3. Cross-channel ghost notes.** Draw the other channels' notes into
+- [x] **G3. Cross-channel ghost notes.** Draw the other channels' notes into
       the current piano roll at low alpha in their channel colour. For
       eight-channel chiptune, where a bass is constantly written against a
       lead you cannot see, this matters more than it does in a 60-track DAW.
