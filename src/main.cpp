@@ -326,6 +326,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // rather than depending on someone clicking the right menus.
     if (captureRequest.enabled) {
         ChiptuneTracker::applyCaptureState(captureRequest, project, uiState);
+
+        // A loop range needs the sequencer, so it is applied here rather than
+        // in applyCaptureState, which only sees the project and the UI state.
+        if (captureRequest.loopStart >= 0.0f &&
+            captureRequest.loopEnd > captureRequest.loopStart) {
+            sequencer.setLoopRange(captureRequest.loopStart, captureRequest.loopEnd);
+            sequencer.setLoopEnabled(true);
+        }
         // The demo song is built after setProject(), so the synths need
         // re-syncing before anything is rendered or heard.
         sequencer.updateChannelConfigs();
@@ -369,6 +377,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
+
+        // Apply any undo/redo requested last frame. This has to happen here,
+        // before a single draw call runs: restoring a snapshot rebuilds
+        // project.patterns, and the drawing code holds a Pattern& into that
+        // vector for the whole frame.
+        ChiptuneTracker::ApplyPendingHistory(project, uiState, sequencer);
+
+        // Undo and redo work anywhere, not only when the piano roll has
+        // focus. Both this and the piano roll set the same request flag, and
+        // ApplyPendingHistory consumes it once, so they cannot double-apply.
+        if (!ImGui::GetIO().WantTextInput) {
+            const bool ctrlHeld = ImGui::GetIO().KeyCtrl;
+            if (ctrlHeld && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+                ChiptuneTracker::RequestUndo();
+            }
+            if (ctrlHeld && ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
+                ChiptuneTracker::RequestRedo();
+            }
+        }
 
         // Draw theme background effects (Matrix rain, Synthwave chasers, etc.)
         ChiptuneTracker::DrawThemeBackground(uiState.currentTheme, io.DeltaTime);
@@ -419,8 +446,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
-                if (ImGui::MenuItem("Undo", "Ctrl+Z")) {}
-                if (ImGui::MenuItem("Redo", "Ctrl+Y")) {}
+                // These were both no-ops: `if (ImGui::MenuItem("Undo")) {}`.
+                // Naming the action makes the menu say what pressing it undoes.
+                char historyLabel[96];
+
+                const bool canUndo = ChiptuneTracker::g_UndoHistory.canUndo();
+                snprintf(historyLabel, sizeof(historyLabel), "Undo %s",
+                         canUndo ? ChiptuneTracker::g_UndoHistory.undoLabel() : "");
+                if (ImGui::MenuItem(historyLabel, "Ctrl+Z", false, canUndo)) {
+                    ChiptuneTracker::RequestUndo();
+                }
+
+                const bool canRedo = ChiptuneTracker::g_UndoHistory.canRedo();
+                snprintf(historyLabel, sizeof(historyLabel), "Redo %s",
+                         canRedo ? ChiptuneTracker::g_UndoHistory.redoLabel() : "");
+                if (ImGui::MenuItem(historyLabel, "Ctrl+Y", false, canRedo)) {
+                    ChiptuneTracker::RequestRedo();
+                }
+
+                ImGui::Separator();
+                ImGui::TextDisabled("%zu undo, %zu redo",
+                                    ChiptuneTracker::g_UndoHistory.undoDepth(),
+                                    ChiptuneTracker::g_UndoHistory.redoDepth());
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {

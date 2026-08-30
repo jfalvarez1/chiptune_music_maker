@@ -8,6 +8,8 @@
  */
 
 #include "Types.h"
+#include "LoopRange.h"
+#include "NoteEvents.h"
 #include "Synthesizer.h"
 #include "MasterEffects.h"
 #include "SpectrumAnalyzer.h"
@@ -59,6 +61,14 @@ public:
     // Transport Controls
     // ========================================================================
     void play() {
+        // Starting outside the loop range would run silently until the
+        // playhead happened to wander in. Pressing play should always
+        // audibly do something.
+        if (m_state.loop) {
+            m_state.currentBeat = clampStartBeat(m_state.currentBeat,
+                                                 currentLoopWindow(), true);
+            m_state.currentTime = beatToTime(m_state.currentBeat);
+        }
         m_state.isPlaying = true;
     }
 
@@ -87,6 +97,26 @@ public:
 
     void setLoopEnabled(bool enabled) {
         m_state.loop = enabled;
+    }
+
+    // A range drawn on the arrangement ruler. Anything shorter than
+    // MIN_LOOP_BEATS is a mis-drag rather than an intent to loop, and would
+    // spin the playhead at audio rate, so it does not take.
+    void setLoopRange(float start, float end) {
+        m_state.loopStart = start;
+        m_state.loopEnd = end;
+        m_state.loopRangeActive = (end - start) >= MIN_LOOP_BEATS;
+    }
+
+    void clearLoopRange() {
+        m_state.loopRangeActive = false;
+    }
+
+    // The span playback actually repeats over: the user's range if they drew
+    // one, otherwise the extent of the content, which is the old behaviour.
+    LoopWindow currentLoopWindow() const {
+        return resolveLoopWindow(m_state.loopRangeActive, m_state.loopStart,
+                                 m_state.loopEnd, getPatternEndTime());
     }
 
     void setBPM(float bpm) {
@@ -124,19 +154,21 @@ public:
                 m_state.currentBeat += beatsPerSample;
                 m_state.currentTime += 1.0f / m_sampleRate;
 
-                // Get the actual end time based on notes in the pattern
-                float effectiveEnd = getPatternEndTime();
+                // The span to repeat: the user's range if they drew one on
+                // the ruler, otherwise the extent of the content.
+                const LoopWindow window = currentLoopWindow();
 
-                // Handle looping or stop at end of last note
-                if (m_state.currentBeat >= effectiveEnd && effectiveEnd > 0.0f) {
+                if (window.valid && m_state.currentBeat >= window.end) {
                     if (m_state.loop) {
-                        // Loop back to start
-                        m_state.currentBeat = m_state.loopStart;
+                        // wrapIntoWindow rather than a bare assignment: a long
+                        // block, or a range shortened mid-playback, can leave
+                        // the playhead more than one window past the end.
+                        m_state.currentBeat = wrapIntoWindow(m_state.currentBeat, window);
                         allNotesOff();
                     } else {
-                        // Stop playback when last note ends
+                        // Stop playback when the last note ends
                         m_state.isPlaying = false;
-                        m_state.currentBeat = effectiveEnd;
+                        m_state.currentBeat = window.end;
                         allNotesOff();
                     }
                 }
@@ -392,37 +424,51 @@ private:
 
             const auto& pattern = m_project->patterns[clip.patternIndex];
 
-            // Check if this clip is active in current beat range
+            // Check if this clip is active in current beat range.
+            //
+            // The tail margin lets a note's echo repeats ring out past the
+            // clip boundary instead of being cut off by the gate below; each
+            // trigger still checks its own start and end, so widening this
+            // cannot make anything sound early.
+            constexpr float CLIP_TAIL_MARGIN = 8.0f;
             float clipEnd = clip.startBeat + clip.lengthBeats;
-            if (toBeat < clip.startBeat || fromBeat > clipEnd) {
+            if (toBeat < clip.startBeat || fromBeat > clipEnd + CLIP_TAIL_MARGIN) {
                 continue;
             }
 
             // Process notes in this pattern
             for (const auto& note : pattern.notes) {
-                float noteAbsStart = clip.startBeat + note.startTime;
-                float noteAbsEnd = noteAbsStart + note.duration;
+                // One note is not necessarily one sound: note delay, note cut,
+                // retrigger and echo expand it into a list of hits.
+                NoteTrigger triggers[MAX_NOTE_TRIGGERS];
+                const int triggerCount =
+                    expandNote(note, clip.startBeat, triggers, MAX_NOTE_TRIGGERS);
 
-                // Note on
-                if (noteAbsStart >= fromBeat && noteAbsStart < toBeat) {
-                    // Convert fade times from beats to seconds
-                    float fadeInSec = beatsToSeconds(note.fadeIn);
-                    float fadeOutSec = beatsToSeconds(note.fadeOut);
-                    float durationSec = beatsToSeconds(note.duration);
+                for (int t = 0; t < triggerCount; ++t) {
+                    const NoteTrigger& trigger = triggers[t];
 
-                    m_synths[clip.channelIndex].noteOn(
-                        note.pitch, note.velocity, m_state.currentTime,
-                        fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
-                        note.vibrato, note.arpeggio, note.slide,
-                        note.dutyCycle, note.useDutyCycle,
-                        note.sweepDirection, note.sweepSpeed, note.sweepAmount,
-                        note.tremolo, note.tremoloSpeed);
-                }
+                    // Note on
+                    if (trigger.startBeat >= fromBeat && trigger.startBeat < toBeat) {
+                        // Convert fade times from beats to seconds
+                        float fadeInSec = beatsToSeconds(note.fadeIn);
+                        float fadeOutSec = beatsToSeconds(note.fadeOut);
+                        float durationSec =
+                            beatsToSeconds(trigger.endBeat - trigger.startBeat);
 
-                // Note off
-                if (noteAbsEnd >= fromBeat && noteAbsEnd < toBeat) {
-                    m_synths[clip.channelIndex].noteOff(
-                        note.pitch, m_state.currentTime);
+                        m_synths[clip.channelIndex].noteOn(
+                            note.pitch, trigger.velocity, m_state.currentTime,
+                            fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
+                            note.vibrato, note.arpeggio, note.slide,
+                            note.dutyCycle, note.useDutyCycle,
+                            note.sweepDirection, note.sweepSpeed, note.sweepAmount,
+                            note.tremolo, note.tremoloSpeed);
+                    }
+
+                    // Note off
+                    if (trigger.endBeat >= fromBeat && trigger.endBeat < toBeat) {
+                        m_synths[clip.channelIndex].noteOff(
+                            note.pitch, m_state.currentTime);
+                    }
                 }
             }
         }
@@ -433,26 +479,21 @@ private:
 
             const auto& pattern = m_project->patterns[m_previewPattern];
 
-            // Use actual note extent for loop length, not fixed pattern.length
-            // This ensures notes placed beyond the original pattern boundary still play
-            float actualNoteExtent = getPatternEndTime();
-            float loopLength = (actualNoteExtent > 0.0f) ? actualNoteExtent : static_cast<float>(pattern.length);
+            // process() already folds currentBeat into the loop window, so
+            // the beat handed here is always inside it. The old fmod here
+            // assumed the window started at 0 and would misplace every note
+            // once a user range began anywhere else.
+            const LoopWindow window = currentLoopWindow();
+            const float localFrom = fromBeat;
+            const float localTo = toBeat;
 
-            // Wrap beat position for pattern preview (only when looping)
-            float localFrom, localTo;
-            if (m_state.loop && loopLength > 0.0f) {
-                localFrom = std::fmod(fromBeat, loopLength);
-                localTo = std::fmod(toBeat, loopLength);
-            } else {
-                // Non-looping: use raw beat positions so notes beyond original length play
-                localFrom = fromBeat;
-                localTo = toBeat;
-            }
-
-            // Handle wrap-around
+            // A wrap happened between these two samples: play the tail of the
+            // window and then the head, so nothing is dropped at the seam.
             if (localTo < localFrom) {
-                processPatternNotes(pattern, localFrom, loopLength);
-                processPatternNotes(pattern, 0.0f, localTo);
+                processPatternNotes(pattern, localFrom,
+                                    window.valid ? window.end : localFrom);
+                processPatternNotes(pattern,
+                                    window.valid ? window.start : 0.0f, localTo);
             } else {
                 processPatternNotes(pattern, localFrom, localTo);
             }
@@ -461,34 +502,44 @@ private:
 
     void processPatternNotes(const Pattern& pattern, float fromBeat, float toBeat) {
         for (const auto& note : pattern.notes) {
-            // Apply swing to note start time
-            float swungStart = applySwing(note.startTime);
+            NoteTrigger triggers[MAX_NOTE_TRIGGERS];
+            const int triggerCount =
+                expandNote(note, 0.0f, triggers, MAX_NOTE_TRIGGERS);
 
-            // Note on
-            if (swungStart >= fromBeat && swungStart < toBeat) {
-                // Convert fade times from beats to seconds
-                float fadeInSec = beatsToSeconds(note.fadeIn);
-                float fadeOutSec = beatsToSeconds(note.fadeOut);
-                float durationSec = beatsToSeconds(note.duration);
+            for (int t = 0; t < triggerCount; ++t) {
+                const NoteTrigger& trigger = triggers[t];
 
-                // Apply humanize
-                float startTime = m_state.currentTime;
-                float velocity = note.velocity;
-                applyHumanize(startTime, velocity);
+                // Swing displaces the hit, but must not change how long it
+                // lasts, or a swung note would also be a shorter one.
+                const float swungStart = applySwing(trigger.startBeat);
+                const float held = trigger.endBeat - trigger.startBeat;
 
-                m_synths[m_previewChannel].noteOn(
-                    note.pitch, velocity, startTime,
-                    fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
-                    note.vibrato, note.arpeggio, note.slide,
-                    note.dutyCycle, note.useDutyCycle,
-                    note.sweepDirection, note.sweepSpeed, note.sweepAmount,
-                    note.tremolo, note.tremoloSpeed);
-            }
+                // Note on
+                if (swungStart >= fromBeat && swungStart < toBeat) {
+                    // Convert fade times from beats to seconds
+                    float fadeInSec = beatsToSeconds(note.fadeIn);
+                    float fadeOutSec = beatsToSeconds(note.fadeOut);
+                    float durationSec = beatsToSeconds(held);
 
-            // Note off (also swing the end time)
-            float noteEnd = applySwing(note.startTime) + note.duration;
-            if (noteEnd >= fromBeat && noteEnd < toBeat) {
-                m_synths[m_previewChannel].noteOff(note.pitch, m_state.currentTime);
+                    // Apply humanize
+                    float startTime = m_state.currentTime;
+                    float velocity = trigger.velocity;
+                    applyHumanize(startTime, velocity);
+
+                    m_synths[m_previewChannel].noteOn(
+                        note.pitch, velocity, startTime,
+                        fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
+                        note.vibrato, note.arpeggio, note.slide,
+                        note.dutyCycle, note.useDutyCycle,
+                        note.sweepDirection, note.sweepSpeed, note.sweepAmount,
+                        note.tremolo, note.tremoloSpeed);
+                }
+
+                // Note off (also swing the end time)
+                const float swungEnd = swungStart + held;
+                if (swungEnd >= fromBeat && swungEnd < toBeat) {
+                    m_synths[m_previewChannel].noteOff(note.pitch, m_state.currentTime);
+                }
             }
         }
     }

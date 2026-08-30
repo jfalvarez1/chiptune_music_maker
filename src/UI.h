@@ -13,6 +13,9 @@
 
 #include "imgui.h"
 #include "Types.h"
+#include "UndoHistory.h"
+#include "LoopRange.h"
+#include "Snap.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -2482,7 +2485,25 @@ static bool g_PaletteExpanded_HouseTracks = false;
 static bool g_PaletteExpanded_ReggaetonTracks = false;
 
 // Global undo/redo history
+// Holding Alt drops to no snap for one gesture, which is how a note gets
+// placed deliberately off the grid without changing the setting.
+inline SnapDivision effectiveSnap(const UIState& ui) {
+    return ImGui::GetIO().KeyAlt ? SnapDivision::Off : ui.snapDivision;
+}
+
 static UndoHistory g_UndoHistory;
+
+// Undo restores the whole project, which rebuilds project.patterns - and
+// DrawPianoRoll holds a Pattern& into that vector for the length of the
+// frame. So the keypress only records the intent; main.cpp calls
+// ApplyPendingHistory() at the top of the next frame, before any reference
+// is taken. Applying it inline would dangle that reference.
+static bool g_UndoRequested = false;
+static bool g_RedoRequested = false;
+
+inline void RequestUndo() { g_UndoRequested = true; }
+inline void RequestRedo() { g_RedoRequested = true; }
+inline bool HasPendingHistoryRequest() { return g_UndoRequested || g_RedoRequested; }
 
 // ============================================================================
 // Theme System
@@ -5499,6 +5520,25 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::DragInt("Length", &pattern.length, 1, 1, 9999);  // Essentially unlimited
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pattern length in beats (auto-extends as you add notes)");
 
+    // Grid snap. This was hardcoded to a 1/16 note everywhere, which made
+    // triplets - and so shuffle and 6/8 - impossible to write.
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(72);
+    if (ImGui::BeginCombo("Snap", snapLabel(ui.snapDivision))) {
+        for (int i = 0; i < static_cast<int>(SnapDivision::Count); ++i) {
+            const SnapDivision division = static_cast<SnapDivision>(i);
+            if (ImGui::Selectable(snapLabel(division), division == ui.snapDivision)) {
+                ui.snapDivision = division;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Grid snap.\n"
+                          "Hold Alt to place off the grid for one gesture.\n"
+                          "[ and ] step through the divisions.");
+    }
+
     // Zoom controls
     ImGui::SameLine(0, 15);
     ImGui::Text("Zoom:");
@@ -5616,7 +5656,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     if (ImGui::Button("Paste")) {
         if (!g_NoteClipboard.empty()) {
             // Save state for undo
-            g_UndoHistory.saveState(pattern, ui.selectedPattern);
+            g_UndoHistory.saveState(project, "Paste Notes");
 
             float pasteTime = std::fmod(seq.getCurrentBeat(), static_cast<float>(pattern.length));
             ui.selectedNoteIndices.clear();
@@ -5644,7 +5684,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     if (!hasAnySelection) ImGui::BeginDisabled();
     if (ImGui::Button("Delete")) {
         // Save state for undo
-        g_UndoHistory.saveState(pattern, ui.selectedPattern);
+        g_UndoHistory.saveState(project, "Delete Notes");
 
         // Collect indices to delete
         std::vector<int> indicesToDelete;
@@ -5818,7 +5858,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         // Generate button
         if (ImGui::Button("Generate Roll", ImVec2(140, 30))) {
             // Save state for undo
-            g_UndoHistory.saveState(pattern, ui.selectedPattern);
+            g_UndoHistory.saveState(project, "Generate Drum Roll");
 
             // Determine oscillator type
             OscillatorType hatOsc = OscillatorType::HiHat;
@@ -6127,7 +6167,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         float ghostRelX = mousePos.x - canvasPos.x - keyWidth + ui.scrollX;
         float ghostRelY = mousePos.y - canvasPos.y + ui.scrollY;
         int ghostBaseNote = highestNote - 1 - static_cast<int>(ghostRelY / noteHeight);
-        float ghostBaseBeat = std::floor(ghostRelX / beatWidth * 4.0f) / 4.0f;  // Snap to 1/4 beat
+        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project.beatsPerMeasure);  // Snap to 1/4 beat
 
         // Calculate pitch offset from clipboard base
         int pitchOffset = ghostBaseNote - g_ClipboardBasePitch;
@@ -6179,7 +6219,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         ImVec2 mousePos = ImGui::GetMousePos();
         float ghostRelX = mousePos.x - canvasPos.x - keyWidth + ui.scrollX;
         float ghostRelY = mousePos.y - canvasPos.y + ui.scrollY;
-        float ghostBaseBeat = std::floor(ghostRelX / beatWidth * 4.0f) / 4.0f;  // Snap to 1/4 beat
+        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project.beatsPerMeasure);  // Snap to 1/4 beat
         if (ghostBaseBeat < 0) ghostBaseBeat = 0;
 
         // Draw each ghost note from the pattern
@@ -6230,7 +6270,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         // Calculate mouse position for ghost notes
         ImVec2 mousePos = ImGui::GetMousePos();
         float ghostRelX = mousePos.x - canvasPos.x - keyWidth + ui.scrollX;
-        float ghostBaseBeat = std::floor(ghostRelX / beatWidth * 4.0f) / 4.0f;  // Snap to 1/4 beat
+        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project.beatsPerMeasure);  // Snap to 1/4 beat
         if (ghostBaseBeat < 0) ghostBaseBeat = 0;
 
         // Draw each ghost note from the sample track
@@ -6317,7 +6357,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
             if (hasNotesToDelete) {
                 // Save state for undo before deleting
-                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                g_UndoHistory.saveState(project, "Delete Notes");
 
                 if (!ui.selectedNoteIndices.empty()) {
                     // Sort indices in descending order to delete from end first
@@ -6352,24 +6392,22 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             }
         }
 
-        // Undo (Ctrl+Z)
+        // [ and ] step the grid division, the way every tracker does it
+        if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) {
+            ui.snapDivision = cycleSnap(ui.snapDivision, -1);
+        }
+        if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_RightBracket)) {
+            ui.snapDivision = cycleSnap(ui.snapDivision, 1);
+        }
+
+        // Undo (Ctrl+Z) - queued, see RequestUndo
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-            if (g_UndoHistory.canUndo()) {
-                PatternSnapshot snapshot = g_UndoHistory.undo(pattern, ui.selectedPattern);
-                pattern.notes = snapshot.notes;
-                ui.selectedNoteIndex = -1;
-                ui.selectedNoteIndices.clear();
-            }
+            RequestUndo();
         }
 
         // Redo (Ctrl+Y)
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) {
-            if (g_UndoHistory.canRedo()) {
-                PatternSnapshot snapshot = g_UndoHistory.redo(pattern, ui.selectedPattern);
-                pattern.notes = snapshot.notes;
-                ui.selectedNoteIndex = -1;
-                ui.selectedNoteIndices.clear();
-            }
+            RequestRedo();
         }
 
         // Copy (Ctrl+C) - supports multiple selection
@@ -6430,7 +6468,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
             if (!indicesToCut.empty()) {
                 // Save state for undo before cutting
-                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                g_UndoHistory.saveState(project, "Cut Notes");
 
                 // Find the earliest start time and lowest pitch for relative positioning
                 float minTime = std::numeric_limits<float>::max();
@@ -6495,7 +6533,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             if (relX >= 0 && droppedNote >= lowestNote && droppedNote < highestNote) {
                 Note newNote;
                 newNote.pitch = std::clamp(droppedNote, lowestNote, highestNote - 1);
-                newNote.startTime = std::floor(droppedBeat * 4.0f) / 4.0f;
+                newNote.startTime = snapBeat(droppedBeat, effectiveSnap(ui), project.beatsPerMeasure);
                 newNote.oscillatorType = static_cast<OscillatorType>(oscType);  // Per-note oscillator
 
                 // Drums auto-adjust duration based on BPM and selected duration variant
@@ -6559,10 +6597,10 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             // Left click places the notes
             if (ImGui::IsMouseClicked(0) && relX >= 0) {
                 // Save state for undo
-                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                g_UndoHistory.saveState(project, "Paste Notes");
 
                 // Calculate placement position
-                float placeBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                float placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
                 int pitchOffset = hoveredNote - g_ClipboardBasePitch;
 
                 // Clear selection and prepare to select pasted notes
@@ -6615,10 +6653,10 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             // Left click places the pattern
             if (ImGui::IsMouseClicked(0) && relX >= 0) {
                 // Save state for undo
-                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                g_UndoHistory.saveState(project, "Place Drum Pattern");
 
                 // Calculate placement position (snap to 1/4 beat)
-                float placeBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                float placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
                 if (placeBeat < 0) placeBeat = 0;
 
                 // Clear selection and prepare to select placed notes
@@ -6666,7 +6704,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             // Left click places the sample track
             if (ImGui::IsMouseClicked(0) && relX >= 0) {
                 // Save state for undo
-                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                g_UndoHistory.saveState(project, "Place Sample Track");
 
                 // Calculate placement position
                 float placeBeat;
@@ -6675,7 +6713,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                     placeBeat = 0.0f;
                 } else {
                     // Relative position tracks snap to 1/4 beat based on mouse position
-                    placeBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                    placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
                     if (placeBeat < 0) placeBeat = 0;
                 }
 
@@ -7096,7 +7134,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
                         if (onResizeHandle && !isDrumNote) {
                             // Save state for undo before resizing (drums can't resize)
-                            g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                            g_UndoHistory.saveState(project, "Resize Note");
 
                             if (isPartOfMultiSelection && ui.selectedNoteIndices.size() > 1) {
                                 // Start multi-resize: resize all selected notes
@@ -7162,14 +7200,14 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 case PianoRollMode::Draw:
                     {
                         // Save state for undo before adding note
-                        g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                        g_UndoHistory.saveState(project, "Draw Note");
 
                         // Check if a chord is selected
                         if (g_SelectedChordIndex >= 0 && g_SelectedChordIndex < g_NumChordPresets) {
                             // Place chord notes
                             const ChordPreset& chord = g_ChordPresets[g_SelectedChordIndex];
                             int rootPitch = std::clamp(hoveredNote, lowestNote, highestNote - chord.intervals[chord.noteCount - 1]);
-                            float startTime = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                            float startTime = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
 
                             ui.selectedNoteIndices.clear();
 
@@ -7201,7 +7239,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                             // Single note mode (original behavior)
                             Note newNote;
                             newNote.pitch = std::clamp(hoveredNote, lowestNote, highestNote - 1);
-                            newNote.startTime = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                            newNote.startTime = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
 
                             // Use selected palette item's oscillator type if one is selected
                             if (g_SelectedPaletteItem >= 0) {
@@ -7237,7 +7275,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 case PianoRollMode::Erase:
                     if (noteUnderCursor >= 0) {
                         // Save state for undo before erasing
-                        g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                        g_UndoHistory.saveState(project, "Erase Note");
 
                         pattern.notes.erase(pattern.notes.begin() + noteUnderCursor);
                         if (ui.selectedNoteIndex == noteUnderCursor) {
@@ -7260,13 +7298,13 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
             if (ui.isPendingDrag && dragDist > UIState::DRAG_THRESHOLD) {
                 // Convert pending drag to actual drag
-                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                g_UndoHistory.saveState(project, "Move Note");
                 ui.isPendingDrag = false;
                 ui.isDraggingNote = true;
             }
             if (ui.isPendingMultiDrag && dragDist > UIState::DRAG_THRESHOLD) {
                 // Convert pending multi-drag to actual multi-drag
-                g_UndoHistory.saveState(pattern, ui.selectedPattern);
+                g_UndoHistory.saveState(project, "Move Notes");
                 ui.isPendingMultiDrag = false;
                 ui.isDraggingMultiple = true;
             }
@@ -7274,14 +7312,14 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             if (ui.isDraggingNote && ui.selectedNoteIndex >= 0) {
                 // Single note drag
                 Note& note = pattern.notes[ui.selectedNoteIndex];
-                float newBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                float newBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
                 int newPitch = std::clamp(hoveredNote, lowestNote, highestNote - 1);
                 note.startTime = std::max(0.0f, newBeat);
                 note.pitch = newPitch;
             }
             if (ui.isDraggingMultiple && !ui.selectedNoteIndices.empty()) {
                 // Multi-note drag - move all selected notes together
-                float snappedBeat = std::floor(hoveredBeat * 4.0f) / 4.0f;
+                float snappedBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
                 int currentPitch = hoveredNote;
 
                 // Apply offset to each selected note
@@ -7295,7 +7333,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         float newBeat = snappedBeat + beatOffset;
                         int newPitch = currentPitch + pitchOffset;
 
-                        note.startTime = std::max(0.0f, std::floor(newBeat * 4.0f) / 4.0f);
+                        note.startTime = std::max(0.0f, snapBeat(newBeat, effectiveSnap(ui), project.beatsPerMeasure));
                         note.pitch = std::clamp(newPitch, lowestNote, highestNote - 1);
                     }
                 }
@@ -7306,7 +7344,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 if (!isDrumType(note.oscillatorType)) {
                     float deltaBeats = hoveredBeat - ui.dragStartBeat;
                     float newDuration = ui.dragStartDuration + deltaBeats;
-                    note.duration = std::max(0.0625f, std::floor(newDuration * 4.0f) / 4.0f);
+                    note.duration = snapDuration(newDuration, effectiveSnap(ui), project.beatsPerMeasure);
                 }
             }
             // Handle multi-note resize
@@ -7321,7 +7359,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         // Skip drums - they have fixed duration
                         if (!isDrumType(note.oscillatorType)) {
                             float newDuration = ui.multiResizeStartDurations[i] + deltaBeats;
-                            note.duration = std::max(0.0625f, std::floor(newDuration * 4.0f) / 4.0f);
+                            note.duration = snapDuration(newDuration, effectiveSnap(ui), project.beatsPerMeasure);
                         }
                     }
                 }
@@ -7673,7 +7711,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     ImVec2 canvasPos = ImGui::GetCursorScreenPos();
     ImVec2 canvasSize = ImGui::GetContentRegionAvail();
-    canvasSize.y = std::max(canvasSize.y, 260.0f);
+    canvasSize.y = std::max(canvasSize.y, 290.0f);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
@@ -7733,6 +7771,97 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
             snprintf(beatLabel, sizeof(beatLabel), "%d", static_cast<int>(beat));
             drawList->AddText(ImVec2(x + 2, canvasPos.y + 8 * trackHeight + 2),
                 IM_COL32(100, 100, 110, 255), beatLabel);
+        }
+    }
+
+    // ========================================================================
+    // Loop range ruler
+    //
+    // loopStart and loopEnd have been in PlaybackState since the beginning,
+    // but nothing could set them and the engine ignored loopEnd anyway.
+    // Looping a couple of bars to iterate on them is the central motion of
+    // writing a chiptune, so it gets a strip of its own under the tracks.
+    // ========================================================================
+    const float gridLeft = canvasPos.x + headerWidth;
+    const float gridRight = canvasPos.x + canvasSize.x;
+    const float loopBarY = canvasPos.y + 8 * trackHeight + 18.0f;
+    const float loopBarH = 16.0f;
+
+    auto beatToScreenX = [&](float beat) {
+        return gridLeft + beat * beatWidth - ui.scrollX;
+    };
+    auto screenXToBeat = [&](float x) {
+        return (beatWidth > 0.0f) ? (x - gridLeft + ui.scrollX) / beatWidth : 0.0f;
+    };
+
+    drawList->AddRectFilled(ImVec2(gridLeft, loopBarY),
+                            ImVec2(gridRight, loopBarY + loopBarH),
+                            IM_COL32(22, 22, 28, 255));
+
+    {
+        const ImVec2 mousePos = ImGui::GetMousePos();
+        const bool overLoopBar = mousePos.x >= gridLeft && mousePos.x <= gridRight &&
+                                 mousePos.y >= loopBarY &&
+                                 mousePos.y <= loopBarY + loopBarH;
+
+        auto beatUnderMouse = [&]() {
+            return std::max(0.0f, snapBeatNearest(screenXToBeat(mousePos.x),
+                                                  effectiveSnap(ui),
+                                                  project.beatsPerMeasure));
+        };
+
+        if (overLoopBar && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
+            ui.isDraggingLoopRange = true;
+            ui.loopDragAnchorBeat = beatUnderMouse();
+        }
+
+        if (ui.isDraggingLoopRange) {
+            const float other = beatUnderMouse();
+            seq.setLoopRange(std::min(ui.loopDragAnchorBeat, other),
+                             std::max(ui.loopDragAnchorBeat, other));
+
+            if (ImGui::IsMouseReleased(0)) {
+                ui.isDraggingLoopRange = false;
+                // A click with no drag clears the range rather than leaving a
+                // zero-length loop that would freeze the playhead in place.
+                if (std::fabs(other - ui.loopDragAnchorBeat) < MIN_LOOP_BEATS) {
+                    seq.clearLoopRange();
+                }
+            }
+        }
+    }
+
+    {
+        const PlaybackState& pb = seq.getState();
+        if (pb.loopRangeActive) {
+            const float xa = std::max(gridLeft, beatToScreenX(pb.loopStart));
+            const float xb = std::min(gridRight, beatToScreenX(pb.loopEnd));
+            if (xb > xa) {
+                // Shade the looping span across the tracks so the range is
+                // readable without looking down at the ruler.
+                drawList->AddRectFilled(ImVec2(xa, canvasPos.y),
+                                        ImVec2(xb, canvasPos.y + 8 * trackHeight),
+                                        IM_COL32(90, 170, 255, 22));
+                drawList->AddRectFilled(ImVec2(xa, loopBarY),
+                                        ImVec2(xb, loopBarY + loopBarH),
+                                        IM_COL32(90, 170, 255, 150));
+                drawList->AddLine(ImVec2(xa, canvasPos.y),
+                                  ImVec2(xa, loopBarY + loopBarH),
+                                  IM_COL32(150, 205, 255, 220), 1.5f);
+                drawList->AddLine(ImVec2(xb, canvasPos.y),
+                                  ImVec2(xb, loopBarY + loopBarH),
+                                  IM_COL32(150, 205, 255, 220), 1.5f);
+
+                char loopLabel[48];
+                snprintf(loopLabel, sizeof(loopLabel), "LOOP %.2f - %.2f",
+                         pb.loopStart, pb.loopEnd);
+                drawList->AddText(ImVec2(xa + 5, loopBarY + 1),
+                                  IM_COL32(255, 255, 255, 230), loopLabel);
+            }
+        } else {
+            drawList->AddText(ImVec2(gridLeft + 6, loopBarY + 1),
+                              IM_COL32(110, 110, 125, 255),
+                              "drag here to set a loop range");
         }
     }
 
@@ -8961,11 +9090,107 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
         if (ImGui::SmallButton("+12##slide")) note.slide = 12.0f;   // Slide down from octave above
 
         ImGui::Separator();
+
+        // ------------------------------------------------------------------
+        // Timing effects
+        //
+        // These four fields were declared on Note and written to the .ctp
+        // file all along, but nothing could edit them and nothing played
+        // them. They are the classic tracker commands - EDxx note delay,
+        // ECxx note cut, Qxy retrigger - and they are how chiptune gets
+        // flams and stutters without spending another channel.
+        // ------------------------------------------------------------------
+        ImGui::TextDisabled("Timing");
+
+        ImGui::Text("Delay (push the note later):");
+        ImGui::SetNextItemWidth(120);
+        ImGui::SliderFloat("##NoteDelay", &note.noteDelay, 0.0f, 1.0f, "%.3f beats");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Offsets this note alone. Two notes on the same\n"
+                              "beat with different delays give you a flam.");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("0##ndel")) note.noteDelay = 0.0f;
+
+        ImGui::Text("Cut (end early):");
+        ImGui::SetNextItemWidth(120);
+        ImGui::SliderFloat("##NoteCut", &note.noteCut, 0.0f, 4.0f, "%.3f beats");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Silences the note this far in, ignoring its\n"
+                              "length. 0 means no cut.");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("0##ncut")) note.noteCut = 0.0f;
+
+        ImGui::Text("Retrigger (stutter):");
+        ImGui::SetNextItemWidth(90);
+        ImGui::SliderInt("##RetrigCount", &note.retriggerCount, 0, 8, "%d hits");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        ImGui::SliderFloat("##RetrigSpeed", &note.retriggerSpeed,
+                           0.0156f, 0.5f, "%.3f beats");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Chops the note into repeated hits. Hits never\n"
+                              "sound past the note's own end.");
+        }
+
+        ImGui::Text("Echo (decaying repeats):");
+        ImGui::SetNextItemWidth(90);
+        ImGui::SliderInt("##EchoRepeats", &note.echoRepeats, 0, 4, "%d taps");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        ImGui::SliderFloat("##EchoDelay", &note.echoDelay, 0.0156f, 2.0f, "%.3f beats");
+        ImGui::SetNextItemWidth(120);
+        ImGui::SliderFloat("Decay##echo", &note.echoDecay, 0.05f, 0.95f, "%.2f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Repeats of this note, each quieter than the last.\n"
+                              "Costs voices on the same channel.");
+        }
+
+        ImGui::Separator();
+
+        // ------------------------------------------------------------------
+        // Pitch sweep
+        //
+        // Fully implemented in the audio path since the NES sweep unit went
+        // in, and never given a control. It is the laser/zap sound.
+        // ------------------------------------------------------------------
+        ImGui::TextDisabled("Pitch Sweep");
+        int sweepMode = static_cast<int>(note.sweepDirection);
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::Combo("##SweepDir", &sweepMode, "Off\0Up\0Down\0")) {
+            note.sweepDirection = static_cast<SweepDirection>(sweepMode);
+        }
+        if (note.sweepDirection != SweepDirection::None) {
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderFloat("Speed##sweep", &note.sweepSpeed, 0.1f, 20.0f, "%.1f st/beat");
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderFloat("Range##sweep", &note.sweepAmount, 1.0f, 48.0f, "%.0f st");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Zap")) {
+            note.sweepDirection = SweepDirection::Down;
+            note.sweepSpeed = 12.0f;
+            note.sweepAmount = 24.0f;
+        }
+
+        ImGui::Separator();
         // Reset all effects
         if (ImGui::Button("Reset All Effects")) {
-            note.vibrato = 0.0f;
-            note.slide = 0.0f;
-            note.arpeggio = 0;
+            const Note defaults;
+            note.vibrato = defaults.vibrato;
+            note.slide = defaults.slide;
+            note.arpeggio = defaults.arpeggio;
+            note.noteDelay = defaults.noteDelay;
+            note.noteCut = defaults.noteCut;
+            note.retriggerCount = defaults.retriggerCount;
+            note.retriggerSpeed = defaults.retriggerSpeed;
+            note.echoRepeats = defaults.echoRepeats;
+            note.echoDelay = defaults.echoDelay;
+            note.echoDecay = defaults.echoDecay;
+            note.sweepDirection = defaults.sweepDirection;
+            note.sweepSpeed = defaults.sweepSpeed;
+            note.sweepAmount = defaults.sweepAmount;
         }
     }
 
@@ -12742,6 +12967,46 @@ inline bool shouldSnapToScale() {
 inline int getScaleSnappedPitch(int pitch) {
     if (!g_ToolsScaleLock) return pitch;
     return snapToScale(pitch, g_ToolsScaleRoot, g_ToolsScaleType);
+}
+
+// Apply a queued undo or redo. main.cpp calls this at the top of the frame,
+// before any code takes a Pattern& into project.patterns - restoring a
+// snapshot rebuilds that vector, so doing it mid-frame would dangle every
+// reference the drawing code is holding. See RequestUndo.
+inline bool ApplyPendingHistory(Project& project, UIState& ui, Sequencer& seq) {
+    if (!g_UndoRequested && !g_RedoRequested) return false;
+
+    const bool wantUndo = g_UndoRequested;
+    g_UndoRequested = false;
+    g_RedoRequested = false;
+
+    const bool changed = wantUndo ? g_UndoHistory.undo(project)
+                                  : g_UndoHistory.redo(project);
+    if (!changed) return false;
+
+    // The restored project may hold fewer patterns than the one on screen,
+    // and every selection index points at notes that no longer exist.
+    const int patternCount = static_cast<int>(project.patterns.size());
+    if (ui.selectedPattern >= patternCount) {
+        ui.selectedPattern = (patternCount > 0) ? patternCount - 1 : 0;
+    }
+    if (ui.selectedPattern < 0) ui.selectedPattern = 0;
+
+    ui.selectedNoteIndex = -1;
+    ui.selectedNoteIndices.clear();
+
+    // Any gesture in flight refers to the old note list.
+    ui.isDraggingNote = false;
+    ui.isDraggingMultiple = false;
+    ui.isResizingNote = false;
+    ui.isResizingMultiple = false;
+    ui.isPendingDrag = false;
+    ui.isPendingMultiDrag = false;
+
+    // Channel settings are part of the project, so the synths need resyncing
+    // or the restored mix would be invisible to the audio thread.
+    seq.updateChannelConfigs();
+    return true;
 }
 
 } // namespace ChiptuneTracker

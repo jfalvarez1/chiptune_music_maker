@@ -27,6 +27,8 @@
 #include "OscillatorNames.h"
 
 #include <fstream>
+#include <istream>
+#include <ostream>
 #include <sstream>
 #include <iomanip>
 #include <string>
@@ -440,10 +442,7 @@ inline std::string unquote(const std::string& line, size_t& pos) {
 // ============================================================================
 // Save
 // ============================================================================
-inline bool saveProjectFile(const Project& project, const std::string& filepath) {
-    std::ofstream file(filepath);
-    if (!file.is_open()) return false;
-
+inline bool writeProject(std::ostream& file, const Project& project) {
     const Project projectDefaults;
 
     const Note noteDefaults;
@@ -543,13 +542,20 @@ inline bool saveProjectFile(const Project& project, const std::string& filepath)
     return file.good();
 }
 
+// The file wrappers are deliberately thin. Undo snapshots go through the same
+// writeProject/readProject pair, so the two paths cannot drift apart in what
+// they preserve - an undo that silently dropped a field would be much harder
+// to notice than a save that did.
+inline bool saveProjectFile(const Project& project, const std::string& filepath) {
+    std::ofstream file(filepath);
+    if (!file.is_open()) return false;
+    return writeProject(file, project);
+}
+
 // ============================================================================
 // Load
 // ============================================================================
-inline bool loadProjectFile(Project& project, const std::string& filepath) {
-    std::ifstream file(filepath);
-    if (!file.is_open()) return false;
-
+inline bool readProject(std::istream& file, Project& project) {
     std::string line;
     if (!std::getline(file, line)) return false;
     if (line.find("CHIPTUNE_PROJECT") == std::string::npos) return false;
@@ -689,6 +695,12 @@ inline bool loadProjectFile(Project& project, const std::string& filepath) {
     // Everything from here on is untrusted-input hygiene.
     clampProjectToValidRanges(project);
     return true;
+}
+
+inline bool loadProjectFile(Project& project, const std::string& filepath) {
+    std::ifstream file(filepath);
+    if (!file.is_open()) return false;
+    return readProject(file, project);
 }
 
 } // namespace ChiptuneTracker

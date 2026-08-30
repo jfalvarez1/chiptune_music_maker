@@ -88,6 +88,19 @@ foreach ($panel in $panels) {
 # positions with no DockId assignments, so every panel restores floating and
 # the dock space sits empty behind them. The app detects that and rebuilds.
 # This is the only case that must run WITH a saved layout, so it gets its own
+# The loop range and the grid snap: both were unreachable before - loopStart
+# and loopEnd could not be set from anywhere, and the snap step was hardcoded
+# to a 1/16 note in fourteen places. These shots prove the controls render.
+[void]$cases.Add(@{
+    name = "arrangement-loop-range"
+    args = "--demo --view arrangement --loop 4 16"
+})
+
+[void]$cases.Add(@{
+    name = "pianoroll-triplet-snap"
+    args = "--demo --view pianoroll --snap 1/8T"
+})
+
 # working directory with the broken ini staged into it.
 [void]$cases.Add(@{
     name     = "legacy-layout-repair"

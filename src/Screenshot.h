@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <cstdlib>
 #include <vector>
 
 namespace ChiptuneTracker {
@@ -153,6 +154,14 @@ struct CaptureRequest {
     int windowWidth = 1600;
     int windowHeight = 900;
     bool loadDemo = false;
+
+    // A loop range drawn on the arrangement ruler, so the gallery can show
+    // the feature rather than an empty strip. Negative means "not set".
+    float loopStart = -1.0f;
+    float loopEnd = -1.0f;
+
+    // Grid snap division by name, so a shot can show triplets selected.
+    std::string snapName;
 };
 
 // Parses the flags this app understands and ignores anything else.
@@ -163,6 +172,8 @@ struct CaptureRequest {
 //   --view <name>        pianoroll|tracker|arrangement|mixer|pad
 //   --workspace <name>   compose|sounddesign|mix
 //   --show <name>        macros|spectrum|midi   (repeatable)
+//   --loop <a> <b>       set a loop range on the arrangement ruler
+//   --snap <name>        off|bar|1/2|1/4|1/8|1/16|1/32|1/4T|1/8T|1/16T
 //   --frames <n>         frames to render before capturing
 //   --size <w> <h>       window size
 //   --demo               populate a short demo song first
@@ -188,6 +199,15 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             next(request.editMode);
         } else if (arg == "--macro-tab") {
             next(request.macroTab);
+        } else if (arg == "--loop") {
+            // --loop <start> <end>, in beats
+            std::string startText, endText;
+            if (next(startText) && next(endText)) {
+                request.loopStart = std::strtof(startText.c_str(), nullptr);
+                request.loopEnd = std::strtof(endText.c_str(), nullptr);
+            }
+        } else if (arg == "--snap") {
+            next(request.snapName);
         } else if (arg == "--select") {
             request.selectNotes = true;
         } else if (arg == "--playing") {
@@ -240,6 +260,17 @@ inline void applyCaptureState(const CaptureRequest& request,
         if (request.themeName == entry.name) {
             ui.currentTheme = entry.theme;
             break;
+        }
+    }
+
+    // --- Grid snap ---
+    if (!request.snapName.empty()) {
+        for (int i = 0; i < static_cast<int>(SnapDivision::Count); ++i) {
+            const SnapDivision division = static_cast<SnapDivision>(i);
+            if (request.snapName == snapLabel(division)) {
+                ui.snapDivision = division;
+                break;
+            }
         }
     }
 

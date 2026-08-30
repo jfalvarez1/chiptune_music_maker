@@ -15,6 +15,8 @@
 
 #include "Macros.h"
 
+#include "Snap.h"
+
 namespace ChiptuneTracker {
 
 // ============================================================================
@@ -817,6 +819,13 @@ struct PlaybackState {
     bool isPlaying = false;
     bool isRecording = false;
     bool loop = true;
+
+    // loopStart/loopEnd existed from the beginning but nothing ever set them
+    // and the playback loop never read loopEnd - it wrapped at the end of the
+    // content instead. loopRangeActive is what distinguishes "the user drew a
+    // range on the ruler" from "just repeat whatever is there", which is the
+    // difference between iterating on two bars and replaying the whole song.
+    bool loopRangeActive = false;
     float loopStart = 0.0f;
     float loopEnd = 16.0f;
     float currentBeat = 0.0f;
@@ -1203,6 +1212,15 @@ struct UIState {
     ViewMode currentView = ViewMode::PianoRoll;
     int selectedChannel = 0;
     int selectedPattern = 0;
+
+    // Grid snap. Was hardcoded to a 1/16 note in fourteen places, so triplets
+    // - and therefore shuffle and 6/8 - were unwritable. Sixteenth reproduces
+    // the old behaviour exactly, so nothing changes until the user asks.
+    SnapDivision snapDivision = DEFAULT_SNAP;
+
+    // Loop range being dragged on the timeline ruler.
+    bool isDraggingLoopRange = false;
+    float loopDragAnchorBeat = 0.0f;
     float zoomX = 1.0f;
     float zoomY = 1.0f;
     float scrollX = 0.0f;
@@ -1284,70 +1302,6 @@ struct UIState {
     float lastWindowWidth = 0.0f;
     float lastWindowHeight = 0.0f;
     bool needsLayoutUpdate = true;  // True on first frame and after significant resize
-};
-
-// ============================================================================
-// Undo/Redo History
-// ============================================================================
-struct PatternSnapshot {
-    std::vector<Note> notes;
-    int patternIndex = 0;
-};
-
-struct UndoHistory {
-    static constexpr int MAX_HISTORY = 50;
-    std::vector<PatternSnapshot> undoStack;
-    std::vector<PatternSnapshot> redoStack;
-
-    void saveState(const Pattern& pattern, int patternIndex) {
-        PatternSnapshot snapshot;
-        snapshot.notes = pattern.notes;
-        snapshot.patternIndex = patternIndex;
-        undoStack.push_back(snapshot);
-        if (undoStack.size() > MAX_HISTORY) {
-            undoStack.erase(undoStack.begin());
-        }
-        // Clear redo stack when new action is performed
-        redoStack.clear();
-    }
-
-    bool canUndo() const { return !undoStack.empty(); }
-    bool canRedo() const { return !redoStack.empty(); }
-
-    PatternSnapshot undo(const Pattern& currentPattern, int currentPatternIndex) {
-        if (undoStack.empty()) return { currentPattern.notes, currentPatternIndex };
-
-        // Save current state to redo stack
-        PatternSnapshot currentSnapshot;
-        currentSnapshot.notes = currentPattern.notes;
-        currentSnapshot.patternIndex = currentPatternIndex;
-        redoStack.push_back(currentSnapshot);
-
-        // Pop and return from undo stack
-        PatternSnapshot snapshot = undoStack.back();
-        undoStack.pop_back();
-        return snapshot;
-    }
-
-    PatternSnapshot redo(const Pattern& currentPattern, int currentPatternIndex) {
-        if (redoStack.empty()) return { currentPattern.notes, currentPatternIndex };
-
-        // Save current state to undo stack
-        PatternSnapshot currentSnapshot;
-        currentSnapshot.notes = currentPattern.notes;
-        currentSnapshot.patternIndex = currentPatternIndex;
-        undoStack.push_back(currentSnapshot);
-
-        // Pop and return from redo stack
-        PatternSnapshot snapshot = redoStack.back();
-        redoStack.pop_back();
-        return snapshot;
-    }
-
-    void clear() {
-        undoStack.clear();
-        redoStack.clear();
-    }
 };
 
 } // namespace ChiptuneTracker

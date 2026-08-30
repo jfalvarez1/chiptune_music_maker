@@ -21,6 +21,10 @@
 #include "FileIO.h"
 #include "MIDIExport.h"
 #include "Autosave.h"
+#include "Snap.h"
+#include "LoopRange.h"
+#include "NoteEvents.h"
+#include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
 // ImGuiStyle, and a context can exist without a backend.
@@ -1548,14 +1552,23 @@ static void testInstrumentMacros() {
 static void testUndoRedo() {
     beginTest("Undo and redo history");
 
-    auto patternWithNotes = [](int count) {
-        Pattern p;
-        for (int i = 0; i < count; ++i) {
+    // The old history snapshotted one pattern's notes, so editing a macro,
+    // a channel effect or the arrangement was simply not undoable. These
+    // tests exist mostly to hold the line on that: a snapshot is the whole
+    // project now, and the round trip has to prove it.
+
+    auto projectWith = [](int noteCount, float bpm) {
+        Project p;
+        p.bpm = bpm;
+        Pattern pattern;
+        for (int i = 0; i < noteCount; ++i) {
             Note n;
             n.pitch = 60 + i;
-            n.startTime = float(i);
-            p.notes.push_back(n);
+            n.startTime = float(i) * 0.25f;
+            pattern.notes.push_back(n);
         }
+        p.patterns.clear();
+        p.patterns.push_back(pattern);
         return p;
     };
 
@@ -1565,44 +1578,107 @@ static void testUndoRedo() {
         check(!history.canUndo(), "a fresh history has nothing to undo");
         check(!history.canRedo(), "a fresh history has nothing to redo");
 
-        Pattern current = patternWithNotes(3);
-        PatternSnapshot result = history.undo(current, 0);
-        check(result.notes.size() == 3,
-              "undo with an empty stack returns the current state unchanged");
-        result = history.redo(current, 0);
-        check(result.notes.size() == 3,
-              "redo with an empty stack returns the current state unchanged");
+        Project current = projectWith(3, 120.0f);
+        check(!history.undo(current), "undo on an empty stack reports failure");
+        check(!history.redo(current), "redo on an empty stack reports failure");
+        check(current.patterns[0].notes.size() == 3,
+              "a failed undo leaves the project untouched");
     }
 
     // ---- Basic undo then redo -------------------------------------------
     {
         UndoHistory history;
-        Pattern first = patternWithNotes(2);
-        history.saveState(first, 0);
-
-        Pattern second = patternWithNotes(5);
+        Project current = projectWith(2, 120.0f);
+        history.saveState(current, "Draw Note");
         check(history.canUndo(), "saving a state makes undo available");
 
-        PatternSnapshot undone = history.undo(second, 0);
-        check(undone.notes.size() == 2,
+        current = projectWith(5, 120.0f);
+        check(history.undo(current), "undo succeeds");
+        check(current.patterns[0].notes.size() == 2,
               "undo restores the saved state (expected 2 notes, got " +
-              std::to_string(undone.notes.size()) + ")");
+              std::to_string(current.patterns[0].notes.size()) + ")");
         check(history.canRedo(), "undo makes redo available");
 
-        PatternSnapshot redone = history.redo(Pattern(first), 0);
-        check(redone.notes.size() == 5,
+        check(history.redo(current), "redo succeeds");
+        check(current.patterns[0].notes.size() == 5,
               "redo restores the state undo replaced (expected 5, got " +
-              std::to_string(redone.notes.size()) + ")");
+              std::to_string(current.patterns[0].notes.size()) + ")");
+    }
+
+    // ---- Undo covers the whole project, not just notes -------------------
+    //
+    // This is the entire reason the history was rewritten. Every one of
+    // these would have been silently lost by the old pattern-only snapshot.
+    {
+        UndoHistory history;
+        Project current = makeKitchenSinkProject();
+
+        const float originalCutoff = current.channels[0].filterCutoff;
+        const size_t originalClips = current.arrangement.size();
+        const size_t originalPatterns = current.patterns.size();
+        const float originalBpm = current.bpm;
+        const std::string originalName = current.channels[1].name;
+
+        history.saveState(current, "Everything");
+
+        // Wreck the things the old undo could not see.
+        current.channels[0].filterCutoff = 137.0f;
+        current.channels[0].filterEnabled = !current.channels[0].filterEnabled;
+        current.channels[1].name = "clobbered";
+        current.arrangement.clear();
+        current.patterns.clear();
+        current.patterns.push_back(Pattern());
+        current.bpm = 71.0f;
+
+        check(history.undo(current), "undo of a full project succeeds");
+
+        check(std::fabs(current.channels[0].filterCutoff - originalCutoff) < 0.5f,
+              "undo restores channel effect settings - the old history lost these");
+        check(current.channels[1].name == originalName,
+              "undo restores channel names");
+        check(current.arrangement.size() == originalClips,
+              "undo restores the arrangement - deleting a clip was unrecoverable before");
+        check(current.patterns.size() == originalPatterns,
+              "undo restores every pattern, not only the selected one");
+        check(std::fabs(current.bpm - originalBpm) < 0.01f,
+              "undo restores the tempo");
+    }
+
+    // ---- Labels drive the menu text ---------------------------------------
+    {
+        UndoHistory history;
+        Project current = projectWith(2, 120.0f);
+        history.saveState(current, "Draw Note");
+        check(std::string(history.undoLabel()) == "Draw Note",
+              "the history remembers what the action was, so the menu can name it");
+    }
+
+    // ---- An identical state is not recorded twice ------------------------
+    //
+    // Several gestures call saveState on the click that begins a drag and
+    // again as it resolves. Recording both would spend an undo step that
+    // appears to do nothing when the user presses Ctrl+Z.
+    {
+        UndoHistory history;
+        Project current = projectWith(4, 120.0f);
+        history.saveState(current, "Edit");
+        history.saveState(current, "Edit");
+        history.saveState(current, "Edit");
+        check(history.undoDepth() == 1,
+              "saving an unchanged project does not add a second undo step (got " +
+              std::to_string(history.undoDepth()) + ")");
     }
 
     // ---- A new action clears the redo stack ------------------------------
     {
         UndoHistory history;
-        history.saveState(patternWithNotes(1), 0);
-        history.undo(patternWithNotes(2), 0);
+        Project current = projectWith(1, 120.0f);
+        history.saveState(current, "One");
+        current = projectWith(2, 120.0f);
+        history.undo(current);
         check(history.canRedo(), "redo is available after an undo");
 
-        history.saveState(patternWithNotes(3), 0);
+        history.saveState(projectWith(3, 120.0f), "Three");
         check(!history.canRedo(),
               "a new edit after an undo clears the redo stack - redoing onto a "
               "diverged timeline would restore notes the user did not make");
@@ -1611,17 +1687,17 @@ static void testUndoRedo() {
     // ---- The history is capped -------------------------------------------
     {
         UndoHistory history;
-        for (int i = 0; i < UndoHistory::MAX_HISTORY + 25; ++i) {
-            history.saveState(patternWithNotes(i % 7 + 1), 0);
+        for (size_t i = 0; i < UndoHistory::MAX_ENTRIES + 25; ++i) {
+            history.saveState(projectWith(int(i % 7) + 1, 100.0f + float(i)), "Edit");
         }
-        check(history.undoStack.size() == static_cast<size_t>(UndoHistory::MAX_HISTORY),
-              "history is capped at " + std::to_string(UndoHistory::MAX_HISTORY) +
-              " (got " + std::to_string(history.undoStack.size()) + ")");
+        check(history.undoDepth() == UndoHistory::MAX_ENTRIES,
+              "history is capped at " + std::to_string(UndoHistory::MAX_ENTRIES) +
+              " (got " + std::to_string(history.undoDepth()) + ")");
 
         // And undoing all the way out must not run off the end
-        Pattern current = patternWithNotes(4);
-        for (int i = 0; i < UndoHistory::MAX_HISTORY + 25; ++i) {
-            current.notes = history.undo(current, 0).notes;
+        Project current = projectWith(4, 120.0f);
+        for (size_t i = 0; i < UndoHistory::MAX_ENTRIES + 25; ++i) {
+            history.undo(current);
         }
         check(!history.canUndo(), "undoing past the start leaves the stack empty");
         check(true, "undoing past the start did not crash");
@@ -1630,25 +1706,26 @@ static void testUndoRedo() {
     // ---- Round trip through many steps preserves content ------------------
     {
         UndoHistory history;
-        for (int i = 1; i <= 10; ++i) history.saveState(patternWithNotes(i), 0);
+        for (int i = 1; i <= 10; ++i) history.saveState(projectWith(i, 120.0f), "Edit");
 
-        Pattern current = patternWithNotes(11);
-        for (int i = 0; i < 10; ++i) current.notes = history.undo(current, 0).notes;
-        check(current.notes.size() == 1,
+        Project current = projectWith(11, 120.0f);
+        for (int i = 0; i < 10; ++i) history.undo(current);
+        check(current.patterns[0].notes.size() == 1,
               "ten undos land on the first saved state (got " +
-              std::to_string(current.notes.size()) + ")");
+              std::to_string(current.patterns[0].notes.size()) + ")");
 
-        for (int i = 0; i < 10; ++i) current.notes = history.redo(current, 0).notes;
-        check(current.notes.size() == 11,
+        for (int i = 0; i < 10; ++i) history.redo(current);
+        check(current.patterns[0].notes.size() == 11,
               "ten redos return to where we started (got " +
-              std::to_string(current.notes.size()) + ")");
+              std::to_string(current.patterns[0].notes.size()) + ")");
     }
 
     // ---- clear() ----------------------------------------------------------
     {
         UndoHistory history;
-        history.saveState(patternWithNotes(2), 0);
-        history.undo(patternWithNotes(3), 0);
+        Project current = projectWith(2, 120.0f);
+        history.saveState(current, "Edit");
+        history.undo(current);
         history.clear();
         check(!history.canUndo() && !history.canRedo(), "clear() empties both stacks");
     }
@@ -3113,6 +3190,560 @@ static void testAutosave() {
 }
 
 // ============================================================================
+// 27. Grid snap
+// ============================================================================
+static void testGridSnap() {
+    beginTest("Grid snap");
+
+    // The snap step was hardcoded as floor(beat * 4) / 4 in fourteen places,
+    // so a 1/16 note was the only thing anyone could write. Sixteenth has to
+    // keep reproducing that exactly, or every existing gesture changes.
+    check(std::fabs(snapBeat(0.30f, SnapDivision::Sixteenth) - 0.25f) < 1e-6f,
+          "1/16 snap still floors to a quarter beat, as the old constant did");
+    check(std::fabs(snapBeat(0.99f, SnapDivision::Sixteenth) - 0.75f) < 1e-6f,
+          "1/16 snap floors rather than rounds, matching the old behaviour");
+
+    check(std::fabs(snapStepBeats(SnapDivision::Quarter) - 1.0f) < 1e-6f,
+          "a 1/4 note is one beat");
+    check(std::fabs(snapStepBeats(SnapDivision::Eighth) - 0.5f) < 1e-6f,
+          "a 1/8 note is half a beat");
+    check(std::fabs(snapStepBeats(SnapDivision::Bar, 3) - 3.0f) < 1e-6f,
+          "a bar follows the time signature");
+
+    // Triplets are the reason this exists: without them shuffle and 6/8 are
+    // unwritable.
+    check(std::fabs(snapStepBeats(SnapDivision::TripletEighth) - 1.0f / 3.0f) < 1e-6f,
+          "an eighth triplet is a third of a beat");
+    check(std::fabs(snapBeat(0.7f, SnapDivision::TripletEighth) - 2.0f / 3.0f) < 1e-5f,
+          "a beat snaps onto the triplet grid");
+    check(std::fabs(snapBeat(1.9f, SnapDivision::TripletQuarter) - 4.0f / 3.0f) < 1e-5f,
+          "quarter triplets land on thirds of two beats");
+
+    // Off is how a note gets placed deliberately between grid lines.
+    check(std::fabs(snapBeat(0.3712f, SnapDivision::Off) - 0.3712f) < 1e-6f,
+          "snap off leaves the position untouched");
+
+    // A duration that snapped to zero would make the note unselectable.
+    check(snapDuration(0.001f, SnapDivision::Sixteenth) > 0.0f,
+          "a tiny duration never snaps to zero");
+    check(std::fabs(snapDuration(0.001f, SnapDivision::Sixteenth) - 0.25f) < 1e-6f,
+          "a tiny duration snaps up to one grid step");
+    check(snapDuration(0.001f, SnapDivision::Off) > 0.0f,
+          "with snap off a duration still has a floor");
+
+    // Negative positions occur while dragging left past the origin.
+    check(snapBeat(-0.3f, SnapDivision::Sixteenth) <= 0.0f,
+          "a negative beat stays negative rather than wrapping high");
+
+    // A non-finite value would poison every downstream calculation.
+    check(snapBeat(std::numeric_limits<float>::quiet_NaN(),
+                   SnapDivision::Sixteenth) == 0.0f,
+          "NaN is caught at the snap rather than spreading");
+    check(snapBeat(std::numeric_limits<float>::infinity(),
+                   SnapDivision::Sixteenth) == 0.0f,
+          "infinity is caught at the snap");
+
+    // The bracket keys step through the list and wrap.
+    check(cycleSnap(SnapDivision::Off, -1) ==
+              static_cast<SnapDivision>(static_cast<int>(SnapDivision::Count) - 1),
+          "stepping back from the first division wraps to the last");
+    check(cycleSnap(static_cast<SnapDivision>(static_cast<int>(SnapDivision::Count) - 1), 1)
+              == SnapDivision::Off,
+          "stepping past the last division wraps to the first");
+
+    for (int i = 0; i < static_cast<int>(SnapDivision::Count); ++i) {
+        const SnapDivision d = static_cast<SnapDivision>(i);
+        if (std::string(snapLabel(d)) == "?") {
+            check(false, "every division has a label");
+            break;
+        }
+    }
+    check(true, "every division has a label for the combo");
+}
+
+// ============================================================================
+// 28. Loop range
+// ============================================================================
+static void testLoopRange() {
+    beginTest("Loop range");
+
+    // ---- Resolving the window --------------------------------------------
+    {
+        LoopWindow w = resolveLoopWindow(true, 4.0f, 12.0f, 64.0f);
+        check(w.valid && std::fabs(w.start - 4.0f) < 1e-6f &&
+              std::fabs(w.end - 12.0f) < 1e-6f,
+              "a user range wins over the content extent");
+
+        w = resolveLoopWindow(false, 4.0f, 12.0f, 64.0f);
+        check(w.valid && std::fabs(w.start) < 1e-6f && std::fabs(w.end - 64.0f) < 1e-6f,
+              "with no range set, playback loops over the content - the old behaviour");
+
+        // A click without a drag must not leave a zero-length loop; that
+        // would freeze the playhead in place at audio rate.
+        w = resolveLoopWindow(true, 8.0f, 8.0f, 64.0f);
+        check(w.valid && std::fabs(w.end - 64.0f) < 1e-6f,
+              "a zero-length range falls back rather than trapping the playhead");
+
+        w = resolveLoopWindow(true, 12.0f, 4.0f, 64.0f);
+        check(w.valid && std::fabs(w.start - 4.0f) < 1e-6f &&
+              std::fabs(w.end - 12.0f) < 1e-6f,
+              "a range dragged right-to-left is normalised");
+
+        w = resolveLoopWindow(false, 0.0f, 0.0f, 0.0f);
+        check(!w.valid, "an empty project yields no window at all");
+
+        w = resolveLoopWindow(true, std::numeric_limits<float>::quiet_NaN(), 8.0f, 32.0f);
+        check(w.valid && std::fabs(w.end - 32.0f) < 1e-6f,
+              "a NaN range is rejected rather than propagated");
+    }
+
+    // ---- Wrapping ---------------------------------------------------------
+    {
+        const LoopWindow w = resolveLoopWindow(true, 4.0f, 8.0f, 64.0f);
+
+        check(std::fabs(wrapIntoWindow(6.0f, w) - 6.0f) < 1e-6f,
+              "a beat inside the window is left alone");
+        check(std::fabs(wrapIntoWindow(8.0f, w) - 4.0f) < 1e-6f,
+              "the end of the window folds back to the start");
+        check(std::fabs(wrapIntoWindow(9.5f, w) - 5.5f) < 1e-6f,
+              "overshooting the end carries the remainder");
+
+        // A single subtraction is not enough. A long audio block, or a range
+        // shortened while playing, can leave the playhead several window
+        // lengths past the end - the same class of bug that let oscillator
+        // phase run away to 2.4e7.
+        const float farPast = wrapIntoWindow(4.0f + 4.0f * 37.25f, w);
+        check(farPast >= w.start && farPast < w.end,
+              "a beat many windows past the end still folds inside (got " +
+              std::to_string(farPast) + ")");
+
+        const float behind = wrapIntoWindow(1.0f, w);
+        check(behind >= w.start && behind <= w.end,
+              "a beat before the window folds inside too");
+    }
+
+    // ---- Where play() drops the playhead ----------------------------------
+    {
+        const LoopWindow w = resolveLoopWindow(true, 8.0f, 16.0f, 64.0f);
+        check(std::fabs(clampStartBeat(2.0f, w, true) - 8.0f) < 1e-6f,
+              "pressing play outside the loop jumps into it, so play always sounds");
+        check(std::fabs(clampStartBeat(10.0f, w, true) - 10.0f) < 1e-6f,
+              "pressing play inside the loop keeps the position");
+        check(std::fabs(clampStartBeat(2.0f, w, false) - 2.0f) < 1e-6f,
+              "with looping off the position is never moved");
+    }
+}
+
+// ============================================================================
+// 29. Note expansion - delay, cut, retrigger, echo
+// ============================================================================
+static void testNoteExpansion() {
+    beginTest("Note expansion");
+
+    NoteTrigger out[MAX_NOTE_TRIGGERS];
+
+    // ---- A plain note is one hit -----------------------------------------
+    {
+        Note n;
+        n.startTime = 1.0f;
+        n.duration = 2.0f;
+        n.velocity = 0.8f;
+        const int count = expandNote(n, 4.0f, out, MAX_NOTE_TRIGGERS);
+        check(count == 1, "an ordinary note produces exactly one hit");
+        check(std::fabs(out[0].startBeat - 5.0f) < 1e-6f,
+              "the clip origin is added to the note's own start");
+        check(std::fabs(out[0].endBeat - 7.0f) < 1e-6f, "the hit lasts the note's length");
+        check(std::fabs(out[0].velocity - 0.8f) < 1e-6f, "velocity carries through");
+        check(!noteNeedsExpansion(n), "a plain note is recognised as needing no expansion");
+    }
+
+    // ---- Note delay -------------------------------------------------------
+    {
+        Note n;
+        n.startTime = 0.0f;
+        n.duration = 1.0f;
+        n.noteDelay = 0.25f;
+        const int count = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(count == 1, "a delayed note is still one hit");
+        check(std::fabs(out[0].startBeat - 0.25f) < 1e-6f,
+              "note delay pushes the hit later - this is how a flam is written");
+        check(noteNeedsExpansion(n), "a delayed note needs expansion");
+    }
+
+    // ---- Note cut ---------------------------------------------------------
+    {
+        Note n;
+        n.startTime = 0.0f;
+        n.duration = 4.0f;
+        n.noteCut = 0.5f;
+        const int count = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(count == 1 && std::fabs(out[0].endBeat - 0.5f) < 1e-6f,
+              "note cut ends the hit early");
+
+        // A cut longer than the note is no cut at all.
+        n.noteCut = 8.0f;
+        expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(std::fabs(out[0].endBeat - 4.0f) < 1e-6f,
+              "a cut past the end of the note leaves it alone");
+    }
+
+    // ---- Retrigger --------------------------------------------------------
+    {
+        Note n;
+        n.startTime = 0.0f;
+        n.duration = 1.0f;
+        n.retriggerCount = 3;
+        n.retriggerSpeed = 0.25f;
+        const int count = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(count == 4, "3 retriggers means 4 hits (got " + std::to_string(count) + ")");
+        check(std::fabs(out[1].startBeat - 0.25f) < 1e-6f, "hits are evenly spaced");
+        check(std::fabs(out[3].startBeat - 0.75f) < 1e-6f, "the last hit lands in time");
+
+        // No hit may ring past the note's own end, or a retrigger on a short
+        // note would bleed over whatever comes next.
+        for (int i = 0; i < count; ++i) {
+            if (out[i].endBeat > 1.0f + 1e-5f) {
+                check(false, "a retrigger hit rang past the end of the note");
+                break;
+            }
+        }
+        check(true, "no retrigger hit rings past the end of the note");
+
+        // A retrigger interval longer than the note leaves the note alone.
+        n.retriggerSpeed = 4.0f;
+        const int sparse = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(sparse == 1, "a retrigger slower than the note yields a single hit");
+    }
+
+    // ---- Echo -------------------------------------------------------------
+    {
+        Note n;
+        n.startTime = 0.0f;
+        n.duration = 0.5f;
+        n.velocity = 1.0f;
+        n.echoRepeats = 3;
+        n.echoDelay = 1.0f;
+        n.echoDecay = 0.5f;
+        const int count = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(count == 4, "3 echoes means 4 hits (got " + std::to_string(count) + ")");
+        check(std::fabs(out[1].startBeat - 1.0f) < 1e-6f, "the first echo lands one delay later");
+        check(out[1].velocity < out[0].velocity, "each echo is quieter than the last");
+        check(std::fabs(out[1].velocity - 0.5f) < 1e-5f, "echo decay is applied per repeat");
+        check(std::fabs(out[3].velocity - 0.125f) < 1e-5f, "decay compounds across repeats");
+
+        // An inaudible echo should not cost a voice.
+        n.echoDecay = 0.05f;
+        n.echoRepeats = 4;
+        const int audible = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(audible < 5, "echoes stop once they fall below audibility (got " +
+              std::to_string(audible) + " hits)");
+    }
+
+    // ---- Combining --------------------------------------------------------
+    {
+        Note n;
+        n.startTime = 0.0f;
+        n.duration = 1.0f;
+        n.noteDelay = 0.5f;
+        n.retriggerCount = 1;
+        n.retriggerSpeed = 0.5f;
+        n.echoRepeats = 1;
+        n.echoDelay = 2.0f;
+        const int count = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(count >= 3, "delay, retrigger and echo combine");
+        check(std::fabs(out[0].startBeat - 0.5f) < 1e-6f,
+              "the delay applies before the retrigger chop");
+    }
+
+    // ---- Nothing can exceed the buffer -----------------------------------
+    {
+        Note n;
+        n.startTime = 0.0f;
+        n.duration = 100.0f;
+        n.retriggerCount = 8;
+        n.retriggerSpeed = 0.0156f;
+        n.echoRepeats = 4;
+        n.echoDelay = 0.0156f;
+        n.echoDecay = 0.99f;
+        const int count = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(count <= MAX_NOTE_TRIGGERS,
+              "expansion never writes past the fixed buffer it is given");
+        check(count >= 1, "even a pathological note produces at least one hit");
+    }
+
+    // ---- Values from a hand-edited file ----------------------------------
+    {
+        Note n;
+        n.duration = 1.0f;
+        n.retriggerCount = 4;
+        n.retriggerSpeed = 0.0f;      // would emit every hit at the same instant
+        const int count = expandNote(n, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(count == 1, "a zero retrigger interval is ignored rather than looping forever");
+
+        Note bad;
+        bad.duration = std::numeric_limits<float>::quiet_NaN();
+        bad.velocity = std::numeric_limits<float>::infinity();
+        const int c2 = expandNote(bad, 0.0f, out, MAX_NOTE_TRIGGERS);
+        check(c2 >= 0, "a note full of garbage does not crash the expander");
+
+        check(expandNote(n, 0.0f, nullptr, 8) == 0, "a null output buffer is refused");
+        check(expandNote(n, 0.0f, out, 0) == 0, "a zero-size output buffer is refused");
+    }
+}
+
+// ============================================================================
+// 30. Loop range and note effects reach the audio
+// ============================================================================
+static void testLoopAndEffectsReachAudio() {
+    beginTest("Loop range and note effects reach the audio");
+
+    // Asserting that the code runs proves nothing - these fields were stored
+    // and serialised for a long time while the synth never read them. The
+    // only test that would have caught it is one that listens.
+
+    auto renderNote = [](void (*configure)(Note&), int blocks) {
+        Project p;
+        p.bpm = 120.0f;                 // one beat = 0.5 s = 22050 samples
+        Pattern pat;
+        Note n;
+        n.pitch = 69;
+        n.startTime = 0.0f;
+        n.duration = 1.0f;
+        n.velocity = 1.0f;
+        n.oscillatorType = OscillatorType::Pulse;
+        if (configure) configure(n);
+        pat.notes.push_back(n);
+        p.patterns.clear();
+        p.patterns.push_back(pat);
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 8.0f, 0});
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.play();
+
+        std::vector<float> out;
+        std::vector<float> l(512), r(512);
+        for (int b = 0; b < blocks; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            out.insert(out.end(), l.begin(), l.end());
+        }
+        return out;
+    };
+
+    auto energy = [](const std::vector<float>& v, size_t from, size_t to) {
+        double sum = 0.0;
+        const size_t hi = std::min(to, v.size());
+        for (size_t i = from; i < hi; ++i) sum += double(v[i]) * double(v[i]);
+        return sum;
+    };
+
+    const int BLOCKS = 120;   // ~61k samples, about 2.8 beats at 120 BPM
+
+    // ---- Note delay -------------------------------------------------------
+    {
+        const auto plain = renderNote(nullptr, BLOCKS);
+        const auto delayed = renderNote([](Note& n) { n.noteDelay = 0.5f; }, BLOCKS);
+
+        // Half a beat at 120 BPM is 11025 samples; look at the first 8000.
+        const double plainHead = energy(plain, 0, 8000);
+        const double delayedHead = energy(delayed, 0, 8000);
+
+        check(plainHead > 1.0,
+              "the reference note is audible at the start (energy " +
+              std::to_string(plainHead) + ")");
+        check(delayedHead < plainHead * 0.05,
+              "note delay silences the start of the note - it was stored but never "
+              "played before (plain " + std::to_string(plainHead) + " vs delayed " +
+              std::to_string(delayedHead) + ")");
+        check(energy(delayed, 12000, 20000) > 1.0,
+              "the delayed note does sound, just later");
+    }
+
+    // ---- Note cut ---------------------------------------------------------
+    {
+        const auto plain = renderNote(nullptr, BLOCKS);
+        const auto cut = renderNote([](Note& n) { n.noteCut = 0.2f; }, BLOCKS);
+
+        // 0.2 beats is 4410 samples; everything past 10000 should be gone.
+        const double plainTail = energy(plain, 10000, 20000);
+        const double cutTail = energy(cut, 10000, 20000);
+
+        check(plainTail > 1.0, "the reference note is still sounding at that point");
+        check(cutTail < plainTail * 0.05,
+              "note cut ends the note early (plain tail " + std::to_string(plainTail) +
+              " vs cut tail " + std::to_string(cutTail) + ")");
+    }
+
+    // ---- Echo -------------------------------------------------------------
+    {
+        const auto plain = renderNote([](Note& n) { n.duration = 0.25f; }, BLOCKS);
+        const auto echoed = renderNote([](Note& n) {
+            n.duration = 0.25f;
+            n.echoRepeats = 2;
+            n.echoDelay = 0.5f;
+            n.echoDecay = 0.7f;
+        }, BLOCKS);
+
+        // The note itself is over by sample 5512; anything after 14000 is echo.
+        const double plainTail = energy(plain, 14000, 30000);
+        const double echoTail = energy(echoed, 14000, 30000);
+
+        check(echoTail > plainTail * 4.0,
+              "echo repeats keep sounding after the note ends (plain " +
+              std::to_string(plainTail) + " vs echoed " + std::to_string(echoTail) + ")");
+    }
+
+    // ---- Retrigger --------------------------------------------------------
+    {
+        const auto plain = renderNote(nullptr, BLOCKS);
+        const auto stutter = renderNote([](Note& n) {
+            n.retriggerCount = 5;
+            n.retriggerSpeed = 0.125f;
+        }, BLOCKS);
+
+        // A stutter is amplitude that dips and recovers. Count the dips in a
+        // short-window RMS envelope; a sustained note has none.
+        auto dipCount = [](const std::vector<float>& v, size_t from, size_t to) {
+            const size_t window = 256;
+            double peak = 0.0;
+            std::vector<double> rms;
+            for (size_t i = from; i + window < std::min(to, v.size()); i += window) {
+                double sum = 0.0;
+                for (size_t j = 0; j < window; ++j) sum += double(v[i + j]) * v[i + j];
+                const double value = std::sqrt(sum / double(window));
+                rms.push_back(value);
+                if (value > peak) peak = value;
+            }
+            if (peak <= 0.0) return 0;
+
+            const double low = peak * 0.2;
+            int dips = 0;
+            bool below = false;
+            for (double value : rms) {
+                if (!below && value < low) { below = true; }
+                else if (below && value > low * 2.0) { below = false; ++dips; }
+            }
+            return dips;
+        };
+
+        const int plainDips = dipCount(plain, 0, 20000);
+        const int stutterDips = dipCount(stutter, 0, 20000);
+
+        check(stutterDips > plainDips,
+              "retrigger chops the note into separate hits (sustained note had " +
+              std::to_string(plainDips) + " dips, retriggered had " +
+              std::to_string(stutterDips) + ")");
+    }
+
+    // ---- Pitch sweep ------------------------------------------------------
+    //
+    // The synth has implemented sweep all along; it simply had no control.
+    {
+        const auto plain = renderNote(nullptr, 40);
+        const auto swept = renderNote([](Note& n) {
+            n.sweepDirection = SweepDirection::Down;
+            n.sweepSpeed = 12.0f;
+            n.sweepAmount = 24.0f;
+        }, 40);
+
+        double difference = 0.0;
+        const size_t n = std::min(plain.size(), swept.size());
+        for (size_t i = 0; i < n; ++i) difference += std::fabs(plain[i] - swept[i]);
+        check(difference > 100.0,
+              "pitch sweep changes the rendered signal (difference " +
+              std::to_string(difference) + ")");
+    }
+
+    // ---- The loop range actually confines playback ------------------------
+    {
+        auto renderRange = [](bool useRange) {
+            Project p;
+            p.bpm = 120.0f;
+            Pattern early, late;
+
+            Note a; a.pitch = 60; a.startTime = 0.0f; a.duration = 0.5f;
+            a.oscillatorType = OscillatorType::Pulse;
+            early.notes.push_back(a);
+
+            Note b; b.pitch = 84; b.startTime = 0.0f; b.duration = 0.5f;
+            b.oscillatorType = OscillatorType::Pulse;
+            late.notes.push_back(b);
+
+            p.patterns.clear();
+            p.patterns.push_back(early);
+            p.patterns.push_back(late);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 2.0f, 0});
+            p.arrangement.push_back(Clip{1, 1, 4.0f, 2.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            Sequencer& seq = *seqPtr;
+            seq.setSampleRate(44100.0f);
+            seq.setProject(&p);
+            seq.setLoopEnabled(true);
+            if (useRange) seq.setLoopRange(0.0f, 2.0f);
+            seq.play();
+
+            // The furthest the playhead ever reaches, not where it finishes:
+            // an unconfined playhead wraps at the end of the content, so the
+            // final position says nothing about how far it travelled.
+            std::vector<float> l(512), r(512);
+            float furthest = 0.0f;
+            for (int block = 0; block < 300; ++block) {
+                seq.process(l.data(), r.data(), 512);
+                furthest = std::max(furthest, seq.getCurrentBeat());
+            }
+            return furthest;
+        };
+
+        const float confined = renderRange(true);
+        const float free = renderRange(false);
+
+        check(confined < 2.0f + 1e-3f,
+              "with a loop range the playhead never leaves it (furthest beat " +
+              std::to_string(confined) + ")");
+        check(free > 2.0f,
+              "without a range the playhead runs past beat 2, so the range is what "
+              "confined it (furthest beat " + std::to_string(free) + ")");
+    }
+
+    // ---- A loop range survives being set while playing --------------------
+    {
+        Project p;
+        p.bpm = 120.0f;
+        Pattern pat;
+        Note n; n.pitch = 60; n.startTime = 0.0f; n.duration = 0.5f;
+        pat.notes.push_back(n);
+        p.patterns.clear();
+        p.patterns.push_back(pat);
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 16.0f, 0});
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.setLoopEnabled(true);
+        seq.play();
+
+        std::vector<float> l(512), r(512);
+        for (int b = 0; b < 300; ++b) seq.process(l.data(), r.data(), 512);
+
+        // Shrink the loop to a span the playhead has already passed.
+        seq.setLoopRange(0.0f, 1.0f);
+        for (int b = 0; b < 60; ++b) seq.process(l.data(), r.data(), 512);
+
+        const float beat = seq.getCurrentBeat();
+        check(beat >= 0.0f && beat < 1.0f + 1e-3f,
+              "narrowing the loop under a running playhead folds it back in, rather "
+              "than leaving it stranded outside (beat " + std::to_string(beat) + ")");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -3178,6 +3809,10 @@ int main(int argc, char** argv) {
     testStemExport();
     testThemeContrast();
     testAutosave();
+    testGridSnap();
+    testLoopRange();
+    testNoteExpansion();
+    testLoopAndEffectsReachAudio();
     testLongRunStability();
 
     std::printf("\n==========================\n");
