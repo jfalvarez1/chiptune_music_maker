@@ -117,6 +117,9 @@ envelopes where chiptune wants step macros.**
       chiptune.
 - [ ] **B5. Hardware envelope shapes** (AY-style) and the NES sweep unit
       as a first-class per-channel unit rather than a per-note parameter.
+      *(Half done: the per-note sweep gained its UI in v3.5.0 — it was
+      implemented in the audio path with no control. The per-channel unit
+      and the AY envelope shapes remain.)*
 - [ ] **B6. Legato / tie notes and true tone portamento** between adjacent
       notes, so slides read as one gesture rather than two events.
 - [ ] **B7. Groove patterns** — per-row speed lists (e.g. `6 4 6 4`) for
@@ -124,11 +127,15 @@ envelopes where chiptune wants step macros.**
 
 ## Phase C — Composition and generation
 
-- [ ] **C1. Euclidean rhythm generator.** Onsets distributed evenly over
-      steps — the fastest known way to get a good drum pattern.
+- [x] **C1. Euclidean rhythm generator.** Shipped in v3.3.0 "Euclid":
+      `Generators.h` with nine presets, headlessly tested, in the Tools
+      panel with a live step preview.
 - [ ] **C2. Chord progression generator** with genre-aware voicings, and a
       one-click "arpeggiate this progression" that writes a classic fast
-      chiptune arp.
+      chiptune arp. *(Partly served: Quick Start writes fixed progressions
+      — Minor Pop, Andalusian — and a triad arp. What remains is the
+      generator itself: voicing options, and a lock per chord so
+      regenerating keeps the ones you like.)*
 - [x] **C3. Scale/key lock on the piano roll.** The tables and `snapToScale`
       already existed but sat several thousand lines below the piano roll in
       `UI.h`, so the "Snap to Scale" checkbox set a flag nothing could read.
@@ -136,11 +143,16 @@ envelopes where chiptune wants step macros.**
       pulls an existing selection into key. Remaining: grey out-of-key rows,
       optionally snap on draw. (`snapToScale` exists; wire it to the roll.)
 - [ ] **C4. Song structure templates** — intro/verse/chorus scaffolding
-      that generates an arrangement, not just a pattern.
+      that generates an arrangement, not just a pattern. *(The four-bar
+      starter templates shipped and cover the blank-page half; the
+      section scaffold is G4 and still open.)*
 - [ ] **C5. Melody assistant** — suggest a continuation in key over the
       current progression. Deliberately a suggestion, never an autopilot.
 - [ ] **C6. Pattern variation tools** — humanize, invert, retrograde,
-      transpose in scale, thin/densify.
+      transpose in scale, thin/densify. *(Half done: humanize and the
+      variation tool are in the Tools panel, transpose and To Scale are on
+      the piano roll toolbar, and `invertNotes`/`reverseNotesInTime` exist
+      tested in `NoteTransforms.h` — but the last two have no UI yet.)*
 
 ## Phase D — Interop and export
 
@@ -148,7 +160,9 @@ envelopes where chiptune wants step macros.**
       covers >80% of the spec and it is what people trade.
 - [ ] **D2. NSF export** for actual NES playback/homebrew.
 - [ ] **D3. MIDI import** to complement the existing export.
-- [ ] **D4. Per-channel stem export** to WAV for mixing elsewhere.
+- [x] **D4. Per-channel stem export.** `exportStems` in `FileIO.h`, a
+      Stems button beside the WAV export, and its own test group — which
+      caught the missing-directory bug the first time it ran.
 - [ ] **D5. Finish sample import** — synth trigger integration, sample
       browser window, and sample references in `.ctp`. `Sample.h` and the
       `Voice` fields exist; the playback path does not.
@@ -186,8 +200,10 @@ inside beautifully themed windows.
       discoverable shortcut overlay (`?`).
 - [x] **E7. Layout presets** — Compose / Mix / Sound Design workspaces,
       plus per-user layout persistence beyond `imgui.ini`.
-- [ ] **E8. First-run onboarding** — a three-step overlay that gets a
-      complete 8-bar loop playing in under a minute.
+- [x] **E8. First-run onboarding.** Shipped in a different shape than
+      this item imagined, serving the same goal: the welcome asks what you
+      are making, and the starter template puts four bars playing
+      immediately. The three-step overlay idea is superseded.
 - [ ] **E9. Accessibility** — a colourblind-safe palette option, UI scale
       control for HiDPI, and no information conveyed by colour alone.
 
@@ -197,8 +213,10 @@ inside beautifully themed windows.
 - [x] **F2. Versioning in one place** — a `Version.h` the About dialog,
       window title and save-file header all read from.
 - [x] **F3. About dialog** (currently a `TODO` in `main.cpp`).
-- [ ] **F4. Packaged release** — zip with the exe, docs and demo projects;
-      tagged in git.
+- [x] **F4. Packaged release.** Every release since v3.3.0 is tagged
+      and carries a zip that `package-release.ps1` verifies launches
+      standalone from a clean directory with an empty PATH. The
+      demo-project half of the original wording is F5's job.
 - [ ] **F5. Demo project pack** — one finished song per genre, which is
       also the best possible regression test.
 - [x] **F6. Screenshot gallery for GitHub.** Once features are polished and
