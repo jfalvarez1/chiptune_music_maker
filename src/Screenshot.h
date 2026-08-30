@@ -171,6 +171,10 @@ struct CaptureRequest {
 
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
+
+    // Window to bring to the front of its tab group. Several panels are
+    // docked behind others and could not be photographed at all.
+    std::string focusWindow;
 };
 
 // Parses the flags this app understands and ignores anything else.
@@ -185,6 +189,7 @@ struct CaptureRequest {
 //   --snap <name>        off|bar|1/2|1/4|1/8|1/16|1/32|1/4T|1/8T|1/16T
 //   --ghosts             show cross-channel ghost notes
 //   --chip-panel         open the Chip Accuracy section
+//   --focus <window>     bring a docked window to the front of its tabs
 //   --genre <name>       everything|chiptune|synthwave|hiphop|reggaeton|
 //                        edm|rock|lofi
 //   --frames <n>         frames to render before capturing
@@ -227,6 +232,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.expandChipPanel = true;
         } else if (arg == "--genre") {
             next(request.genreFocus);
+        } else if (arg == "--focus") {
+            next(request.focusWindow);
         } else if (arg == "--select") {
             request.selectNotes = true;
         } else if (arg == "--playing") {

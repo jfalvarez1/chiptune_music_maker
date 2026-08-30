@@ -707,6 +707,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // Tools panel (always visible)
         ChiptuneTracker::DrawToolsPanel(project, uiState, sequencer);
 
+        // A docked window sits behind whatever shares its tab group, so a
+        // capture of one needs it brought to the front. Repeated for the
+        // first few frames because the dock layout is still settling.
+        if (captureRequest.enabled && !captureRequest.focusWindow.empty() &&
+            captureFrameCounter < 30) {
+            ImGui::SetWindowFocus(captureRequest.focusWindow.c_str());
+        }
+
         // Main editor view (based on current mode)
         switch (uiState.currentView) {
             case ChiptuneTracker::ViewMode::PianoRoll:

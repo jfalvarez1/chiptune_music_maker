@@ -10741,16 +10741,9 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     // above the sections themselves so it is read before the absence is
     // noticed, rather than after hunting for something that is missing.
     if (ui.genre != Genre::Everything) {
-        static const char* ALL_CHORD_SETS[] = {
-            "Pop", "Jazz", "Rock", "EDM", "HipHop", "Reggaeton",
-            "Synthwave", "Chiptune"
-        };
-        static const char* ALL_DRUM_SETS[] = {
-            "Kicks", "Snares & Claps", "Hi-Hats", "Toms", "Cymbals",
-            "Percussion", "Reggaeton Drums"
-        };
-        const int hidden = genreHiddenSectionCount(ui.genre, ALL_CHORD_SETS, 8,
-                                                   ALL_DRUM_SETS, 7);
+        const int hidden = genreHiddenSectionCount(
+            ui.genre, ALL_CHORD_SETS, ALL_CHORD_SET_COUNT,
+            ALL_DRUM_SETS, ALL_DRUM_SET_COUNT);
         if (hidden > 0) {
             ImGui::Checkbox("Show everything", &ui.paletteShowEverything);
             ImGui::SameLine();
@@ -12452,10 +12445,37 @@ inline void humanizeSelected(Pattern& pattern, const std::vector<int>& selectedI
     }
 }
 
+// A Tools section, unless the current focus has set it aside. Shares the
+// palette's "show everything" switch, so one toggle governs the whole focus
+// rather than one per panel.
+inline bool GenreToolSection(const UIState& ui, const char* name,
+                             ImGuiTreeNodeFlags flags = 0) {
+    if (!ui.paletteShowEverything && !genreShowsTool(ui.genre, name)) return false;
+    return ImGui::CollapsingHeader(name, flags);
+}
+
 inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SetNextWindowPos(ImVec2(220, 135), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(280, 500), ImGuiCond_FirstUseEver);
     ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_None);
+
+    // What the current focus has set aside, and the way out of it.
+    if (ui.genre != Genre::Everything) {
+        const int hidden = genreHiddenToolCount(ui.genre, ALL_TOOL_SECTIONS,
+                                                ALL_TOOL_SECTION_COUNT);
+        if (hidden > 0) {
+            ImGui::Checkbox("Show everything##tools", &ui.paletteShowEverything);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%d hidden by %s focus)", hidden, genreName(ui.genre));
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%d generator%s set aside for now.\n"
+                                  "Nothing has been removed - this is the same\n"
+                                  "switch the Sound Palette carries.",
+                                  hidden, (hidden == 1) ? " is" : "s are");
+            }
+            ImGui::Separator();
+        }
+    }
 
     if (ui.selectedPattern < 0 || ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "No pattern selected");
@@ -12473,7 +12493,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // tresillo, E(5,16) the bossa clave. It is the fastest route from an
     // empty pattern to a rhythm worth keeping.
     // ========================================================================
-    if (ImGui::CollapsingHeader("Euclidean Rhythms", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (GenreToolSection(ui, "Euclidean Rhythms", ImGuiTreeNodeFlags_DefaultOpen)) {
         static int euclidSteps = 16;
         static int euclidPulses = 5;
         static int euclidRotation = 0;
@@ -12562,7 +12582,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 1. Drum Pattern Generator
     // ========================================================================
-    if (ImGui::CollapsingHeader("Drum Pattern Generator", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (GenreToolSection(ui, "Drum Pattern Generator", ImGuiTreeNodeFlags_DefaultOpen)) {
         const char* genres[] = {"Synthwave", "Outrun", "Darksynth", "Italo Disco", "Techno", "Retrowave"};
         ImGui::Combo("Genre", &g_ToolsDrumGenre, genres, IM_ARRAYSIZE(genres));
         ImGui::SliderFloat("Density", &g_ToolsDrumDensity, 0.0f, 1.0f, "%.2f");
@@ -12585,7 +12605,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 2. Arpeggiator
     // ========================================================================
-    if (ImGui::CollapsingHeader("Arpeggiator")) {
+    if (GenreToolSection(ui, "Arpeggiator")) {
         const char* modes[] = {"Up", "Down", "Up-Down", "Random"};
         ImGui::Combo("Mode", &g_ToolsArpMode, modes, IM_ARRAYSIZE(modes));
 
@@ -12610,7 +12630,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 3. Bass Pattern Generator
     // ========================================================================
-    if (ImGui::CollapsingHeader("Bass Generator")) {
+    if (GenreToolSection(ui, "Bass Generator")) {
         const char* styles[] = {"Octave Pulse", "Root + Fifth", "Walking", "Arp Style"};
         ImGui::Combo("Style", &g_ToolsBassStyle, styles, IM_ARRAYSIZE(styles));
 
@@ -12629,7 +12649,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 4. Scale Lock + Highlighting
     // ========================================================================
-    if (ImGui::CollapsingHeader("Scale Lock")) {
+    if (GenreToolSection(ui, "Scale Lock")) {
         const char* scales[] = {"Major", "Minor", "Dorian", "Phrygian", "Lydian",
                                 "Mixolydian", "Locrian", "Harmonic Minor",
                                 "Pentatonic Maj", "Pentatonic Min", "Blues"};
@@ -12655,7 +12675,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 5. Velocity Curve Painter
     // ========================================================================
-    if (ImGui::CollapsingHeader("Velocity Curve")) {
+    if (GenreToolSection(ui, "Velocity Curve")) {
         const char* curves[] = {"Linear", "Exponential", "Logarithmic", "S-Curve"};
         ImGui::Combo("Curve", &g_ToolsVelocityCurve, curves, IM_ARRAYSIZE(curves));
         ImGui::SliderFloat("Start", &g_ToolsVelocityStart, 0.1f, 1.0f);
@@ -12675,7 +12695,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 6. Fill Generator
     // ========================================================================
-    if (ImGui::CollapsingHeader("Fill Generator")) {
+    if (GenreToolSection(ui, "Fill Generator")) {
         const char* intensities[] = {"Light", "Medium", "Heavy"};
         ImGui::Combo("Intensity", &g_ToolsFillIntensity, intensities, IM_ARRAYSIZE(intensities));
 
@@ -12695,7 +12715,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 7. Pattern Variation
     // ========================================================================
-    if (ImGui::CollapsingHeader("Pattern Variation")) {
+    if (GenreToolSection(ui, "Pattern Variation")) {
         ImGui::SliderFloat("Amount", &g_ToolsVariationAmount, 0.0f, 1.0f);
         ImGui::Checkbox("Vary Timing", &g_ToolsVariationTiming);
         ImGui::Checkbox("Vary Velocity", &g_ToolsVariationVelocity);
@@ -12711,7 +12731,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 8. Quick Layer
     // ========================================================================
-    if (ImGui::CollapsingHeader("Quick Layer")) {
+    if (GenreToolSection(ui, "Quick Layer")) {
         ImGui::SliderInt("Octave Offset", &g_ToolsLayerOctave, -2, 2);
         ImGui::SliderFloat("Detune (cents)", &g_ToolsLayerDetune, 0.0f, 50.0f);
         ImGui::SliderFloat("Layer Volume", &g_ToolsLayerVelocity, 0.1f, 1.0f);
@@ -12730,7 +12750,7 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     // 9. Humanize Selected
     // ========================================================================
-    if (ImGui::CollapsingHeader("Humanize")) {
+    if (GenreToolSection(ui, "Humanize")) {
         ImGui::SliderFloat("Timing Var", &g_ToolsHumanizeTiming, 0.0f, 0.1f, "%.3f beats");
         ImGui::SliderFloat("Velocity Var", &g_ToolsHumanizeVelocity, 0.0f, 0.5f);
 

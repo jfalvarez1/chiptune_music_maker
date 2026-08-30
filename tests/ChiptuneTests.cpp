@@ -4943,19 +4943,10 @@ static void testTrackerGrid() {
 static void testGenreFocus() {
     beginTest("Genre focus");
 
-    // The palette's full contents. If a section is added and not listed
-    // here, the hidden-count the UI reports goes stale, so the counts below
-    // are the thing holding these two lists together.
-    static const char* ALL_CHORD_SETS[] = {
-        "Pop", "Jazz", "Rock", "EDM", "HipHop", "Reggaeton",
-        "Synthwave", "Chiptune"
-    };
-    static const char* ALL_DRUM_SETS[] = {
-        "Kicks", "Snares & Claps", "Hi-Hats", "Toms", "Cymbals",
-        "Percussion", "Reggaeton Drums"
-    };
-    const int CHORD_COUNT = 8;
-    const int DRUM_COUNT = 7;
+    // Genres.h owns the canonical lists, so these tests check the profiles
+    // against the same names the UI draws from.
+    const int CHORD_COUNT = ALL_CHORD_SET_COUNT;
+    const int DRUM_COUNT = ALL_DRUM_SET_COUNT;
 
     // ---- Everything is the default and hides nothing ---------------------
     {
@@ -5085,6 +5076,100 @@ static void testGenreFocus() {
             }
         }
         check(true, "every profile has a name, a description and usable defaults");
+    }
+
+
+    // ---- The Tools panel is filtered too ---------------------------------
+    //
+    // This is the panel actually named "tools", and it is what the request
+    // was about. Chiptune wants an arpeggiator and nothing humanised; hip
+    // hop wants exactly the reverse.
+    {
+        check(genreShowsTool(Genre::Chiptune, "Arpeggiator"),
+              "chiptune keeps the arpeggiator, which does the work chords cannot");
+        check(!genreShowsTool(Genre::Chiptune, "Humanize"),
+              "and sets humanize aside, because chiptune is not humanised");
+
+        check(genreShowsTool(Genre::HipHop, "Humanize"),
+              "hip hop keeps humanize, where the feel is the point");
+        check(!genreShowsTool(Genre::HipHop, "Arpeggiator"),
+              "and sets the arpeggiator aside");
+
+        for (int i = 0; i < ALL_TOOL_SECTION_COUNT; ++i) {
+            if (!genreShowsTool(Genre::Everything, ALL_TOOL_SECTIONS[i])) {
+                check(false, std::string("Everything hid the tool ") +
+                      ALL_TOOL_SECTIONS[i]);
+                break;
+            }
+        }
+        check(true, "Everything shows every generator");
+
+        check(genreHiddenToolCount(Genre::Everything, ALL_TOOL_SECTIONS,
+                                   ALL_TOOL_SECTION_COUNT) == 0,
+              "and hides none of them");
+
+        // Every genre must keep some generators and set some aside, or the
+        // profile is a mistake rather than a choice.
+        for (int i = 1; i < static_cast<int>(Genre::Count); ++i) {
+            const Genre genre = static_cast<Genre>(i);
+            const int hidden = genreHiddenToolCount(genre, ALL_TOOL_SECTIONS,
+                                                    ALL_TOOL_SECTION_COUNT);
+            if (hidden == 0 || hidden == ALL_TOOL_SECTION_COUNT) {
+                check(false, std::string(genreName(genre)) +
+                      " hides all or none of the generators");
+                break;
+            }
+        }
+        check(true, "every genre keeps some generators and sets others aside");
+    }
+
+    // ---- A profile cannot name something that does not exist -------------
+    //
+    // A typo would hide a section forever with no error, because the name
+    // simply never matches. This is the check that catches it.
+    {
+        auto knownName = [](const char* const* list, int count, const char* key) {
+            for (int i = 0; i < count; ++i) {
+                if (std::strcmp(list[i], key) == 0) return true;
+            }
+            return false;
+        };
+
+        bool allKnown = true;
+        for (int g = 0; g < static_cast<int>(Genre::Count) && allKnown; ++g) {
+            const GenreProfile& profile = genreProfile(static_cast<Genre>(g));
+
+            for (int i = 0; i < GENRE_MAX_CHORDS && profile.chords[i] != nullptr; ++i) {
+                if (!knownName(ALL_CHORD_SETS, ALL_CHORD_SET_COUNT, profile.chords[i])) {
+                    check(false, std::string(profile.name) +
+                          " names a chord set that does not exist: " + profile.chords[i]);
+                    allKnown = false;
+                    break;
+                }
+            }
+            for (int i = 0; i < GENRE_MAX_DRUMS && allKnown &&
+                            profile.drums[i] != nullptr; ++i) {
+                if (!knownName(ALL_DRUM_SETS, ALL_DRUM_SET_COUNT, profile.drums[i])) {
+                    check(false, std::string(profile.name) +
+                          " names a drum set that does not exist: " + profile.drums[i]);
+                    allKnown = false;
+                    break;
+                }
+            }
+            for (int i = 0; i < GENRE_MAX_TOOLS && allKnown &&
+                            profile.tools[i] != nullptr; ++i) {
+                if (!knownName(ALL_TOOL_SECTIONS, ALL_TOOL_SECTION_COUNT,
+                               profile.tools[i])) {
+                    check(false, std::string(profile.name) +
+                          " names a generator that does not exist: " + profile.tools[i]);
+                    allKnown = false;
+                    break;
+                }
+            }
+        }
+        check(allKnown,
+              "every section a profile names really exists - a typo here would "
+              "hide something forever with no error at all");
     }
 
     // ---- Hygiene ----------------------------------------------------------
