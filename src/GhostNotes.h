@@ -99,8 +99,12 @@ inline std::vector<GhostNote> collectGhostNotes(const Project& project,
             GhostNote ghost;
             ghost.startTime = note.startTime + offset;
             ghost.duration = note.duration;
-            ghost.pitch = note.pitch;
+            // The sounding pitch, not the stored one - a ghost showing where
+            // the neighbour's notes are written rather than where they sound
+            // would be worse than no ghost at all.
+            ghost.pitch = note.pitch + clip.transpose;
             ghost.channelIndex = clip.channelIndex;
+            if (ghost.pitch < 0 || ghost.pitch > 127) continue;
 
             // Drop anything that finishes before the window opens or starts
             // after it closes; it would be drawn off-screen regardless.

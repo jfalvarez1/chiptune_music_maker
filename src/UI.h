@@ -5847,6 +5847,45 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                                  g_ToolsScaleRoot, g_ToolsScaleType);
             }
         }
+
+        // Mirror and retrograde existed tested in NoteTransforms.h since
+        // 3.5.0 with no way to reach them - the C6 gap the roadmap audit
+        // named. Cheap variations on a phrase, which is exactly what the
+        // "make a variation" advice asks for.
+        ImGui::SameLine();
+        if (ImGui::Button("Mirror")) {
+            std::vector<int> targets = targetIndices();
+            if (!targets.empty()) {
+                g_UndoHistory.saveState(project, "Mirror");
+                // The selection's own middle, so the phrase stays in its
+                // register instead of leaping to wherever C4 reflects it.
+                int lo = 127, hi = 0;
+                for (int index : targets) {
+                    if (index < 0 || index >= static_cast<int>(pattern.notes.size())) continue;
+                    lo = std::min(lo, pattern.notes[static_cast<size_t>(index)].pitch);
+                    hi = std::max(hi, pattern.notes[static_cast<size_t>(index)].pitch);
+                }
+                invertNotes(pattern.notes, targets, (lo + hi) / 2);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Flip the selection upside down around its own\n"
+                              "middle - a rising line becomes a falling one.\n"
+                              "Applies to the selection, or the whole pattern.");
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Reverse")) {
+            std::vector<int> targets = targetIndices();
+            if (targets.size() >= 2) {
+                g_UndoHistory.saveState(project, "Reverse");
+                reverseNotesInTime(pattern.notes, targets);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Play the selection backwards in time.\n"
+                              "Pitches stay where they are.");
+        }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Pull every note onto %s %s.\n"
                               "Set the scale in the Tools panel.",
@@ -8157,8 +8196,32 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     static int selectedClipIndex = -1;
     if (selectedClipIndex >= 0 && selectedClipIndex < static_cast<int>(project.arrangement.size())) {
         if (ImGui::Button("Delete Selected##arr")) {
+            g_UndoHistory.saveState(project, "Delete Clip");
             project.arrangement.erase(project.arrangement.begin() + selectedClipIndex);
             selectedClipIndex = -1;
+        }
+
+        // Per-clip transpose: the same pattern placed at 0, +8, +3, +10 is
+        // a whole progression from one bassline. The pattern is untouched;
+        // only this placement moves.
+        if (selectedClipIndex >= 0) {
+            ImGui::SameLine(0, 12);
+            ImGui::SetNextItemWidth(110);
+            Clip& selected = project.arrangement[selectedClipIndex];
+            int transpose = selected.transpose;
+            if (ImGui::DragInt("##cliptr", &transpose, 0.1f, -48, 48,
+                               (transpose == 0) ? "Transpose: 0"
+                                                : "Transpose: %+d st")) {
+                g_UndoHistory.saveState(project, "Transpose Clip");
+                selected.transpose = std::clamp(transpose, -48, 48);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Shift every note of this placement by semitones.\n"
+                    "The pattern itself is untouched, so the same pattern\n"
+                    "placed four times at 0, +8, +3 and +10 plays a whole\n"
+                    "progression from one bassline.");
+            }
         }
     } else {
         ImGui::BeginDisabled();
@@ -8367,11 +8430,21 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
                 borderColor, 0.0f, 0, 2.0f);
         }
 
-        // Pattern name
+        // Pattern name, with the transpose beside it when there is one -
+        // two placements of one pattern that sound different must look
+        // different, or the arrangement reads as a copy-paste error.
         if (clip.patternIndex >= 0 && clip.patternIndex < static_cast<int>(project.patterns.size())) {
+            char clipLabel[80];
+            if (clip.transpose != 0) {
+                snprintf(clipLabel, sizeof(clipLabel), "%s %+d",
+                         project.patterns[clip.patternIndex].name.c_str(),
+                         clip.transpose);
+            } else {
+                snprintf(clipLabel, sizeof(clipLabel), "%s",
+                         project.patterns[clip.patternIndex].name.c_str());
+            }
             drawList->AddText(ImVec2(x + 4, y + 8),
-                IM_COL32(0, 0, 0, 255),
-                project.patterns[clip.patternIndex].name.c_str());
+                IM_COL32(0, 0, 0, 255), clipLabel);
         }
     }
 

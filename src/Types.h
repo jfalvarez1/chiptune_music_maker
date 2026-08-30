@@ -414,6 +414,11 @@ struct Clip {
 
     // Visual
     uint32_t color = 0xFF4488FF;
+
+    // Semitones added to every note when this placement plays. LSDJ's chain
+    // transpose: one bassline pattern, placed four times at 0, +8, +3, +10,
+    // is a whole progression - which also relieves the 64-pattern cap.
+    int transpose = 0;
 };
 
 // ============================================================================

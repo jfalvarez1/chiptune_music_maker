@@ -519,6 +519,14 @@ private:
                     continue;
                 }
 
+                // The placement's transpose, applied identically at note-on
+                // and note-off - if they disagreed a note would never stop.
+                // A pitch pushed off the ends of MIDI is skipped, not
+                // wrapped: a wrapped bass note ten octaves up is a far
+                // stranger bug to hear than a missing one.
+                const int soundingPitch = note.pitch + clip.transpose;
+                if (soundingPitch < 0 || soundingPitch > 127) continue;
+
                 for (int t = 0; t < triggerCount; ++t) {
                     const NoteTrigger& trigger = triggers[t];
 
@@ -531,7 +539,7 @@ private:
                             beatsToSeconds(trigger.endBeat - trigger.startBeat);
 
                         m_synths[clip.channelIndex].noteOn(
-                            note.pitch, trigger.velocity, m_state.currentTime,
+                            soundingPitch, trigger.velocity, m_state.currentTime,
                             fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
                             note.vibrato, note.arpeggio, note.slide,
                             note.dutyCycle, note.useDutyCycle,
@@ -542,7 +550,7 @@ private:
                     // Note off
                     if (trigger.endBeat >= fromBeat && trigger.endBeat < toBeat) {
                         m_synths[clip.channelIndex].noteOff(
-                            note.pitch, m_state.currentTime);
+                            soundingPitch, m_state.currentTime);
                     }
                 }
             }

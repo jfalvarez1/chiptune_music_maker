@@ -471,6 +471,15 @@ inline void applyCaptureState(const CaptureRequest& request,
         project.arrangement.push_back(Clip{2, 2, 0.0f, 4.0f, 0xFF44CC88u});
         project.arrangement.push_back(Clip{3, 4, 0.0f, 4.0f, 0xFFCC6644u});
 
+        // The bass pattern again, an octave up on the free channel - one
+        // pattern, two sounds. It puts the "+12" label in every arrangement
+        // screenshot and means every smoke case plays a transposed clip.
+        {
+            Clip octave{2, 3, 0.0f, 4.0f, 0xFF66AACCu};
+            octave.transpose = 12;
+            project.arrangement.push_back(octave);
+        }
+
         // Give the first channel a macro so the macro editor screenshot has
         // something in it
         project.channels[0].macros = makeMajorChordArp();

@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**2090 checks across 41 groups.** Exit code 0 = pass, 1 = failure, and every
+**2101 checks across 42 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -93,6 +93,7 @@ failure names the field or parameter involved.
 | Genre templates | A rhythm string is read into the right hits with accents, rests, a null string and a string longer than the note budget all handled; every genre yields four populated patterns, seven valid clips, its own tempo and only playable pitches; the drum pattern is one bar placed once per bar rather than a four-bar pattern; two genres differ in tempo, swing and voice; building the same template twice gives the same music; an out-of-range genre still yields something usable; a template survives save and load and renders audio the moment it loads. |
 | Genre kits | Every recipe has a name and description and writes only playable notes; the dembow snare has its four hits in the 3-3-2 grouping and none on a straight beat two - an assertion that caught the recipe itself being wrong; genre filtering matches whole words; every genre is offered drums and a bass at minimum; existing notes survive a kit applied on top; the key is honoured; zero bars, negative starts, absurd keys and the note budget are all refused safely. |
 | Next step | The ladder suggests in order - template, drums, bass, melody, variation, arrangement, width, export; a bass on A3 counts as a bass, which was shipped wrong once and caught in a screenshot; no starter template is told to add something it already has. |
+| Clip transpose | +12 semitones doubles the measured frequency, so the transpose provably reaches the audio; a pitch pushed past MIDI's top is silent rather than wrapped; the value survives save/load as an optional sixth token and a pre-3.7 five-token file reads as untransposed with every older field intact; a corrupt value clamps to four octaves; a ghost from a transposed clip shows the sounding pitch, not the stored one. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 

@@ -535,10 +535,13 @@ inline bool writeProject(std::ostream& file, const Project& project) {
 
     // Arrangement
     for (const Clip& clip : project.arrangement) {
+        // transpose rides at the end so a pre-3.7 reader simply stops
+        // before it, and a missing token below reads as 0 - the old
+        // behaviour either way.
         file << "CLIP " << clip.patternIndex << ' ' << clip.channelIndex << ' '
              << ctp::floatToToken(clip.startBeat) << ' '
              << ctp::floatToToken(clip.lengthBeats) << ' '
-             << clip.color << "\n";
+             << clip.color << ' ' << clip.transpose << "\n";
     }
     if (!project.arrangement.empty()) file << "\n";
 
@@ -684,6 +687,10 @@ inline bool readProject(std::istream& file, Project& project) {
             Clip clip;
             iss >> clip.patternIndex >> clip.channelIndex
                 >> clip.startBeat >> clip.lengthBeats >> clip.color;
+            // Optional sixth token, absent from every file before 3.7. The
+            // failed extraction leaves the default 0 and poisons only the
+            // stream, which is discarded at the end of this line anyway.
+            iss >> clip.transpose;
             project.arrangement.push_back(clip);
         }
         else if (cmd == "END_PROJECT") {

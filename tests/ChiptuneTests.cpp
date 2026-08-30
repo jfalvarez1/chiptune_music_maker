@@ -5868,6 +5868,201 @@ static void testNextStep() {
 }
 
 // ============================================================================
+// 42. Per-clip transpose
+// ============================================================================
+static void testClipTranspose() {
+    beginTest("Per-clip transpose");
+
+    // ---- It changes the audio, by the right amount ------------------------
+    //
+    // Rendering the same pattern plain and transposed +12 must double the
+    // fundamental. Measured by zero crossings, which is crude but cannot be
+    // fooled by a gain change.
+    {
+        auto renderTransposed = [](int transpose) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.patterns.clear();
+            p.arrangement.clear();
+
+            Pattern pat;
+            Note n;
+            n.pitch = 57;                     // A3, 220 Hz
+            n.startTime = 0.0f;
+            n.duration = 4.0f;
+            n.oscillatorType = OscillatorType::Sine;
+            pat.notes.push_back(n);
+            p.patterns.push_back(pat);
+
+            Clip clip{0, 0, 0.0f, 8.0f, 0};
+            clip.transpose = transpose;
+            p.arrangement.push_back(clip);
+            p.channels[0].oscillator.type = OscillatorType::Sine;
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            Sequencer& seq = *seqPtr;
+            seq.setSampleRate(44100.0f);
+            seq.setProject(&p);
+            seq.updateChannelConfigs();
+            seq.play();
+
+            std::vector<float> out, l(512), r(512);
+            for (int b = 0; b < 100; ++b) {
+                seq.process(l.data(), r.data(), 512);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            // Count rising zero crossings over the settled middle.
+            int crossings = 0;
+            for (size_t i = 20000; i + 1 < 45000 && i + 1 < out.size(); ++i) {
+                if (out[i] <= 0.0f && out[i + 1] > 0.0f) ++crossings;
+            }
+            return crossings;
+        };
+
+        const int plain = renderTransposed(0);
+        const int octaveUp = renderTransposed(12);
+
+        check(plain > 50, "the untransposed note oscillates (crossings " +
+              std::to_string(plain) + ")");
+        const float ratio = float(octaveUp) / float(plain);
+        check(ratio > 1.85f && ratio < 2.15f,
+              "+12 semitones doubles the frequency - the transpose reaches the "
+              "audio (ratio " + std::to_string(ratio) + ")");
+    }
+
+    // ---- A pitch pushed off MIDI is skipped, not wrapped ------------------
+    {
+        Project p;
+        p.bpm = 120.0f;
+        p.masterLimiterEnabled = false;
+        p.patterns.clear();
+        p.arrangement.clear();
+
+        Pattern pat;
+        Note n;
+        n.pitch = 120;
+        n.startTime = 0.0f;
+        n.duration = 2.0f;
+        pat.notes.push_back(n);
+        p.patterns.push_back(pat);
+
+        Clip clip{0, 0, 0.0f, 4.0f, 0};
+        clip.transpose = 48;                  // 168: far past the top
+        p.arrangement.push_back(clip);
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.play();
+
+        std::vector<float> l(512), r(512);
+        double energy = 0.0;
+        for (int b = 0; b < 40; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            for (float v : l) energy += double(v) * double(v);
+        }
+        check(energy < 1e-6,
+              "a note transposed past MIDI's top is silent rather than wrapped "
+              "- a bass note ten octaves up would be a far stranger bug to hear "
+              "(energy " + std::to_string(energy) + ")");
+    }
+
+    // ---- The round trip, and old files ------------------------------------
+    {
+        Project original;
+        original.patterns.clear();
+        original.patterns.push_back(Pattern());
+        original.arrangement.clear();
+        Clip clip{0, 2, 4.0f, 8.0f, 0xFF112233u};
+        clip.transpose = -7;
+        original.arrangement.push_back(clip);
+
+        const std::string path = testPath("clip_transpose.ctp");
+        check(saveProjectFile(original, path), "a transposed clip saves");
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "and loads");
+        check(!loaded.arrangement.empty() &&
+              loaded.arrangement[0].transpose == -7,
+              "with its transpose intact");
+        std::remove(path.c_str());
+    }
+
+    {
+        // A file written before the field existed: five tokens, no sixth.
+        const std::string path = testPath("clip_pre37.ctp");
+        {
+            std::ofstream file(path);
+            file << "CHIPTUNE_PROJECT v2\n";
+            file << "PATTERN \"P\" 16\n";
+            file << "NOTE 60 0.0 1.0 1.0 Pulse 0.0 0.0\n";
+            file << "END_PATTERN\n";
+            file << "CLIP 0 1 2.0 8.0 4283782485\n";
+            file << "END_PROJECT\n";
+        }
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "a pre-3.7 file still loads");
+        check(!loaded.arrangement.empty() && loaded.arrangement[0].transpose == 0,
+              "and its clips read as untransposed - the old behaviour");
+        check(loaded.arrangement[0].channelIndex == 1 &&
+              std::fabs(loaded.arrangement[0].startBeat - 2.0f) < 1e-5f,
+              "with every older field still parsed correctly");
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation clamps a corrupt value --------------------------------
+    {
+        Project p;
+        p.patterns.clear();
+        p.patterns.push_back(Pattern());
+        p.arrangement.clear();
+        Clip clip{0, 0, 0.0f, 4.0f, 0};
+        clip.transpose = 9000;
+        p.arrangement.push_back(clip);
+
+        clampProjectToValidRanges(p);
+        check(p.arrangement[0].transpose <= 48 && p.arrangement[0].transpose >= -48,
+              "a corrupt transpose is clamped to four octaves (got " +
+              std::to_string(p.arrangement[0].transpose) + ")");
+    }
+
+    // ---- Ghosts show the sounding pitch -----------------------------------
+    //
+    // A ghost showing where the neighbour's notes are written rather than
+    // where they sound would be worse than no ghost at all.
+    {
+        Project p;
+        p.patterns.clear();
+
+        Pattern edited;                        // pattern 0
+        p.patterns.push_back(edited);
+
+        Pattern neighbour;                     // pattern 1
+        Note n;
+        n.pitch = 60;
+        n.startTime = 0.0f;
+        n.duration = 1.0f;
+        neighbour.notes.push_back(n);
+        p.patterns.push_back(neighbour);
+
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        Clip placed{1, 3, 0.0f, 4.0f, 0};
+        placed.transpose = 7;
+        p.arrangement.push_back(placed);
+
+        const std::vector<GhostNote> ghosts = collectGhostNotes(p, 0);
+        check(!ghosts.empty() && ghosts[0].pitch == 67,
+              "a ghost from a transposed clip shows the sounding pitch, not "
+              "the stored one (got " +
+              std::to_string(ghosts.empty() ? -1 : ghosts[0].pitch) + ")");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -5948,6 +6143,7 @@ int main(int argc, char** argv) {
     testGenreTemplates();
     testGenreKits();
     testNextStep();
+    testClipTranspose();
     testLongRunStability();
 
     std::printf("\n==========================\n");

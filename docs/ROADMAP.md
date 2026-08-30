@@ -148,11 +148,11 @@ envelopes where chiptune wants step macros.**
       section scaffold is G4 and still open.)*
 - [ ] **C5. Melody assistant** — suggest a continuation in key over the
       current progression. Deliberately a suggestion, never an autopilot.
-- [ ] **C6. Pattern variation tools** — humanize, invert, retrograde,
-      transpose in scale, thin/densify. *(Half done: humanize and the
-      variation tool are in the Tools panel, transpose and To Scale are on
-      the piano roll toolbar, and `invertNotes`/`reverseNotesInTime` exist
-      tested in `NoteTransforms.h` — but the last two have no UI yet.)*
+- [x] **C6. Pattern variation tools.** Humanize and the variation tool in
+      the Tools panel; transpose, To Scale, Mirror and Reverse on the piano
+      roll toolbar. Mirror reflects around the selection's own middle so a
+      phrase stays in its register. Thin/densify remains the one unbuilt
+      verb, folded into G11's transform set.
 
 ## Phase D — Interop and export
 
@@ -366,7 +366,7 @@ audit of this codebase, which is reproducible by anyone with `grep`.
       tempo and swing, so a macro arpeggio drifts against a swung pattern.
       [verified — Furnace, LSDj, OpenMPT docs]
 
-- [ ] **G6. Per-clip transpose.** One `int` on `Clip`. One bassline phrase
+- [x] **G6. Per-clip transpose.** One `int` on `Clip`. One bassline phrase
       then covers a whole progression, which directly relieves the 64-pattern
       cap. `Clip` already decouples pattern from channel; this completes it.
       [verified — LSDj chain screen]

@@ -324,6 +324,10 @@ inline void clampProjectToValidRanges(Project& project) {
         project.arrangement.end());
 
     for (Clip& clip : project.arrangement) {
+        // Four octaves each way is beyond any musical use; past that it is
+        // a corrupt file, and clamping beats silently unplayable notes.
+        clip.transpose = static_cast<int>(
+            sanitizeFloat(static_cast<float>(clip.transpose), -48.0f, 48.0f, 0.0f));
         clip.startBeat = sanitizeFloat(clip.startBeat, 0.0f, MAX_SONG_LENGTH, 0.0f);
         clip.lengthBeats = sanitizeFloat(clip.lengthBeats, 0.0f, MAX_SONG_LENGTH, 16.0f);
         if (clip.lengthBeats <= 0.0f) clip.lengthBeats = 1.0f;
