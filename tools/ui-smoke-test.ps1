@@ -121,6 +121,18 @@ foreach ($panel in $panels) {
 
 # Genre focus decides what is put in front of you. Two very different ones,
 # so a change that collapsed them into the same palette would show up here.
+# A starter template should play the moment it loads, so these two shots are
+# of very different genres arriving ready to change.
+[void]$cases.Add(@{
+    name = "template-chiptune"
+    args = "--template chiptune --view arrangement"
+})
+
+[void]$cases.Add(@{
+    name = "template-reggaeton"
+    args = "--template reggaeton --view tracker"
+})
+
 # The first-run prompt appears once ever, so it needs forcing to be seen.
 [void]$cases.Add(@{
     name = "welcome-genre-prompt"

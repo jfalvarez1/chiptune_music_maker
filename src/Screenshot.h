@@ -179,6 +179,9 @@ struct CaptureRequest {
     // Force the first-run welcome, which otherwise only appears once
     // ever and so could never be captured.
     bool forceWelcome = false;
+
+    // Load a genre starter template instead of the demo song.
+    std::string templateGenre;
 };
 
 // Parses the flags this app understands and ignores anything else.
@@ -195,6 +198,7 @@ struct CaptureRequest {
 //   --chip-panel         open the Chip Accuracy section
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
+//   --template <genre>   load a genre starter template
 //   --genre <name>       everything|chiptune|synthwave|hiphop|reggaeton|
 //                        edm|rock|lofi
 //   --frames <n>         frames to render before capturing
@@ -241,6 +245,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             next(request.focusWindow);
         } else if (arg == "--welcome") {
             request.forceWelcome = true;
+        } else if (arg == "--template") {
+            next(request.templateGenre);
         } else if (arg == "--select") {
             request.selectNotes = true;
         } else if (arg == "--playing") {

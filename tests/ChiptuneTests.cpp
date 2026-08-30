@@ -31,6 +31,7 @@
 #include "TrackerGrid.h"
 #include "Genres.h"
 #include "Settings.h"
+#include "Templates.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -5335,6 +5336,239 @@ static void testUserSettings() {
 }
 
 // ============================================================================
+// 39. Genre starter templates
+// ============================================================================
+static void testGenreTemplates() {
+    beginTest("Genre starter templates");
+
+    // ---- Reading a rhythm -------------------------------------------------
+    {
+        Pattern pattern;
+        addStepLine(pattern, "x...x...x...x...", 36, OscillatorType::Kick808);
+        check(pattern.notes.size() == 4,
+              "four hits are read out of a sixteen-step bar (got " +
+              std::to_string(pattern.notes.size()) + ")");
+        check(std::fabs(pattern.notes[1].startTime - 1.0f) < 1e-5f,
+              "the second hit lands on the second beat");
+
+        Pattern accents;
+        addStepLine(accents, "X...x...", 36, OscillatorType::Kick808, 0.5f);
+        check(accents.notes.size() == 2, "accents and ordinary hits both count");
+        check(accents.notes[0].velocity > accents.notes[1].velocity,
+              "an accent is louder than a plain hit");
+
+        Pattern empty;
+        addStepLine(empty, "................", 36, OscillatorType::Kick808);
+        check(empty.notes.empty(), "a bar of rests produces nothing");
+
+        Pattern safe;
+        addStepLine(safe, nullptr, 36, OscillatorType::Kick808);
+        check(safe.notes.empty(), "a null rhythm is refused rather than dereferenced");
+
+        // A very long string must not run past the note budget.
+        Pattern flooded;
+        std::string many(Pattern::MAX_NOTES * 2, 'x');
+        addStepLine(flooded, many.c_str(), 36, OscillatorType::Kick808);
+        check(static_cast<int>(flooded.notes.size()) <= Pattern::MAX_NOTES,
+              "the note budget is respected (got " +
+              std::to_string(flooded.notes.size()) + ")");
+    }
+
+    // ---- Every genre produces something that plays -----------------------
+    {
+        for (int i = 0; i < static_cast<int>(Genre::Count); ++i) {
+            const Genre genre = static_cast<Genre>(i);
+            const Project project = makeGenreTemplate(genre);
+            const std::string label = genreName(genre);
+
+            if (project.patterns.size() != 4) {
+                check(false, label + " did not produce four patterns");
+                break;
+            }
+            if (project.arrangement.size() != 7) {
+                check(false, label + " did not place seven clips (four drums "
+                      "plus lead, chords and bass)");
+                break;
+            }
+
+            bool everyPatternHasNotes = true;
+            for (const Pattern& pattern : project.patterns) {
+                if (pattern.notes.empty()) {
+                    check(false, label + " left the pattern '" + pattern.name +
+                          "' empty");
+                    everyPatternHasNotes = false;
+                    break;
+                }
+            }
+            if (!everyPatternHasNotes) break;
+
+            // Every note must be playable, or the template is silent in
+            // places for no visible reason.
+            bool inRange = true;
+            for (const Pattern& pattern : project.patterns) {
+                for (const Note& note : pattern.notes) {
+                    if (note.pitch < 0 || note.pitch > 127) {
+                        check(false, label + " wrote an unplayable pitch " +
+                              std::to_string(note.pitch));
+                        inRange = false;
+                        break;
+                    }
+                }
+                if (!inRange) break;
+            }
+            if (!inRange) break;
+
+            // Clips must point at patterns that exist and channels that do.
+            bool clipsValid = true;
+            for (const Clip& clip : project.arrangement) {
+                if (clip.patternIndex < 0 ||
+                    clip.patternIndex >= static_cast<int>(project.patterns.size()) ||
+                    clip.channelIndex < 0 ||
+                    clip.channelIndex >= Project::MAX_CHANNELS) {
+                    check(false, label + " placed a clip pointing nowhere");
+                    clipsValid = false;
+                    break;
+                }
+            }
+            if (!clipsValid) break;
+
+            if (std::fabs(project.bpm - genreProfile(genre).bpm) > 0.01f) {
+                check(false, label + " did not arrive at its own tempo");
+                break;
+            }
+        }
+        check(true, "every genre produces four populated patterns, seven valid "
+                    "clips and its own tempo");
+    }
+
+    // ---- The drums demonstrate pattern reuse ------------------------------
+    //
+    // One bar placed four times, not a four-bar pattern. Reuse is the thing
+    // a starter project is best placed to teach, and it is also how someone
+    // gets from four bars to a song.
+    {
+        const Project project = makeGenreTemplate(Genre::Chiptune);
+
+        int drumsClips = 0;
+        int drumsPatternIndex = -1;
+        for (size_t i = 0; i < project.patterns.size(); ++i) {
+            if (project.patterns[i].name == "Drums") drumsPatternIndex = int(i);
+        }
+        check(drumsPatternIndex >= 0, "there is a pattern called Drums");
+
+        for (const Clip& clip : project.arrangement) {
+            if (clip.patternIndex == drumsPatternIndex) ++drumsClips;
+        }
+        check(drumsClips == TEMPLATE_BARS,
+              "the one drum pattern is placed once per bar (got " +
+              std::to_string(drumsClips) + ")");
+        check(project.patterns[drumsPatternIndex].length == 4,
+              "and it really is one bar long, not four");
+    }
+
+    // ---- Channels are named for what they carry ---------------------------
+    {
+        const Project project = makeGenreTemplate(Genre::Synthwave);
+        check(project.channels[0].name == "Lead", "channel 0 is the lead");
+        check(project.channels[1].name == "Chords", "channel 1 is the chords");
+        check(project.channels[2].name == "Bass", "channel 2 is the bass");
+        check(project.channels[3].name == "Drums", "channel 3 is the drums");
+        check(project.name.find("Synthwave") != std::string::npos,
+              "and the project says which template it came from");
+    }
+
+    // ---- Two genres are genuinely different -------------------------------
+    {
+        const Project chip = makeGenreTemplate(Genre::Chiptune);
+        const Project lofi = makeGenreTemplate(Genre::Lofi);
+
+        check(std::fabs(chip.bpm - lofi.bpm) > 20.0f,
+              "chiptune and lofi start at very different tempos");
+        check(lofi.swing > chip.swing,
+              "lofi arrives swung and chiptune does not");
+        check(chip.channels[2].oscillator.type != lofi.channels[2].oscillator.type,
+              "and they do not use the same bass voice");
+    }
+
+    // ---- Deterministic ----------------------------------------------------
+    //
+    // A template that generated something different each time would be
+    // impossible to learn from and impossible to test.
+    {
+        const Project a = makeGenreTemplate(Genre::EDM);
+        const Project b = makeGenreTemplate(Genre::EDM);
+
+        bool identical = (a.patterns.size() == b.patterns.size()) &&
+                         (a.arrangement.size() == b.arrangement.size()) &&
+                         (std::fabs(a.bpm - b.bpm) < 1e-6f);
+        if (identical) {
+            for (size_t p = 0; p < a.patterns.size() && identical; ++p) {
+                if (a.patterns[p].notes.size() != b.patterns[p].notes.size()) {
+                    identical = false;
+                    break;
+                }
+                for (size_t n = 0; n < a.patterns[p].notes.size(); ++n) {
+                    if (a.patterns[p].notes[n].pitch != b.patterns[p].notes[n].pitch) {
+                        identical = false;
+                        break;
+                    }
+                }
+            }
+        }
+        check(identical, "building the same template twice gives the same music");
+    }
+
+    // ---- An unknown genre still gives something usable --------------------
+    {
+        const Project project = makeGenreTemplate(static_cast<Genre>(99));
+        check(!project.patterns.empty() && !project.arrangement.empty(),
+              "an out-of-range genre falls back to a usable template rather "
+              "than an empty project");
+    }
+
+    // ---- It actually sounds -----------------------------------------------
+    //
+    // The point of a starting point is that it plays the moment it loads.
+    {
+        Project project = makeGenreTemplate(Genre::Reggaeton);
+        project.masterLimiterEnabled = false;
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&project);
+        seq.updateChannelConfigs();
+        seq.play();
+
+        std::vector<float> l(512), r(512);
+        double energy = 0.0;
+        for (int b = 0; b < 120; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            for (float v : l) energy += double(v) * double(v);
+        }
+        check(energy > 1.0,
+              "a freshly loaded template plays without anyone touching anything "
+              "(energy " + std::to_string(energy) + ")");
+    }
+
+    // ---- And survives a save and load -------------------------------------
+    {
+        const Project original = makeGenreTemplate(Genre::HipHop);
+        const std::string path = testPath("template_roundtrip.ctp");
+        check(saveProjectFile(original, path), "a template saves");
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "and loads");
+        check(loaded.patterns.size() == original.patterns.size(),
+              "with all its patterns");
+        check(loaded.arrangement.size() == original.arrangement.size(),
+              "and all its clips");
+        check(std::fabs(loaded.bpm - original.bpm) < 0.01f, "and its tempo");
+        std::remove(path.c_str());
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -5412,6 +5646,7 @@ int main(int argc, char** argv) {
     testTrackerGrid();
     testGenreFocus();
     testUserSettings();
+    testGenreTemplates();
     testLongRunStability();
 
     std::printf("\n==========================\n");

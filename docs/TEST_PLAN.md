@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**2035 checks across 38 groups.** Exit code 0 = pass, 1 = failure, and every
+**2062 checks across 39 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -90,6 +90,7 @@ failure names the field or parameter involved.
 | Tracker grid | Two channels show two different notes - the exact bug the old view had; a channel with no clip shows nothing; a clip owns its start beat and not its end; overlapping clips resolve to the later one; a row owns a half-open span so no note appears twice; typing replaces rather than stacks; typing into empty space creates a bar-aligned pattern and clip; a note past the pattern end extends it; the pattern budget is respected; and a note typed into the grid is audible from the sequencer. |
 | Genre focus | Everything is the default and hides nothing; every other genre keeps some sections and sets others aside, and none is indistinguishable from Everything; two genres show genuinely different palettes; the hidden count the UI reports matches the profile; every profile has a name, a description and a usable tempo, swing and scale; an out-of-range genre falls back rather than reading past the table. |
 | User settings | Every genre token round trips and no two collide; an unknown or null token falls back to Everything; a missing file leaves the defaults so a first run asks; choosing Everything is remembered as an answer rather than as never having been asked; a file with comments, junk lines and a truncated tail still yields the settings it does understand; an unwritable target fails quietly. |
+| Genre templates | A rhythm string is read into the right hits with accents, rests, a null string and a string longer than the note budget all handled; every genre yields four populated patterns, seven valid clips, its own tempo and only playable pitches; the drum pattern is one bar placed once per bar rather than a four-bar pattern; two genres differ in tempo, swing and voice; building the same template twice gives the same music; an out-of-range genre still yields something usable; a template survives save and load and renders audio the moment it loads. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 
@@ -100,7 +101,7 @@ This drives the app's `--capture` mode through the combinations a person
 would otherwise click through by hand.
 
 ```powershell
-./tools/ui-smoke-test.ps1            # 36 cases
+./tools/ui-smoke-test.ps1            # 38 cases
 ./tools/ui-smoke-test.ps1 -Quick     # 12 cases, for a fast loop
 ```
 

@@ -21,6 +21,7 @@
 #include "GhostNotes.h"
 #include "TrackerGrid.h"
 #include "Genres.h"
+#include "Templates.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"

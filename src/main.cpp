@@ -36,6 +36,7 @@
 #include "CrashHandler.h"
 #include "Autosave.h"
 #include "Settings.h"
+#include "Templates.h"
 
 #include <cstdio>
 #include <memory>
@@ -349,6 +350,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     if (captureRequest.enabled) {
         ChiptuneTracker::applyCaptureState(captureRequest, project, uiState);
 
+        if (!captureRequest.templateGenre.empty()) {
+            project = ChiptuneTracker::makeGenreTemplate(
+                ChiptuneTracker::genreFromKey(captureRequest.templateGenre.c_str()));
+            sequencer.setBPM(project.bpm);
+        }
+
         // A loop range needs the sequencer, so it is applied here rather than
         // in applyCaptureState, which only sees the project and the UI state.
         if (captureRequest.loopStart >= 0.0f &&
@@ -431,8 +438,38 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("New Project")) {
+                    ChiptuneTracker::g_UndoHistory.saveState(project, "New Project");
                     project = ChiptuneTracker::Project();
                     sequencer.setProject(&project);
+                }
+
+                // The welcome offers this once; it should not then be the
+                // only way to reach it.
+                if (ImGui::BeginMenu("New From Template")) {
+                    for (int i = 1; i < static_cast<int>(ChiptuneTracker::Genre::Count); ++i) {
+                        const ChiptuneTracker::Genre candidate =
+                            static_cast<ChiptuneTracker::Genre>(i);
+                        if (ImGui::MenuItem(ChiptuneTracker::genreName(candidate))) {
+                            // Undoable like any other edit, so nobody loses
+                            // work to a mis-click in a menu.
+                            ChiptuneTracker::g_UndoHistory.saveState(
+                                project, "Load Template");
+                            project = ChiptuneTracker::makeGenreTemplate(candidate);
+                            uiState.selectedPattern = 0;
+                            uiState.selectedNoteIndex = -1;
+                            uiState.selectedNoteIndices.clear();
+                            sequencer.setProject(&project);
+                            sequencer.updateChannelConfigs();
+                            sequencer.setBPM(project.bpm);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "Four bars of %s to change.\nCtrl+Z puts back "
+                                "what you had.",
+                                ChiptuneTracker::genreName(candidate));
+                        }
+                    }
+                    ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Save Project", "Ctrl+S")) {
                     if (uiState.projectFilePath.empty()) {
@@ -710,6 +747,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             ImGui::Spacing();
 
             static bool applyDefaults = true;
+            static bool startFromTemplate = true;
             ChiptuneTracker::Genre chosen = ChiptuneTracker::Genre::Everything;
             bool picked = false;
 
@@ -738,11 +776,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::Checkbox("Also set the tempo and key to suit", &applyDefaults);
+            ImGui::Checkbox("Start me off with four bars I can change",
+                            &startFromTemplate);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
-                    "The only option here that changes your project.\n"
-                    "Leave it off and nothing but the layout is touched.");
+                    "Drums, bass, chords and a lead already playing, in the key\n"
+                    "and at the tempo the genre uses. It is not meant to sound\n"
+                    "finished - it is meant to be something to change.\n\n"
+                    "Ctrl+Z undoes it if you would rather start empty.");
+            }
+
+            ImGui::Checkbox("Set the tempo and key to suit", &applyDefaults);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Ignored when starting from four bars, which already\n"
+                    "arrives in the right key and tempo.");
             }
 
             ImGui::Spacing();
@@ -761,7 +809,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 uiState.paletteShowEverything = false;
                 ChiptuneTracker::ApplyGenrePanels(uiState);
 
-                if (applyDefaults && chosen != ChiptuneTracker::Genre::Everything) {
+                // A starting point already arrives in the right key and
+                // tempo, so the two options do not fight over the project.
+                if (startFromTemplate) {
+                    ChiptuneTracker::g_UndoHistory.saveState(project, "Empty Project");
+                    project = ChiptuneTracker::makeGenreTemplate(chosen);
+                    uiState.selectedPattern = 0;
+                    uiState.selectedNoteIndex = -1;
+                    uiState.selectedNoteIndices.clear();
+                    sequencer.updateChannelConfigs();
+                    sequencer.setBPM(project.bpm);
+
+                    const ChiptuneTracker::GenreProfile& profile =
+                        ChiptuneTracker::genreProfile(chosen);
+                    ChiptuneTracker::g_ToolsScaleRoot = profile.scaleRoot;
+                    ChiptuneTracker::g_ToolsScaleType = profile.scaleType;
+                } else if (applyDefaults && chosen != ChiptuneTracker::Genre::Everything) {
                     const ChiptuneTracker::GenreProfile& profile =
                         ChiptuneTracker::genreProfile(chosen);
                     project.bpm = profile.bpm;
