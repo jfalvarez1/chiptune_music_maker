@@ -299,6 +299,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // A returning user gets the focus they chose last time, and is not asked
     // again. Choosing Everything is a real answer, which is why "welcomed"
     // is tracked separately from the genre itself.
+    uiState.showNextStep = userSettings.showNextStep;
+
     if (userSettings.welcomed) {
         uiState.genre = userSettings.genre;
         ChiptuneTracker::ApplyGenrePanels(uiState);
@@ -570,6 +572,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 if (ImGui::MenuItem("Automation", nullptr, uiState.showAutomation)) {
                     uiState.showAutomation = !uiState.showAutomation;
                 }
+                ImGui::Separator();
+                // Dismissing the hint must not be a one-way door.
+                if (ImGui::MenuItem("Next Step Hints", nullptr, uiState.showNextStep)) {
+                    uiState.showNextStep = !uiState.showNextStep;
+                    userSettings.showNextStep = uiState.showNextStep;
+                    ChiptuneTracker::saveSettings(userSettings, settingsFile);
+                }
                 if (ImGui::MenuItem("MIDI Input", nullptr, uiState.showMIDIInput)) {
                     uiState.showMIDIInput = !uiState.showMIDIInput;
                 }
@@ -626,6 +635,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                     showAboutDialog = true;
                 }
                 ImGui::EndMenu();
+            }
+            {
+                const bool before = uiState.showNextStep;
+                ChiptuneTracker::DrawNextStepHint(project, uiState);
+                if (before != uiState.showNextStep) {
+                    // The x was clicked; make the dismissal survive a restart.
+                    userSettings.showNextStep = uiState.showNextStep;
+                    ChiptuneTracker::saveSettings(userSettings, settingsFile);
+                }
             }
             ImGui::EndMainMenuBar();
         }

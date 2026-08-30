@@ -296,6 +296,17 @@ audit of this codebase, which is reproducible by anyone with `grep`.
       same way, ship a genre-appropriate starting template, and persist the
       choice across sessions.
 
+- [x] **Guided start, kept optional.** A first-run prompt asks what kind
+      of music this is, with Other as a real answer; a four-bar starter
+      template per genre that already plays; a Quick Start section offering
+      each style's foundational patterns - the dembow, boom bap, four on the
+      floor, octave bass - as buttons that write ordinary, editable,
+      undoable notes; and a one-line "next step" hint in the menu bar that
+      reads the project and names one concrete thing to do, aimed squarely
+      at the eight-bar-loop trap. Every piece is optional and dismissible,
+      dismissals persist across sessions, and the manual path is untouched
+      throughout - these are a faster pencil, not a different instrument.
+
 ### Next, in rough value order
 
 - [x] **G1. Make the tracker view editable.** `DrawTrackerView` is read-only

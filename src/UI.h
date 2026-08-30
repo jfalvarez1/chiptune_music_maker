@@ -22,6 +22,8 @@
 #include "TrackerGrid.h"
 #include "Genres.h"
 #include "Templates.h"
+#include "NextStep.h"
+#include "GenreKits.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -9724,6 +9726,45 @@ inline void ApplyGenrePanels(UIState& ui) {
     ui.showAutomation = profile.automation;
 }
 
+// The next-step hint, drawn right-aligned in the main menu bar.
+//
+// It lived in the Views panel first, and was clipped straight out of sight:
+// that panel is docked into a 16% strip and already carries five view
+// buttons and the focus row. The menu bar is always visible and costs no
+// layout space, which is where a status line belongs.
+inline void DrawNextStepHint(const Project& project, UIState& ui) {
+    if (!ui.showNextStep) return;
+
+    const NextStep step = suggestNextStep(project);
+    if (!step.valid) return;
+
+    char label[160];
+    snprintf(label, sizeof(label), "Next: %s", step.headline);
+
+    const float textWidth = ImGui::CalcTextSize(label).x;
+    const float dismissWidth = ImGui::CalcTextSize("(?)  x").x + 24.0f;
+    const float target = ImGui::GetWindowWidth() - textWidth - dismissWidth - 16.0f;
+
+    // On a narrow window the menus themselves come first; a hint that
+    // overlapped them would be worse than one that is absent.
+    if (target <= ImGui::GetCursorPosX() + 8.0f) return;
+
+    ImGui::SameLine(target);
+    ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.00f, 1.0f), "%s", label);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", step.detail);
+
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", step.detail);
+
+    ImGui::SameLine();
+    if (ImGui::SmallButton("x##nextstep")) ui.showNextStep = false;
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Hide these suggestions.\nView > Next Step Hints "
+                          "brings them back.");
+    }
+}
+
 inline void DrawViewTabs(Project& project, UIState& ui) {
     // Set initial window position on first use (top right)
     ImGui::SetNextWindowPos(ImVec2(780, 35), ImGuiCond_FirstUseEver);
@@ -9801,6 +9842,7 @@ inline void DrawViewTabs(Project& project, UIState& ui) {
     if (ImGui::Button("Pad", ImVec2(100, 30))) {
         ui.currentView = ViewMode::PadController;
     }
+
 
     ImGui::End();
 }
@@ -12459,6 +12501,83 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SetNextWindowPos(ImVec2(220, 135), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(280, 500), ImGuiCond_FirstUseEver);
     ImGui::Begin("Tools", nullptr, ImGuiWindowFlags_None);
+
+    // ------------------------------------------------------------------
+    // Quick Start
+    //
+    // The patterns a style is built on - a dembow, a boom bap, an octave
+    // bass - as buttons, so the tedious part of starting is optional. Each
+    // writes ordinary notes into the selected pattern: one undo step,
+    // editable and deletable like anything placed by hand. The manual path
+    // is untouched, and this whole section folds away.
+    // ------------------------------------------------------------------
+    if (ImGui::CollapsingHeader("Quick Start", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ui.selectedPattern < 0 ||
+            ui.selectedPattern >= static_cast<int>(project.patterns.size())) {
+            ImGui::TextDisabled("Select a pattern to write into.");
+        } else {
+            Pattern& target = project.patterns[ui.selectedPattern];
+            const int keyRoot = 60 + g_ToolsScaleRoot;
+
+            KitVoices voices;
+            if (ui.selectedChannel >= 0 && ui.selectedChannel < Project::MAX_CHANNELS) {
+                voices.pitched = project.channels[ui.selectedChannel].oscillator.type;
+            }
+
+            int recipeCount = 0;
+            const KitRecipe* recipes = kitRecipes(recipeCount);
+
+            for (int categoryIndex = 0;
+                 categoryIndex < static_cast<int>(KitCategory::Count);
+                 ++categoryIndex) {
+                const KitCategory category = static_cast<KitCategory>(categoryIndex);
+
+                // Nothing suits this genre in this category: skip the label
+                // rather than showing an empty heading.
+                if (countRecipesForGenre(ui.genre, category) == 0) continue;
+
+                ImGui::TextDisabled("%s", kitCategoryName(category));
+
+                int shown = 0;
+                for (int i = 0; i < recipeCount; ++i) {
+                    const KitRecipe& recipe = recipes[i];
+                    if (recipe.category != category) continue;
+                    if (!ui.paletteShowEverything &&
+                        !recipeSuitsGenre(recipe, ui.genre)) {
+                        continue;
+                    }
+
+                    if (shown % 2 == 1) ImGui::SameLine();
+                    ++shown;
+
+                    if (ImGui::Button(recipe.name, ImVec2(150, 26))) {
+                        g_UndoHistory.saveState(project, recipe.name);
+                        const int added = applyKitRecipe(target, recipe, 0.0f,
+                                                         4, keyRoot, voices);
+                        if (added > 0) {
+                            const float extent = 16.0f;
+                            if (extent > static_cast<float>(target.length)) {
+                                target.length = static_cast<int>(extent);
+                            }
+                        } else {
+                            // Nothing was written - the pattern is full. Do
+                            // not leave a phantom step on the undo stack.
+                            g_UndoHistory.undo(project);
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s\n\nWrites four bars of ordinary "
+                                          "notes into '%s'.\nCtrl+Z undoes it; "
+                                          "existing notes are kept.",
+                                          recipe.description, target.name.c_str());
+                    }
+                }
+            }
+            ImGui::TextDisabled("Or draw everything yourself below - these are "
+                                "just a faster pencil.");
+        }
+        ImGui::Separator();
+    }
 
     // What the current focus has set aside, and the way out of it.
     if (ui.genre != Genre::Everything) {

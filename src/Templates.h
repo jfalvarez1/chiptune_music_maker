@@ -124,7 +124,7 @@ inline const GenreTemplate& genreTemplate(Genre genre) {
             // The widely used approximation: kick on every beat, and the
             // snare in the 3-3-2 grouping that gives the pattern its lilt.
             "x...x...x...x...",
-            "..x.x..x..x.x..x",
+            "...x..x....x..x.",
             "x.x.x.x.x.x.x.x.",
             {0, 8, 3, 10},
             OscillatorType::PolySynth, OscillatorType::PolySynth,

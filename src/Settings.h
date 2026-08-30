@@ -40,6 +40,10 @@ struct UserSettings {
     // Whether the welcome offered to set tempo and key, and was taken up on
     // it. Remembered so the answer can be defaulted next time.
     bool applyGenreDefaults = false;
+
+    // The one-line "what next" hint. Dismissing it should stick - being
+    // told the same thing on every launch after saying no once is nagging.
+    bool showNextStep = true;
 };
 
 inline const char* SETTINGS_FILENAME = "chiptune-settings.ini";
@@ -73,6 +77,8 @@ inline bool loadSettings(UserSettings& settings, const std::string& path) {
             settings.genre = genreFromKey(value.c_str());
         } else if (key == "applyGenreDefaults") {
             settings.applyGenreDefaults = (value == "1" || value == "true");
+        } else if (key == "showNextStep") {
+            settings.showNextStep = (value == "1" || value == "true");
         }
         // Anything else is from a newer version; leaving it alone is the
         // point of a tolerant reader.
@@ -89,6 +95,7 @@ inline bool saveSettings(const UserSettings& settings, const std::string& path) 
     file << "welcomed=" << (settings.welcomed ? 1 : 0) << "\n";
     file << "genre=" << genreKey(settings.genre) << "\n";
     file << "applyGenreDefaults=" << (settings.applyGenreDefaults ? 1 : 0) << "\n";
+    file << "showNextStep=" << (settings.showNextStep ? 1 : 0) << "\n";
     return file.good();
 }
 

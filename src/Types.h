@@ -1237,6 +1237,10 @@ struct UIState {
     Genre genre = Genre::Everything;
     bool paletteShowEverything = false;
 
+    // The one-line "what next" hint. On by default and dismissible; the
+    // people it is for are the least likely to go looking for it in a menu.
+    bool showNextStep = true;
+
     // Show the other channels' notes faintly behind the edited pattern.
     // Off by default: this audience self-selects for a quiet screen.
     bool showGhostNotes = false;

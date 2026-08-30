@@ -133,6 +133,13 @@ foreach ($panel in $panels) {
     args = "--template reggaeton --view tracker"
 })
 
+# Quick Start offers each genre its foundational patterns as buttons. The
+# Tools panel is tabbed behind Patterns, so it needs focusing.
+[void]$cases.Add(@{
+    name = "quickstart-kits"
+    args = "--demo --genre reggaeton --focus Tools"
+})
+
 # The first-run prompt appears once ever, so it needs forcing to be seen.
 [void]$cases.Add(@{
     name = "welcome-genre-prompt"

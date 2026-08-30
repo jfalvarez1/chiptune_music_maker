@@ -32,6 +32,8 @@
 #include "Genres.h"
 #include "Settings.h"
 #include "Templates.h"
+#include "GenreKits.h"
+#include "NextStep.h"
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -5569,6 +5571,303 @@ static void testGenreTemplates() {
 }
 
 // ============================================================================
+// 40. Genre kits
+// ============================================================================
+static void testGenreKits() {
+    beginTest("Genre kits");
+
+    const KitVoices voices;
+
+    // ---- Every recipe is well formed --------------------------------------
+    {
+        int count = 0;
+        const KitRecipe* recipes = kitRecipes(count);
+        check(count > 0, "there are recipes at all");
+
+        for (int i = 0; i < count; ++i) {
+            const KitRecipe& recipe = recipes[i];
+            if (recipe.name == nullptr || recipe.name[0] == '\0') {
+                check(false, "a recipe has no name"); break;
+            }
+            if (recipe.description == nullptr || recipe.description[0] == '\0') {
+                check(false, std::string(recipe.name) + " has no description");
+                break;
+            }
+
+            // Every recipe must actually produce notes when applied.
+            Pattern pattern;
+            const int added = applyKitRecipe(pattern, recipe, 0.0f, 4, 60, voices);
+            if (added <= 0) {
+                check(false, std::string(recipe.name) + " produced nothing");
+                break;
+            }
+            if (static_cast<int>(pattern.notes.size()) != added) {
+                check(false, std::string(recipe.name) +
+                      " miscounted what it added");
+                break;
+            }
+            for (const Note& note : pattern.notes) {
+                if (note.pitch < 0 || note.pitch > 127) {
+                    check(false, std::string(recipe.name) +
+                          " wrote an unplayable pitch");
+                    break;
+                }
+            }
+        }
+        check(true, "every recipe has a name, a description, and writes "
+                    "playable notes");
+    }
+
+    // ---- The dembow is the dembow -----------------------------------------
+    //
+    // The 3-3-2 snare grouping is what makes reggaeton sound like reggaeton;
+    // if an edit ever flattens it into a backbeat, this is the test that says
+    // so in words rather than as a subtle wrongness in the audio.
+    {
+        int count = 0;
+        const KitRecipe* recipes = kitRecipes(count);
+        const KitRecipe* dembow = nullptr;
+        for (int i = 0; i < count; ++i) {
+            if (std::strcmp(recipes[i].name, "Dembow") == 0) dembow = &recipes[i];
+        }
+        check(dembow != nullptr, "the dembow exists");
+
+        Pattern pattern;
+        applyKitRecipe(pattern, *dembow, 0.0f, 1, 60, voices);
+
+        int snareHits = 0;
+        bool snareOnBeatTwo = false;
+        for (const Note& note : pattern.notes) {
+            if (note.pitch != 38) continue;
+            ++snareHits;
+            if (std::fabs(note.startTime - 1.0f) < 1e-5f) snareOnBeatTwo = true;
+        }
+        check(snareHits == 4, "the dembow snare has its four hits - the 3-3-2 "
+              "grouping twice per bar (got " + std::to_string(snareHits) + ")");
+        check(!snareOnBeatTwo,
+              "and none of them is a straight backbeat on beat two - the "
+              "syncopation is the genre");
+    }
+
+    // ---- Genre filtering ---------------------------------------------------
+    {
+        int count = 0;
+        const KitRecipe* recipes = kitRecipes(count);
+
+        const KitRecipe* fourFloor = nullptr;
+        for (int i = 0; i < count; ++i) {
+            if (std::strcmp(recipes[i].name, "Four on the Floor") == 0) {
+                fourFloor = &recipes[i];
+            }
+        }
+        check(fourFloor != nullptr, "four on the floor exists");
+        check(recipeSuitsGenre(*fourFloor, Genre::EDM),
+              "four on the floor suits EDM");
+        check(!recipeSuitsGenre(*fourFloor, Genre::HipHop),
+              "and is not offered for hip hop");
+        check(recipeSuitsGenre(*fourFloor, Genre::Everything),
+              "though Everything sees all of it");
+
+        // A recipe with no genre list suits every genre.
+        const KitRecipe* rootNotes = nullptr;
+        for (int i = 0; i < count; ++i) {
+            if (std::strcmp(recipes[i].name, "Root Notes") == 0) {
+                rootNotes = &recipes[i];
+            }
+        }
+        check(rootNotes != nullptr && recipeSuitsGenre(*rootNotes, Genre::Chiptune) &&
+              recipeSuitsGenre(*rootNotes, Genre::Reggaeton),
+              "a universal recipe suits every genre");
+
+        // Every genre must be offered at least one drum and one bass recipe,
+        // or the Quick Start section is empty for it.
+        for (int g = 0; g < static_cast<int>(Genre::Count); ++g) {
+            const Genre genre = static_cast<Genre>(g);
+            if (countRecipesForGenre(genre, KitCategory::Drums) == 0 ||
+                countRecipesForGenre(genre, KitCategory::Bass) == 0) {
+                check(false, std::string(genreName(genre)) +
+                      " has no drum or no bass recipe");
+                break;
+            }
+        }
+        check(true, "every genre is offered drums and a bass at minimum");
+    }
+
+    // ---- Existing notes are kept ------------------------------------------
+    //
+    // Layering a bassline under a melody is ordinary; silently deleting
+    // someone's work to make room is not.
+    {
+        int count = 0;
+        const KitRecipe* recipes = kitRecipes(count);
+
+        Pattern pattern;
+        Note mine;
+        mine.pitch = 72;
+        mine.startTime = 0.5f;
+        pattern.notes.push_back(mine);
+
+        applyKitRecipe(pattern, recipes[0], 0.0f, 1, 60, voices);
+
+        bool survived = false;
+        for (const Note& note : pattern.notes) {
+            if (note.pitch == 72 && std::fabs(note.startTime - 0.5f) < 1e-5f) {
+                survived = true;
+            }
+        }
+        check(survived, "a note that was already there survives a kit being "
+                        "applied on top of it");
+    }
+
+    // ---- The key is honoured ----------------------------------------------
+    {
+        int count = 0;
+        const KitRecipe* recipes = kitRecipes(count);
+        const KitRecipe* octavePump = nullptr;
+        for (int i = 0; i < count; ++i) {
+            if (std::strcmp(recipes[i].name, "Octave Pump") == 0) {
+                octavePump = &recipes[i];
+            }
+        }
+        check(octavePump != nullptr, "the octave pump exists");
+
+        Pattern inC, inE;
+        applyKitRecipe(inC, *octavePump, 0.0f, 1, 60, voices);
+        applyKitRecipe(inE, *octavePump, 0.0f, 1, 64, voices);
+
+        check(!inC.notes.empty() && !inE.notes.empty() &&
+              inE.notes[0].pitch - inC.notes[0].pitch == 4,
+              "the same recipe in a different key moves by the difference");
+    }
+
+    // ---- Refusals ----------------------------------------------------------
+    {
+        int count = 0;
+        const KitRecipe* recipes = kitRecipes(count);
+        Pattern pattern;
+
+        check(applyKitRecipe(pattern, recipes[0], 0.0f, 0, 60, voices) == 0,
+              "zero bars writes nothing");
+        check(applyKitRecipe(pattern, recipes[0], -1.0f, 4, 60, voices) == 0,
+              "a negative start writes nothing");
+        check(applyKitRecipe(pattern, recipes[0], 0.0f, 4, 999, voices) == 0,
+              "an absurd key writes nothing");
+        check(pattern.notes.empty(), "and the pattern is untouched in all cases");
+
+        // The note budget holds.
+        Pattern full;
+        for (int i = 0; i < 40; ++i) {
+            applyKitRecipe(full, recipes[0], float(i) * 4.0f, 4, 60, voices);
+        }
+        check(static_cast<int>(full.notes.size()) <= Pattern::MAX_NOTES,
+              "repeated application never exceeds the note budget (got " +
+              std::to_string(full.notes.size()) + ")");
+    }
+}
+
+// ============================================================================
+// 41. Next-step suggestions
+// ============================================================================
+static void testNextStep() {
+    beginTest("Next-step suggestions");
+
+    auto headline = [](const Project& project) {
+        return std::string(suggestNextStep(project).headline);
+    };
+
+    // ---- The ladder, rung by rung -----------------------------------------
+    {
+        Project p;
+        p.patterns.clear();
+        p.arrangement.clear();
+        check(headline(p) == "Start with four bars",
+              "an empty project is pointed at the template");
+
+        // A melody but no drums.
+        Pattern melody;
+        Note m; m.pitch = 72; m.oscillatorType = OscillatorType::Pulse;
+        melody.notes.push_back(m);
+        p.patterns.push_back(melody);
+        check(headline(p) == "Add drums", "no drums means add drums");
+
+        // Drums arrive.
+        Note d; d.pitch = 36; d.oscillatorType = OscillatorType::Kick808;
+        p.patterns[0].notes.push_back(d);
+        check(headline(p) == "Add a bassline", "drums but no bass means add bass");
+
+        // Bass arrives.
+        Note b; b.pitch = 40; b.oscillatorType = OscillatorType::Triangle;
+        p.patterns[0].notes.push_back(b);
+
+        // Everything present, one pattern, nothing arranged: the trap.
+        check(headline(p) == "Make a variation",
+              "a complete loop in one pattern is pushed toward a variation, "
+              "not another layer - the layer is the trap");
+
+        // A second pattern exists but the song is still short.
+        Pattern second;
+        second.notes.push_back(m);
+        p.patterns.push_back(second);
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 16.0f, 0});
+        check(headline(p) == "Arrange what you have",
+              "two patterns and a short timeline is pushed toward arranging");
+
+        // A long arrangement on few channels.
+        p.arrangement.push_back(Clip{1, 0, 16.0f, 24.0f, 0});
+        check(headline(p) == "Give it some width",
+              "a long arrangement on one channel is pushed toward width");
+
+        // Spread across channels: done.
+        p.arrangement.push_back(Clip{0, 2, 0.0f, 40.0f, 0});
+        p.arrangement.push_back(Clip{1, 4, 0.0f, 40.0f, 0});
+        check(headline(p) == "Sounds like a song",
+              "a full spread is pointed at the export");
+    }
+
+    // ---- The bass register boundary ---------------------------------------
+    //
+    // This was wrong once already: the ceiling was C3, the chiptune template
+    // puts its bass on A3, and a project with a perfectly good bassline was
+    // told to write one.
+    {
+        Project p;
+        p.patterns.clear();
+        p.arrangement.clear();
+
+        Pattern pattern;
+        Note drums; drums.pitch = 36; drums.oscillatorType = OscillatorType::Kick808;
+        Note bassA3; bassA3.pitch = 57; bassA3.oscillatorType = OscillatorType::Triangle;
+        Note lead; lead.pitch = 72; lead.oscillatorType = OscillatorType::Pulse;
+        pattern.notes.push_back(drums);
+        pattern.notes.push_back(bassA3);
+        pattern.notes.push_back(lead);
+        p.patterns.push_back(pattern);
+
+        check(headline(p) != "Add a bassline",
+              "a bass on A3 counts as a bass - the regression that was "
+              "actually shipped and caught in a screenshot");
+    }
+
+    // ---- Every template satisfies the ladder ------------------------------
+    //
+    // A starter template arriving with "add drums" over it would be
+    // self-refuting.
+    {
+        for (int i = 0; i < static_cast<int>(Genre::Count); ++i) {
+            const Project p = makeGenreTemplate(static_cast<Genre>(i));
+            const std::string suggestion = headline(p);
+            if (suggestion == "Start with four bars" || suggestion == "Add drums" ||
+                suggestion == "Add a bassline" || suggestion == "Write a melody") {
+                check(false, std::string(genreName(static_cast<Genre>(i))) +
+                      "'s template is told: " + suggestion);
+                break;
+            }
+        }
+        check(true, "no starter template is told to add what it already has");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -5647,6 +5946,8 @@ int main(int argc, char** argv) {
     testGenreFocus();
     testUserSettings();
     testGenreTemplates();
+    testGenreKits();
+    testNextStep();
     testLongRunStability();
 
     std::printf("\n==========================\n");
