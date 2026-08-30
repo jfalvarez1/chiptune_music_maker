@@ -1260,7 +1260,9 @@ struct UIState {
     // Loop range being dragged on the timeline ruler.
     bool isDraggingLoopRange = false;
     float loopDragAnchorBeat = 0.0f;
-    float zoomX = 1.0f;
+    // 1.75, not 1.0: at 1.0 a sixteenth note is ten pixels wide, too
+    // narrow to grab or resize - the first real user hit this in minutes.
+    float zoomX = 1.75f;
     float zoomY = 1.0f;
     float scrollX = 0.0f;
     float scrollY = 0.0f;

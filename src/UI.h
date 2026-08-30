@@ -5896,6 +5896,11 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                                  g_ToolsScaleRoot, g_ToolsScaleType);
             }
         }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Pull every note onto %s %s.\n"
+                              "Pick the key in Tools > Scale Lock.",
+                              noteName(g_ToolsScaleRoot), scaleName(g_ToolsScaleType));
+        }
 
         // Mirror and retrograde existed tested in NoteTransforms.h since
         // 3.5.0 with no way to reach them - the C6 gap the roadmap audit
@@ -5935,10 +5940,23 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::SetTooltip("Play the selection backwards in time.\n"
                               "Pitches stay where they are.");
         }
+
+        // The same flag the Tools panel's Scale Lock section sets - but
+        // reachable from where drawing actually happens. It used to live
+        // only inside a collapsed header in a background tab, under a
+        // different name than its own header, and the lesson sent people
+        // hunting for it there.
+        ImGui::SameLine();
+        ImGui::Checkbox("In Key", &g_ToolsScaleLock);
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Pull every note onto %s %s.\n"
-                              "Set the scale in the Tools panel.",
+            ImGui::SetTooltip("Notes you draw snap to %s %s.\n"
+                              "Pick a different key in Tools > Scale Lock.",
                               noteName(g_ToolsScaleRoot), scaleName(g_ToolsScaleType));
+        }
+        if (g_ToolsScaleLock) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s %s", noteName(g_ToolsScaleRoot),
+                                scaleName(g_ToolsScaleType));
         }
     }
 
@@ -6896,11 +6914,19 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         float noteX = note.startTime * beatWidth;
         float noteW = note.duration * beatWidth;
 
+        // A 1/16 note at default zoom is a few pixels wide, and a fixed
+        // 8px handle measured inside it left nothing to click - the user's
+        // exact words were "when I try, it just places another note". The
+        // hit zone extends narrow notes to a minimum clickable width, and
+        // the handle scales down so the note keeps a draggable body.
+        const float hitW = std::max(noteW, 14.0f);
         if (hoveredNote == note.pitch &&
-            relX >= noteX && relX < noteX + noteW) {
+            relX >= noteX && relX < noteX + hitW) {
             noteUnderCursor = static_cast<int>(i);
             // Check if on resize handle (right edge)
-            if (relX >= noteX + noteW - resizeHandleWidth) {
+            const float grabW = std::max(4.0f, std::min(resizeHandleWidth,
+                                                        noteW * 0.5f));
+            if (relX >= noteX + noteW - grabW) {
                 onResizeHandle = true;
             }
             break;
@@ -6908,7 +6934,8 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     }
 
     // Set cursor based on context
-    if (onResizeHandle && ui.pianoRollMode == PianoRollMode::Select) {
+    if (onResizeHandle && (ui.pianoRollMode == PianoRollMode::Select ||
+                           ui.pianoRollMode == PianoRollMode::Draw)) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     } else if (ui.isDraggingNote) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
@@ -7522,6 +7549,38 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 
                 case PianoRollMode::Draw:
                     {
+                        // The pencil never checked what was under it: a
+                        // click on an existing note stamped another note on
+                        // top. Every DAW's pencil resizes on the edge and
+                        // moves on the body; drawing is for empty space.
+                        if (noteUnderCursor >= 0) {
+                            const bool drumNote =
+                                isDrumType(pattern.notes[noteUnderCursor].oscillatorType);
+                            if (onResizeHandle && !drumNote) {
+                                g_UndoHistory.saveState(project, "Resize Note");
+                                ui.selectedNoteIndex = noteUnderCursor;
+                                ui.selectedNoteIndices.clear();
+                                ui.isResizingNote = true;
+                                ui.isResizingMultiple = false;
+                                ui.dragStartDuration =
+                                    pattern.notes[noteUnderCursor].duration;
+                                ui.dragStartBeat = hoveredBeat;
+                            } else {
+                                ImVec2 mousePos = ImGui::GetMousePos();
+                                ui.pendingDragStartX = mousePos.x;
+                                ui.pendingDragStartY = mousePos.y;
+                                ui.selectedNoteIndex = noteUnderCursor;
+                                ui.selectedNoteIndices.clear();
+                                ui.isPendingDrag = true;
+                                ui.pendingDragNoteIndex = noteUnderCursor;
+                                ui.dragStartBeat =
+                                    pattern.notes[noteUnderCursor].startTime;
+                                ui.dragStartPitch =
+                                    pattern.notes[noteUnderCursor].pitch;
+                            }
+                            break;
+                        }
+
                         // Save state for undo before adding note
                         g_UndoHistory.saveState(project, "Draw Note");
 

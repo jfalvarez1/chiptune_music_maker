@@ -869,7 +869,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
                 if (startLesson) {
                     // The lesson's whole point is building it yourself, so
                     // it starts from the empty project the goals assume.
+                    // Not exclusive with the tempo-and-key option, though -
+                    // the else-if chain accidentally made it so, and a
+                    // chiptune lesson snapped to C major instead of A minor.
                     ChiptuneTracker::StartTutorial();
+                    if (applyDefaults && chosen != ChiptuneTracker::Genre::Everything) {
+                        const ChiptuneTracker::GenreProfile& profile =
+                            ChiptuneTracker::genreProfile(chosen);
+                        project.bpm = profile.bpm;
+                        project.swing = profile.swing;
+                        ChiptuneTracker::g_ToolsScaleRoot = profile.scaleRoot;
+                        ChiptuneTracker::g_ToolsScaleType = profile.scaleType;
+                        sequencer.setBPM(project.bpm);
+                    }
                 } else if (startFromTemplate) {
                     ChiptuneTracker::g_UndoHistory.saveState(project, "Empty Project");
                     project = ChiptuneTracker::makeGenreTemplate(chosen);

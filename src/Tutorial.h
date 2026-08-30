@@ -117,8 +117,8 @@ inline const TutorialStep* tutorialSteps(int& countOut) {
         {"Draw a melody",
          "Click in the piano roll to place notes - at least four, any notes "
          "you like. Around C5 and above is a good register. If they clash, "
-         "turn on Snap to Scale in the Tools panel first and every note you "
-         "place will land in key.",
+         "tick In Key in the toolbar just above the roll - every note you "
+         "place will then land in the scale shown beside it.",
          "Wrong note? Right-click erases. Ctrl+Z undoes.",
          "Piano Roll", TutorialStepKind::Action, hasMelodyNotes},
 
