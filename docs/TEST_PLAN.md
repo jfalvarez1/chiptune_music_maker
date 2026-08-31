@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**2239 checks across 51 groups.** Exit code 0 = pass, 1 = failure, and every
+**3080 checks across 53 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -103,6 +103,8 @@ failure names the field or parameter involved.
 | Aux routing graph | Self-feeding buses, two-bus loops and four-bus rings are all detected; the master is always a safe destination; a cycle is reported rather than resolved into something wrong; a bus is ordered before the bus it feeds; a file carrying a loop is repaired to the master; a clean graph is left alone; a null output array is refused. |
 | Sends and buses | A send adds signal and a muted bus contributes nothing; bus volume scales the return; a pre-fader send from a SILENT channel still feeds the bus while a post-fader one sends silence; an effect on a bus strip changes the bus output; a bus feeding a bus still reaches the master; a file carrying a loop renders finite samples throughout; a send to a bus that does not exist is ignored safely. |
 | Routing persistence | Sends, sidechain bus, bus name/level/pan/output and a bus rack order all round-trip; a project with no routing writes no routing lines; a v3 file loads with no sends and every bus on the master; hostile values are clamped and impossible destinations become no send. |
+| Channel cap | The project and sequencer caps agree; every channel is named and no two share a name; chip-authentic mode is enforced in the AUDIO ENGINE - a note on channel 20 renders silent with it on and audible with it off; a clip stranded past the cap is moved rather than deleted; the flag round-trips; a project nobody extended still writes exactly eight CHANNEL lines while a touched channel past the eighth is written and read back. |
+| MIDI channel bounds | A 32-channel project exports byte-identically twice - the program-change flags were a file-scope array of 16 indexed by the project channel, so anything past the sixteenth wrote out of bounds and the export was non-deterministic. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 

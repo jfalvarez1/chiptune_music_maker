@@ -257,6 +257,7 @@ inline constexpr BoolField<Project> PROJECT_BOOLS[] = {
     {"nlmix", &Project::chipMixEnabled},
     {"nlflt", &Project::chipFilterEnabled},
     {"nlfam", &Project::chipFilterFamicom},
+    {"chip8", &Project::chipAuthentic},
 };
 
 // ============================================================================
@@ -460,6 +461,45 @@ inline std::string unquote(const std::string& line, size_t& pos) {
 // ============================================================================
 // Save
 // ============================================================================
+/*
+ * Has this channel been touched?
+ *
+ * Used to decide whether a channel past the original eight earns a line in
+ * the file. A channel counts as used if any clip plays on it, if it carries
+ * sends or macros, or if any of its settings differ from the default -
+ * which is checked by writing its tokens and seeing whether any appear.
+ */
+inline bool channelIsUsed(const Project& project, int channel,
+                          const ChannelConfig& defaults) {
+    const ChannelConfig& c = project.channels[static_cast<size_t>(channel)];
+
+    for (const Clip& clip : project.arrangement) {
+        if (clip.channelIndex == channel) return true;
+    }
+
+    if (c.name != defaults.name) return true;
+    if (c.oscillator.type != defaults.oscillator.type) return true;
+    if (c.fxSlotCount != 0) return true;
+    if (c.sidechainBus >= 0) return true;
+    for (const SendConfig& send : c.sends) {
+        if (send.destination >= 0) return true;
+    }
+    if (!c.macros.volume.steps.empty() || !c.macros.arpeggio.steps.empty() ||
+        !c.macros.duty.steps.empty() || !c.macros.pitch.steps.empty()) {
+        return true;
+    }
+
+    std::ostringstream probe;
+    ctp::writeFloats(probe, c, defaults, ctp::CHANNEL_FLOATS);
+    ctp::writeInts(probe, c, defaults, ctp::CHANNEL_INTS);
+    ctp::writeBools(probe, c, defaults, ctp::CHANNEL_BOOLS);
+    ctp::writeFloats(probe, c.oscillator, defaults.oscillator, ctp::OSC_FLOATS, "osc.");
+    ctp::writeInts(probe, c.oscillator, defaults.oscillator, ctp::OSC_INTS, "osc.");
+    ctp::writeBools(probe, c.oscillator, defaults.oscillator, ctp::OSC_BOOLS, "osc.");
+    ctp::writeFloats(probe, c.envelope, defaults.envelope, ctp::ENV_FLOATS, "env.");
+    return !probe.str().empty();
+}
+
 inline bool writeProject(std::ostream& file, const Project& project) {
     const Project projectDefaults;
 
@@ -489,6 +529,15 @@ inline bool writeProject(std::ostream& file, const Project& project) {
     for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
         const ChannelConfig& c = project.channels[ch];
         const ChannelConfig& d = projectDefaults.channels[ch];
+
+        // Raising the cap to 32 would otherwise have added 24 CHANNEL lines
+        // to every file for channels nobody touched. The first eight are
+        // always written so the format is unchanged for a chip project;
+        // beyond that, a channel earns its line by differing from default
+        // or by being used.
+        if (ch >= Project::CHIP_CHANNELS && !channelIsUsed(project, ch, d)) {
+            continue;
+        }
 
         file << "CHANNEL " << ch << ' ' << ctp::quote(c.name)
              << ' ' << oscillatorTypeToString(c.oscillator.type);

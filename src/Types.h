@@ -814,7 +814,15 @@ struct AuxBusConfig {
 };
 
 struct Project {
-    static constexpr int MAX_CHANNELS = 8;
+    // 32, not 8. Eight is the 2A03's constraint and it was being imposed
+    // on sample and supersaw channels no chip ever had. The array is still
+    // fixed-capacity, so the audio thread allocates nothing either way -
+    // what changed is how many of it are used.
+    static constexpr int MAX_CHANNELS = 32;
+
+    // The number a 2A03-shaped project is allowed. Kept as a named constant
+    // because it appears in the chip-authentic rule and in the migrator.
+    static constexpr int CHIP_CHANNELS = 8;
     static constexpr int MAX_PATTERNS = 64;
 
     std::string name = "Untitled";
@@ -842,6 +850,14 @@ struct Project {
     // Chip-accurate output. Both off by default: most channels here host a
     // supersaw or a sample, which a 2A03 never had, so neither setting is
     // something to impose on an existing project.
+    // Hold the project to the eight channels a 2A03 had.
+    //
+    // A per-project switch rather than a preference, because whether a piece
+    // is chip-legal is a property of the piece. It is enforced in the audio
+    // thread, not just the UI - so it is a real constraint and it also costs
+    // nothing to leave on.
+    bool chipAuthentic = false;
+
     bool chipMixEnabled = false;      // non-linear pulse / triangle-noise DACs
     bool chipFilterEnabled = false;   // the console's own output filters
     bool chipFilterFamicom = false;   // Famicom voicing rather than NES
@@ -854,6 +870,13 @@ struct Project {
     float humanizeVelocity = 0.1f;  // Humanize velocity variation (0.0 to 1.0)
 
     std::array<ChannelConfig, MAX_CHANNELS> channels;
+
+    // How many channels this project actually uses. Everything that walks
+    // channels - the mixer, the tracker, the arrangement, and the audio mix
+    // itself - asks this rather than MAX_CHANNELS.
+    int activeChannelCount() const {
+        return chipAuthentic ? CHIP_CHANNELS : MAX_CHANNELS;
+    }
 
     // Four aux buses. Empty and routed to the master by default, so a
     // project that never touches them mixes exactly as it did before.
@@ -887,6 +910,14 @@ struct Project {
 
         channels[7] = {"Custom", {OscillatorType::Triangle}, {}, 0.7f, 0.2f};
         channels[7].oscillator.triangleSlope = 0.3f;
+
+        // The channels past the original eight. Plain defaults and a plain
+        // name - these are the ones a 2A03 never had, so giving them chip
+        // voicings would be a lie about what they are for.
+        for (int i = CHIP_CHANNELS; i < MAX_CHANNELS; ++i) {
+            channels[static_cast<size_t>(i)].name =
+                "Channel " + std::to_string(i + 1);
+        }
 
         // Create one default pattern
         patterns.push_back(Pattern());

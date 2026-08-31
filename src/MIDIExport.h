@@ -25,9 +25,10 @@ public:
         smf::MidiFile midifile;
         midifile.setTPQ(480); // 480 PPQN (Pulses Per Quarter Note)
 
-        // Reset per-export state, or a second export in the same session would
-        // emit no program changes and every instrument would play as piano.
-        for (bool& sent : s_programSent) sent = false;
+        // Per-export state, held on the stack. It used to be a file-scope
+        // static reset here; a static that outlives one export is the same
+        // shape of bug this reset existed to paper over.
+        ProgramSentFlags programSent{};
 
         // Track 0: Tempo and time signature meta events
         midifile.addTrack();
@@ -36,7 +37,7 @@ public:
         // Tracks 1-8: One track per channel
         for (int ch = 0; ch < Project::MAX_CHANNELS; ch++) {
             midifile.addTrack();
-            addChannelTrack(midifile, ch + 1, project, ch);
+            addChannelTrack(midifile, ch + 1, project, ch, programSent);
         }
 
         midifile.sortTracks(); // Ensure all events are in chronological order
@@ -45,9 +46,31 @@ public:
     }
 
 private:
-    // Tracks which MIDI channels have already received a program change
-    // during the current export. Reset at the start of exportToMIDI().
-    static inline bool s_programSent[16] = {false};
+    // MIDI has sixteen channels and channel 9 is reserved for percussion.
+    static constexpr int MIDI_CHANNEL_COUNT = 16;
+    static constexpr int MIDI_DRUM_CHANNEL = 9;
+
+    // Which MIDI channels have already received a program change during THIS
+    // export. Passed down rather than held statically: the previous version
+    // was a file-scope array indexed by the project channel, which was fine
+    // at 8 channels and wrote off the end of it at 32.
+    struct ProgramSentFlags {
+        bool sent[MIDI_CHANNEL_COUNT] = {false};
+    };
+
+    /*
+     * Map a project channel onto a MIDI channel.
+     *
+     * Thirty-two project channels cannot address sixteen MIDI channels
+     * distinctly, so they wrap - which is what every DAW does. Channel 9 is
+     * skipped because MIDI reserves it for percussion, and a melodic part
+     * landing there would play as drums in any other program.
+     */
+    static int toMidiChannel(int projectChannel) {
+        if (projectChannel < 0) return 0;
+        const int wrapped = projectChannel % (MIDI_CHANNEL_COUNT - 1);
+        return (wrapped >= MIDI_DRUM_CHANNEL) ? wrapped + 1 : wrapped;
+    }
 
     // Add tempo and time signature to Track 0
     static void addTempoTrack(smf::MidiFile& midi, float bpm, int beatsPerMeasure) {
@@ -61,7 +84,8 @@ private:
 
     // Add all notes from a channel to its MIDI track
     static void addChannelTrack(smf::MidiFile& midi, int trackNum,
-                                 const Project& project, int channelIndex) {
+                                 const Project& project, int channelIndex,
+                                 ProgramSentFlags& programSent) {
         const ChannelConfig& channel = project.channels[channelIndex];
 
         // Find all clips for this channel in the arrangement
@@ -77,7 +101,7 @@ private:
             // Export pattern 0 for this channel (fallback for simple projects)
             if (!project.patterns.empty()) {
                 exportPattern(midi, trackNum, project.patterns[0],
-                             channel, channelIndex, 0.0f);
+                             channel, channelIndex, 0.0f, programSent);
             }
             return;
         }
@@ -87,7 +111,7 @@ private:
             if (clip->patternIndex >= 0 && clip->patternIndex < (int)project.patterns.size()) {
                 const Pattern& pattern = project.patterns[clip->patternIndex];
                 exportPattern(midi, trackNum, pattern, channel,
-                             channelIndex, clip->startBeat);
+                             channelIndex, clip->startBeat, programSent);
             }
         }
     }
@@ -96,7 +120,8 @@ private:
     static void exportPattern(smf::MidiFile& midi, int trackNum,
                               const Pattern& pattern,
                               const ChannelConfig& channel,
-                              int midiChannel, float clipStartBeat) {
+                              int midiChannel, float clipStartBeat,
+                              ProgramSentFlags& programSent) {
         for (const Note& note : pattern.notes) {
             // Calculate absolute beat position
             float absoluteBeat = clipStartBeat + note.startTime;
@@ -119,14 +144,17 @@ private:
                 uint8_t program = oscillatorToGMProgram(note.oscillatorType);
 
                 // Add program change at start of track (tick 0)
-                if (!s_programSent[midiChannel]) {
-                    midi.addPatchChange(trackNum, 0, midiChannel, program);
-                    s_programSent[midiChannel] = true;
+                // Wrapped into MIDI's sixteen, so this index is in range
+                // for any project channel count.
+                const int wire = toMidiChannel(midiChannel);
+                if (!programSent.sent[wire]) {
+                    midi.addPatchChange(trackNum, 0, wire, program);
+                    programSent.sent[wire] = true;
                 }
 
                 // Add note on/off events
-                midi.addNoteOn(trackNum, tickOn, midiChannel, note.pitch, velocity);
-                midi.addNoteOff(trackNum, tickOff, midiChannel, note.pitch);
+                midi.addNoteOn(trackNum, tickOn, wire, note.pitch, velocity);
+                midi.addNoteOff(trackNum, tickOff, wire, note.pitch);
             }
         }
     }

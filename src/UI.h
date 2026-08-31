@@ -59,6 +59,26 @@ const ImU32 CHANNEL_COLORS[] = {
     IM_COL32(180, 100, 255, 255),  // Custom - Purple
 };
 
+inline constexpr int CHANNEL_COLOR_COUNT =
+    static_cast<int>(sizeof(CHANNEL_COLORS) / sizeof(CHANNEL_COLORS[0]));
+
+/*
+ * The colour for a channel.
+ *
+ * There are eight colours and up to 32 channels, so they wrap. Indexing the
+ * array directly was fine when the two numbers matched and became an
+ * out-of-bounds read the moment the cap went up - undefined behaviour that
+ * happens to look like a colour.
+ *
+ * Wrapping rather than inventing 24 more is deliberate: a 32-colour palette
+ * that still satisfies the ten themes' contrast assertions is its own piece
+ * of work, and a bad one would regress the themes.
+ */
+inline ImU32 channelColor(int channel) {
+    if (channel < 0) channel = 0;
+    return CHANNEL_COLORS[channel % CHANNEL_COLOR_COUNT];
+}
+
 // Linear blend between two packed colours. `t` = 0 keeps `a`, 1 gives `b`.
 inline ImU32 blendColors(ImU32 a, ImU32 b, float t) {
     t = (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t);
@@ -5183,6 +5203,15 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
     }
 
     if (ImGui::CollapsingHeader("Chip Accuracy")) {
+            ImGui::Checkbox("8 channels only", &project.chipAuthentic);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Hold the project to the eight channels a 2A03 had.\n\n"
+                    "Enforced in the audio engine, not just the interface -\n"
+                    "channels beyond the eighth are not mixed at all, so this\n"
+                    "is a real constraint rather than a reminder.");
+            }
+
             ImGui::Checkbox("Non-linear mixing", &project.chipMixEnabled);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
@@ -6406,7 +6435,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             if (gx + gw < canvasPos.x + keyWidth || gx > canvasPos.x + canvasSize.x) continue;
             if (gy + noteHeight < canvasPos.y || gy > canvasPos.y + effectiveCanvasHeight) continue;
 
-            const ImU32 base = CHANNEL_COLORS[ghost.channelIndex & 7];
+            const ImU32 base = channelColor(ghost.channelIndex);
             drawList->AddRectFilled(
                 ImVec2(std::max(gx + 1, canvasPos.x + keyWidth), gy + 2),
                 ImVec2(gx + gw - 1, gy + noteHeight - 2),
@@ -6453,7 +6482,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         // Game Boy - and the piano roll only ever shows one channel
         // anyway, so identity is doing little work here.
         ImU32 noteColor = blendColors(g_PianoRollColors.noteDefault,
-                                      CHANNEL_COLORS[ui.selectedChannel % 8], 0.18f);
+                                      channelColor(ui.selectedChannel), 0.18f);
 
         if (isSelected) {
             noteColor = g_PianoRollColors.noteSelected;
@@ -8110,7 +8139,7 @@ inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Text("Row");
     for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
         ImGui::SameLine(rowNumWidth + ch * cellWidth);
-        const ImU32 colour = CHANNEL_COLORS[ch];
+        const ImU32 colour = channelColor(ch);
         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colour), "%s",
                            project.channels[ch].name.c_str());
     }
@@ -8302,7 +8331,7 @@ inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
 
                     if (cell.hasNote) {
                         ImGui::PushStyleColor(ImGuiCol_Text,
-                            ImGui::ColorConvertU32ToFloat4(CHANNEL_COLORS[ch]));
+                            ImGui::ColorConvertU32ToFloat4(channelColor(ch)));
                     } else {
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.48f, 1.0f));
                     }
@@ -8433,7 +8462,10 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
         IM_COL32(25, 25, 30, 255));
 
     // Channel headers and tracks
-    for (int ch = 0; ch < 8; ++ch) {
+    // The arrangement draws one lane per active channel. It was eight,
+    // hardcoded, in seven separate places.
+    const int laneCount = project.activeChannelCount();
+    for (int ch = 0; ch < laneCount; ++ch) {
         float y = canvasPos.y + ch * trackHeight;
 
         // Header
@@ -8445,7 +8477,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
             ImVec2(canvasPos.x + headerWidth, y + trackHeight - 1),
             headerColor);
         drawList->AddText(ImVec2(canvasPos.x + 5, y + 8),
-            CHANNEL_COLORS[ch], project.channels[ch].name.c_str());
+            channelColor(ch), project.channels[ch].name.c_str());
 
         // Track background
         ImU32 trackColor = (ch % 2 == 0) ? IM_COL32(35, 35, 40, 255) : IM_COL32(30, 30, 35, 255);
@@ -8464,14 +8496,14 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
         ImU32 lineColor = isMeasure ? IM_COL32(80, 80, 90, 255) : IM_COL32(45, 45, 50, 255);
         drawList->AddLine(
             ImVec2(x, canvasPos.y),
-            ImVec2(x, canvasPos.y + 8 * trackHeight),
+            ImVec2(x, canvasPos.y + laneCount * trackHeight),
             lineColor);
 
         // Draw beat numbers on measure lines
         if (isMeasure) {
             char beatLabel[16];
             snprintf(beatLabel, sizeof(beatLabel), "%d", static_cast<int>(beat));
-            drawList->AddText(ImVec2(x + 2, canvasPos.y + 8 * trackHeight + 2),
+            drawList->AddText(ImVec2(x + 2, canvasPos.y + laneCount * trackHeight + 2),
                 IM_COL32(100, 100, 110, 255), beatLabel);
         }
     }
@@ -8486,7 +8518,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     const float gridLeft = canvasPos.x + headerWidth;
     const float gridRight = canvasPos.x + canvasSize.x;
-    const float loopBarY = canvasPos.y + 8 * trackHeight + 18.0f;
+    const float loopBarY = canvasPos.y + laneCount * trackHeight + 18.0f;
     const float loopBarH = 16.0f;
 
     auto beatToScreenX = [&](float beat) {
@@ -8542,7 +8574,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
                 // Shade the looping span across the tracks so the range is
                 // readable without looking down at the ruler.
                 drawList->AddRectFilled(ImVec2(xa, canvasPos.y),
-                                        ImVec2(xb, canvasPos.y + 8 * trackHeight),
+                                        ImVec2(xb, canvasPos.y + laneCount * trackHeight),
                                         IM_COL32(90, 170, 255, 22));
                 drawList->AddRectFilled(ImVec2(xa, loopBarY),
                                         ImVec2(xb, loopBarY + loopBarH),
@@ -8585,7 +8617,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
 
         if (isHovered) hoveredClipIndex = static_cast<int>(i);
 
-        ImU32 clipColor = CHANNEL_COLORS[clip.channelIndex % 8];
+        ImU32 clipColor = channelColor(clip.channelIndex);
         ImU32 borderColor = isSelected ? IM_COL32(255, 255, 255, 255)
                          : isHovered ? IM_COL32(200, 200, 200, 200)
                          : IM_COL32(0, 0, 0, 100);
@@ -8627,7 +8659,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     if (playheadX >= canvasPos.x + headerWidth && playheadX <= canvasPos.x + canvasSize.x) {
         drawList->AddLine(
             ImVec2(playheadX, canvasPos.y),
-            ImVec2(playheadX, canvasPos.y + 8 * trackHeight),
+            ImVec2(playheadX, canvasPos.y + laneCount * trackHeight),
             IM_COL32(255, 80, 80, 255), 2.0f);
 
         // Playhead triangle
@@ -8643,7 +8675,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     if (songEndX >= canvasPos.x + headerWidth && songEndX <= canvasPos.x + canvasSize.x) {
         drawList->AddLine(
             ImVec2(songEndX, canvasPos.y),
-            ImVec2(songEndX, canvasPos.y + 8 * trackHeight),
+            ImVec2(songEndX, canvasPos.y + laneCount * trackHeight),
             IM_COL32(150, 80, 80, 200), 2.0f);
         drawList->AddText(ImVec2(songEndX + 4, canvasPos.y + 4),
             IM_COL32(150, 80, 80, 255), "END");
@@ -8808,9 +8840,9 @@ inline void DrawMixer(Project& project, UIState& ui, Sequencer& seq) {
 
         // Channel name, in that channel's identity colour
         const ImVec4 labelColor(
-            ((CHANNEL_COLORS[ch] >> 0) & 0xFF) / 255.0f,
-            ((CHANNEL_COLORS[ch] >> 8) & 0xFF) / 255.0f,
-            ((CHANNEL_COLORS[ch] >> 16) & 0xFF) / 255.0f,
+            ((channelColor(ch) >> 0) & 0xFF) / 255.0f,
+            ((channelColor(ch) >> 8) & 0xFF) / 255.0f,
+            ((channelColor(ch) >> 16) & 0xFF) / 255.0f,
             1.0f);
         ImGui::TextColored(labelColor, "%.10s", channel.name.c_str());
 
@@ -8891,7 +8923,7 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
     // tie this panel to its mixer strip without printing a red label in the
     // middle of a monochrome theme.
     {
-        const ImU32 identity = CHANNEL_COLORS[ui.selectedChannel % 8];
+        const ImU32 identity = channelColor(ui.selectedChannel);
         const ImVec4 themeText = ImGui::GetStyle().Colors[ImGuiCol_Text];
         const ImVec4 blended(
             (((identity >> 0) & 0xFF) / 255.0f) * 0.45f + themeText.x * 0.55f,

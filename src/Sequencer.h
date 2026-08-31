@@ -27,7 +27,11 @@ namespace ChiptuneTracker {
 // ============================================================================
 class Sequencer {
 public:
-    static constexpr int MAX_CHANNELS = 8;
+    // Must agree with Project's, or the two would disagree about how many
+    // synths exist and the mix would walk off the end of one of them.
+    static constexpr int MAX_CHANNELS = Project::MAX_CHANNELS;
+    static_assert(MAX_CHANNELS == Project::MAX_CHANNELS,
+                  "the sequencer and the project must agree on the channel count");
 
     Sequencer() {
         for (auto& synth : m_synths) {
@@ -216,14 +220,19 @@ public:
             // Two-pass mix for sidechain support
             // ============================================================
 
+            // Chip-authentic mode stops the mix at eight channels, so it
+            // is a real constraint rather than a UI hint - and the CPU that
+            // 24 unused channels would cost is not spent either.
+            const int activeChannels = m_project->activeChannelCount();
+
             // Pass 1: Generate all channel samples (pre-sidechain)
             std::array<float, MAX_CHANNELS> channelSamples = {};
-            for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            for (int ch = 0; ch < activeChannels; ++ch) {
                 channelSamples[ch] = m_synths[ch].process(m_state.currentTime);
             }
 
             // Pass 2: Update sidechain envelopes and apply sidechain compression
-            for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            for (int ch = 0; ch < activeChannels; ++ch) {
                 auto& fx = m_synths[ch].effects();
                 if (!fx.sidechainEnabled) continue;
 
@@ -250,7 +259,7 @@ public:
 
             // Check for solo state once
             bool hasSolo = false;
-            for (int c = 0; c < MAX_CHANNELS; ++c) {
+            for (int c = 0; c < activeChannels; ++c) {
                 if (m_project->channels[c].solo) {
                     hasSolo = true;
                     break;
@@ -267,7 +276,7 @@ public:
                 float triangleMag = 0.0f;
                 float noiseMag = 0.0f;
 
-                for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+                for (int ch = 0; ch < activeChannels; ++ch) {
                     if (m_project->channels[ch].muted) continue;
                     if (hasSolo && !m_project->channels[ch].solo) continue;
 
@@ -283,7 +292,7 @@ public:
                 chipGains = computeChipMixGains(pulseMag, triangleMag, noiseMag);
             }
 
-            for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            for (int ch = 0; ch < activeChannels; ++ch) {
                 if (m_project->channels[ch].muted) continue;
                 if (hasSolo && !m_project->channels[ch].solo) continue;
 

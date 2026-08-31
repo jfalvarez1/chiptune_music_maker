@@ -637,19 +637,28 @@ static Project makeKitchenSinkProject() {
     p.masterLimiterCeiling = -0.5f;
 
     // Give every channel a distinct, non-default effect configuration
+    // Values spread across each field's real range rather than scaled
+    // linearly by the channel index. The old formulas were written when
+    // eight channels was the whole world: 0.1f * ch gave channel 31 a
+    // resonance of 3.1 and a reverb mix of 1.55, which validation correctly
+    // clamped - so the round trip "failed" on values that were never legal.
     for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
         ChannelConfig& c = p.channels[ch];
-        c.volume = 0.5f + 0.05f * ch;
-        c.pan = -0.7f + 0.2f * ch;
+        const float spread = (Project::MAX_CHANNELS > 1)
+            ? static_cast<float>(ch) / static_cast<float>(Project::MAX_CHANNELS - 1)
+            : 0.0f;
+
+        c.volume = 0.30f + 0.60f * spread;
+        c.pan = -0.9f + 1.8f * spread;
         c.filterEnabled = true;
-        c.filterCutoff = 500.0f + 300.0f * ch;
-        c.filterResonance = 0.1f * ch;
+        c.filterCutoff = 500.0f + 6000.0f * spread;
+        c.filterResonance = 0.05f + 0.90f * spread;
         c.filterEnvEnabled = true;
-        c.filterEnvAmount = 0.1f * ch;
+        c.filterEnvAmount = -0.9f + 1.8f * spread;
         c.delayEnabled = (ch % 2 == 0);
-        c.delayTime = 0.125f * (ch + 1);
+        c.delayTime = 0.05f + 0.90f * spread;
         c.reverbEnabled = (ch % 3 == 0);
-        c.reverbMix = 0.05f * ch;
+        c.reverbMix = 0.05f + 0.90f * spread;
     }
 
     // One pattern holding a note per oscillator type, each with every
@@ -2850,7 +2859,9 @@ static void testStemExport() {
     check(result.written == 3,
           "one stem per channel with content (wrote " +
           std::to_string(result.written) + ", expected 3)");
-    check(result.skipped == 5,
+    // Derived, not hardcoded: this was 5 when eight channels was the whole
+    // world, and the number of silent channels changes with the cap.
+    check(result.skipped == Project::MAX_CHANNELS - 3,
           "silent channels are skipped rather than written as empty files (" +
           std::to_string(result.skipped) + ")");
 
@@ -7604,6 +7615,236 @@ static void testRoutingPersistence() {
 }
 
 // ============================================================================
+// 53. The channel cap and chip-authentic mode
+// ============================================================================
+static void testChannelCap() {
+    beginTest("Channel cap and chip mode");
+
+    // ---- The two caps must agree -------------------------------------------
+    {
+        check(Project::MAX_CHANNELS == Sequencer::MAX_CHANNELS,
+              "the project and the sequencer agree on the channel count - if "
+              "they ever disagreed the mix would walk off the end of one of "
+              "them, and it would do so in the audio thread");
+        check(Project::MAX_CHANNELS >= Project::CHIP_CHANNELS,
+              "the cap is at least the chip count");
+        check(Project::CHIP_CHANNELS == 8, "a 2A03 still has eight channels");
+    }
+
+    // ---- Every channel is named and reachable ------------------------------
+    {
+        const Project p;
+        for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+            if (p.channels[static_cast<size_t>(ch)].name.empty()) {
+                check(false, "channel " + std::to_string(ch) + " has no name");
+                break;
+            }
+        }
+        check(true, "every channel past the original eight is named too");
+
+        // The names must be distinct, or the mixer and the send menus show
+        // several identical entries and nobody can tell them apart.
+        bool distinct = true;
+        for (int a = 0; a < Project::MAX_CHANNELS && distinct; ++a) {
+            for (int b = a + 1; b < Project::MAX_CHANNELS; ++b) {
+                if (p.channels[static_cast<size_t>(a)].name ==
+                    p.channels[static_cast<size_t>(b)].name) {
+                    check(false, "channels " + std::to_string(a) + " and " +
+                          std::to_string(b) + " share a name");
+                    distinct = false;
+                    break;
+                }
+            }
+        }
+        check(distinct, "and no two channels share a name");
+    }
+
+    // ---- Chip mode is enforced in the ENGINE, not just the UI --------------
+    //
+    // The whole claim of the flag: a channel beyond the eighth is not mixed
+    // at all. If it were only a UI hint, this would render sound.
+    {
+        auto renderOnChannel = [](int channel, bool chipAuthentic) {
+            Project p;
+            p.chipAuthentic = chipAuthentic;
+            p.masterLimiterEnabled = false;
+            p.patterns.clear();
+            p.arrangement.clear();
+
+            Pattern pat;
+            Note n;
+            n.pitch = 69;
+            n.startTime = 0.0f;
+            n.duration = 4.0f;
+            n.oscillatorType = OscillatorType::Pulse;
+            pat.notes.push_back(n);
+            p.patterns.push_back(pat);
+            p.arrangement.push_back(Clip{0, channel, 0.0f, 8.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            Sequencer& seq = *seqPtr;
+            seq.setSampleRate(44100.0f);
+            seq.setProject(&p);
+            seq.updateChannelConfigs();
+            seq.play();
+
+            std::vector<float> l(512), r(512);
+            double energy = 0.0;
+            for (int b = 0; b < 60; ++b) {
+                seq.process(l.data(), r.data(), 512);
+                for (float v : l) energy += double(v) * double(v);
+            }
+            return energy;
+        };
+
+        check(renderOnChannel(0, true) > 1.0,
+              "channel 0 sounds in chip mode");
+        check(renderOnChannel(20, false) > 1.0,
+              "channel 20 sounds with the cap raised - the whole point of "
+              "raising it");
+        check(renderOnChannel(20, true) < 1e-6,
+              "and is silent in chip mode, because the flag is enforced in "
+              "the audio engine rather than being a note in the interface");
+    }
+
+    // ---- activeChannelCount ------------------------------------------------
+    {
+        Project p;
+        check(p.activeChannelCount() == Project::MAX_CHANNELS,
+              "a normal project uses every channel");
+        p.chipAuthentic = true;
+        check(p.activeChannelCount() == Project::CHIP_CHANNELS,
+              "a chip-authentic project uses eight");
+    }
+
+    // ---- A clip stranded past the cap is moved, not lost -------------------
+    {
+        Project p;
+        p.chipAuthentic = true;
+        p.patterns.clear();
+        p.patterns.push_back(Pattern());
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 25, 0.0f, 4.0f, 0});
+
+        clampProjectToValidRanges(p);
+
+        check(!p.arrangement.empty(),
+              "a clip on an unreachable channel is not silently deleted");
+        check(p.arrangement[0].channelIndex < Project::CHIP_CHANNELS,
+              "it moves onto a channel the project can actually play (now " +
+              std::to_string(p.arrangement[0].channelIndex) + ")");
+    }
+
+    // ---- The flag round-trips ----------------------------------------------
+    {
+        Project original;
+        original.chipAuthentic = true;
+        original.channels[20].name = "Way Out Here";
+        original.channels[20].reverbEnabled = true;
+
+        const std::string path = testPath("channel_cap.ctp");
+        check(saveProjectFile(original, path), "saves");
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "and loads");
+        check(loaded.chipAuthentic, "the chip-authentic flag survives");
+        check(loaded.channels[20].name == "Way Out Here" &&
+              loaded.channels[20].reverbEnabled,
+              "and a channel past the eighth keeps its settings");
+        std::remove(path.c_str());
+    }
+
+    // ---- Raising the cap must not bloat every file -------------------------
+    //
+    // 32 channels would otherwise add 24 CHANNEL lines to every project,
+    // including ones that only ever used the first eight.
+    {
+        Project plain;
+        const std::string path = testPath("channel_sparse.ctp");
+        check(saveProjectFile(plain, path), "an untouched project saves");
+
+        const std::string text = readWholeFile(path);
+        int channelLines = 0;
+        size_t at = 0;
+        while ((at = text.find("CHANNEL ", at)) != std::string::npos) {
+            ++channelLines;
+            at += 8;
+        }
+        check(channelLines == Project::CHIP_CHANNELS,
+              "a project nobody extended writes only the original eight "
+              "channel lines, not 32 (wrote " + std::to_string(channelLines) + ")");
+        std::remove(path.c_str());
+    }
+
+    {
+        Project extended;
+        extended.channels[19].filterEnabled = true;
+        extended.channels[19].filterCutoff = 777.0f;
+
+        const std::string path = testPath("channel_extended.ctp");
+        check(saveProjectFile(extended, path), "an extended project saves");
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "and loads");
+        check(loaded.channels[19].filterEnabled &&
+              std::fabs(loaded.channels[19].filterCutoff - 777.0f) < 0.5f,
+              "a channel that was touched is written and read back, even "
+              "though its neighbours are skipped");
+        std::remove(path.c_str());
+    }
+}
+
+// ============================================================================
+// 54. MIDI export at 32 channels
+// ============================================================================
+static void testMidiChannelBounds() {
+    beginTest("MIDI export channel bounds");
+
+    // Raising the cap turned an existing latent bug into a live one:
+    // s_programSent was sized 16 and indexed by the PROJECT channel, so
+    // channels 16 and up wrote past the end of it. It showed up as the same
+    // project exporting different bytes on two runs.
+    {
+        Project p;
+        p.patterns.clear();
+        p.arrangement.clear();
+
+        Pattern pat;
+        for (int i = 0; i < 4; ++i) {
+            Note n;
+            n.pitch = 60 + i;
+            n.startTime = static_cast<float>(i);
+            n.duration = 0.5f;
+            pat.notes.push_back(n);
+        }
+        p.patterns.push_back(pat);
+
+        // A clip on every channel, including the ones past MIDI's sixteen.
+        for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+            p.arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0});
+        }
+
+        const std::string pathA = testPath("midi_wide_a.mid");
+        const std::string pathB = testPath("midi_wide_b.mid");
+
+        check(exportProjectToMIDI(p, pathA), "a 32-channel project exports");
+        check(exportProjectToMIDI(p, pathB), "twice");
+
+        const std::string a = readWholeFile(pathA);
+        const std::string b = readWholeFile(pathB);
+        check(a == b,
+              "and both exports are byte-identical - the program-change "
+              "flags used to be a file-scope array indexed out of bounds by "
+              "any channel past the sixteenth (" + std::to_string(a.size()) +
+              " vs " + std::to_string(b.size()) + " bytes)");
+        check(a.size() > 22, "and the export is not empty");
+
+        std::remove(pathA.c_str());
+        std::remove(pathB.c_str());
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -7695,6 +7936,8 @@ int main(int argc, char** argv) {
     testRoutingGraph();
     testSendsAndBuses();
     testRoutingPersistence();
+    testChannelCap();
+    testMidiChannelBounds();
     testLongRunStability();
 
     std::printf("\n==========================\n");

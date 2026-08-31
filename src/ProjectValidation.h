@@ -342,6 +342,17 @@ inline void clampProjectToValidRanges(Project& project) {
     project.masterLimiterCeiling = sanitizeFloat(project.masterLimiterCeiling, -12.0f, 0.0f, -0.3f);
     project.masterLimiterRelease = sanitizeFloat(project.masterLimiterRelease, 0.001f, 2.0f, 0.05f);
 
+    // A clip on a channel a chip-authentic project cannot reach would be
+    // silent with no visible reason, so the flag is honoured here too: the
+    // clip moves down rather than disappearing.
+    if (project.chipAuthentic) {
+        for (Clip& clip : project.arrangement) {
+            if (clip.channelIndex >= Project::CHIP_CHANNELS) {
+                clip.channelIndex = clip.channelIndex % Project::CHIP_CHANNELS;
+            }
+        }
+    }
+
     // ---- Aux buses -------------------------------------------------------
     //
     // A routing loop would have the audio thread walking a cycle, so it is
