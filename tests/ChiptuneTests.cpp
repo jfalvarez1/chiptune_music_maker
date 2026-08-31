@@ -46,6 +46,7 @@
 #include "DrumMachine.h"
 #include "ModMatrix.h"
 #include "PitchShift.h"
+#include "InstrumentPresets.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -13234,6 +13235,267 @@ static void testPitchEffectsInRack() {
     }
 }
 
+
+// ============================================================================
+// 76. Engine presets
+// ============================================================================
+static void testInstrumentPresets() {
+    beginTest("Engine presets");
+
+    const float rate = 44100.0f;
+
+    auto rms = [](const std::vector<float>& signal) {
+        double sum = 0.0;
+        for (float v : signal) sum += double(v) * v;
+        return signal.empty() ? 0.0 : std::sqrt(sum / double(signal.size()));
+    };
+
+    auto centroid = [rate](const std::vector<float>& signal) {
+        size_t N = 1;
+        while (N * 2 <= signal.size()) N *= 2;
+        if (N < 512) return 0.0;
+        std::vector<float> re(N), im(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                float(i) / float(N - 1)));
+            re[i] = signal[i] * w;
+        }
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(re.data(), im.data());
+        double weighted = 0.0, total = 0.0;
+        const double binHz = double(rate) / double(N);
+        for (size_t bin = 1; bin < N / 2; ++bin) {
+            const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                               double(im[bin]) * im[bin]);
+            weighted += double(bin) * binHz * magnitude;
+            total += magnitude;
+        }
+        return (total > 0.0) ? weighted / total : 0.0;
+    };
+
+    // ---- Every FM preset makes a distinct sound ----------------------------
+    {
+        std::vector<std::vector<float>> rendered;
+        bool allSound = true;
+        std::string silent;
+
+        for (int i = 0; i < FM_PRESET_COUNT; ++i) {
+            FMPatch patch;
+            FM_PRESETS[i].apply(patch);
+            clampFMPatch(patch);
+
+            FMVoiceState state;
+            state.reset(patch);
+            std::vector<float> audio(16384);
+            for (size_t s = 0; s < audio.size(); ++s) {
+                audio[s] = fm::process(patch, state, 220.0f, 1.0f, rate, false);
+            }
+
+            if (rms(audio) < 0.005) { allSound = false; silent = FM_PRESETS[i].name; }
+            rendered.push_back(audio);
+        }
+
+        check(allSound,
+              "every FM preset makes a sound" +
+              (allSound ? std::string() : " (" + silent + " is silent)") +
+              " - a preset that produces nothing teaches the user the engine "
+              "is broken");
+
+        // And they must differ from each other, or the menu overstates what
+        // the engine does.
+        bool allDistinct = true;
+        for (size_t a = 0; a < rendered.size() && allDistinct; ++a) {
+            for (size_t b = a + 1; b < rendered.size(); ++b) {
+                double difference = 0.0;
+                const size_t n = std::min(rendered[a].size(), rendered[b].size());
+                for (size_t i = 0; i < n; ++i) {
+                    difference += std::fabs(double(rendered[a][i]) -
+                                            double(rendered[b][i]));
+                }
+                if (n == 0 || difference / double(n) < 1e-3) {
+                    allDistinct = false;
+                    break;
+                }
+            }
+        }
+        check(allDistinct,
+              "and no two FM presets sound the same - four variations on one "
+              "routing would look tidier and teach nothing");
+    }
+
+    {
+        // The bell must actually behave like a bell: bright attack, pure
+        // tail. That is the property the preset exists to demonstrate.
+        FMPatch bell;
+        presets::fmBell(bell);
+        clampFMPatch(bell);
+
+        FMVoiceState state;
+        state.reset(bell);
+        std::vector<float> audio(rate);
+        for (size_t i = 0; i < audio.size(); ++i) {
+            audio[i] = fm::process(bell, state, 440.0f, 1.0f, rate, false);
+        }
+
+        const std::vector<float> head(audio.begin(), audio.begin() + 4096);
+        const std::vector<float> tail(audio.begin() + 20000, audio.begin() + 24096);
+        check(centroid(head) > centroid(tail) * 1.25,
+              "the Bell preset starts bright and settles pure (" +
+              std::to_string(centroid(head)) + " -> " +
+              std::to_string(centroid(tail)) + ")");
+    }
+
+    // ---- Every drum preset sounds, and the kicks differ from the hats ------
+    {
+        bool allSound = true;
+        std::string silent;
+        double kickCentroid = 0.0;
+        double hatCentroid = 0.0;
+
+        for (int i = 0; i < DRUM_PRESET_COUNT; ++i) {
+            DrumModelConfig config;
+            DRUM_PRESETS[i].apply(config);
+            clampDrumModel(config);
+
+            DrumModelVoice voice;
+            voice.trigger(config, 1.0f, rate, 99u);
+            std::vector<float> audio(16384);
+            for (size_t s = 0; s < audio.size(); ++s) {
+                audio[s] = voice.process(config);
+            }
+
+            if (rms(audio) < 0.002) { allSound = false; silent = DRUM_PRESETS[i].name; }
+            if (config.voice == DrumVoiceType::Kick && kickCentroid == 0.0) {
+                kickCentroid = centroid(audio);
+            }
+            if (config.voice == DrumVoiceType::HiHat && hatCentroid == 0.0) {
+                hatCentroid = centroid(audio);
+            }
+        }
+
+        check(allSound,
+              "every drum preset makes a sound" +
+              (allSound ? std::string() : " (" + silent + " is silent)"));
+        check(hatCentroid > kickCentroid,
+              "and the hat presets are brighter than the kick presets (" +
+              std::to_string(kickCentroid) + " vs " +
+              std::to_string(hatCentroid) + ")");
+    }
+
+    {
+        // The 808 kick must ring far longer than the hard kick, since that
+        // is the entire difference between them.
+        DrumModelConfig eightOhEight, hard;
+        presets::drum808Kick(eightOhEight);
+        presets::drumHardKick(hard);
+        check(eightOhEight.decaySeconds > hard.decaySeconds * 3.0f,
+              "the 808 kick rings far longer than the hard kick, which is "
+              "what makes it a bass note rather than a thud");
+    }
+
+    // ---- Granular presets keep the loaded sample ---------------------------
+    {
+        for (int i = 0; i < GRANULAR_PRESET_COUNT; ++i) {
+            GranularConfig config;
+            config.sampleId = 7;              // as if the user had loaded one
+            GRANULAR_PRESETS[i].apply(config);
+            if (config.sampleId != 7) {
+                check(false, std::string("granular preset ") +
+                      GRANULAR_PRESETS[i].name + " threw away the sample");
+                break;
+            }
+        }
+        check(true,
+              "every granular preset keeps the sample the user loaded - "
+              "'try this setting' must not discard the audio it applies to");
+
+        GranularConfig freeze;
+        presets::granFreeze(freeze);
+        check(freeze.positionRate == 0.0f,
+              "Freeze actually freezes the read position");
+
+        GranularConfig stutter;
+        presets::granStutter(stutter);
+        check(stutter.spray == 0.0f && stutter.windowShape > 0.9f,
+              "and Stutter has no scatter and a flat window, which is what "
+              "makes it rhythmic rather than smeared");
+    }
+
+    // ---- Modulation presets route something --------------------------------
+    {
+        for (int i = 0; i < MOD_PRESET_COUNT; ++i) {
+            ModMatrix matrix;
+            MOD_PRESETS[i].apply(matrix);
+            clampModMatrix(matrix);
+
+            if (!matrix.anyActive()) {
+                check(false, std::string("modulation preset ") +
+                      MOD_PRESETS[i].name + " routes nothing");
+                break;
+            }
+        }
+        check(true,
+              "every modulation preset has at least one active route - an "
+              "empty matrix is exactly the state these exist to get out of");
+
+        ModMatrix vibrato;
+        presets::modVibrato(vibrato);
+        check(vibrato.lfos[0].delaySeconds > 0.0f,
+              "the Vibrato preset delays its LFO, because vibrato arriving "
+              "with the note sounds mechanical and no player does it");
+    }
+
+    // ---- All of them survive validation ------------------------------------
+    //
+    // A preset that validation immediately repairs is a preset with a value
+    // outside the range the rest of the program allows, which is a bug in
+    // the preset rather than in validation.
+    {
+        bool fmStable = true;
+        for (int i = 0; i < FM_PRESET_COUNT; ++i) {
+            FMPatch before;
+            FM_PRESETS[i].apply(before);
+            FMPatch after = before;
+            clampFMPatch(after);
+
+            if (std::fabs(after.index - before.index) > 1e-4f ||
+                std::fabs(after.algorithm.feedback - before.algorithm.feedback) > 1e-4f) {
+                fmStable = false;
+                break;
+            }
+            for (int op = 0; op < FM_OPERATORS; ++op) {
+                const FMOperator& a = before.operators[static_cast<size_t>(op)];
+                const FMOperator& b = after.operators[static_cast<size_t>(op)];
+                if (std::fabs(a.ratio - b.ratio) > 1e-4f ||
+                    std::fabs(a.level - b.level) > 1e-4f ||
+                    a.enabled != b.enabled) {
+                    fmStable = false;
+                    break;
+                }
+            }
+            if (!fmStable) break;
+        }
+        check(fmStable,
+              "no FM preset is altered by validation - one that is has a "
+              "value outside the range the rest of the program allows");
+
+        bool drumStable = true;
+        for (int i = 0; i < DRUM_PRESET_COUNT; ++i) {
+            DrumModelConfig before;
+            DRUM_PRESETS[i].apply(before);
+            DrumModelConfig after = before;
+            clampDrumModel(after);
+            if (std::fabs(after.tuneHz - before.tuneHz) > 1e-3f ||
+                std::fabs(after.decaySeconds - before.decaySeconds) > 1e-4f) {
+                drumStable = false;
+                break;
+            }
+        }
+        check(drumStable, "and no drum preset is either");
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -13349,6 +13611,7 @@ int main(int argc, char** argv) {
     testModulationReachesAudio();
     testPitchAndTime();
     testPitchEffectsInRack();
+    testInstrumentPresets();
     testLongRunStability();
 
     std::printf("\n==========================\n");

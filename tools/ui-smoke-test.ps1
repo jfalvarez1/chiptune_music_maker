@@ -196,6 +196,15 @@ foreach ($panel in $panels) {
     args = "--demo --instrument pitchtime --focus `"Channel Editor`""
 })
 
+# The Engines row in the Sound Palette. Every type past 64 was missing from
+# the palette entirely - five whole instruments reachable only from a
+# dropdown - and their icons fell to DrawWaveformIcon's default case, which
+# draws nothing.
+[void]$cases.Add(@{
+    name = "palette-engines"
+    args = "--demo --instrument fm --focus `"Sound Palette`""
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"

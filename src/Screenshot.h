@@ -346,6 +346,11 @@ inline void applyCaptureState(const CaptureRequest& request,
     if (request.expandFxRack) g_ExpandEffectRack = true;
     if (request.instrument == "modmatrix") g_ExpandModulation = true;
 
+    // Showing off an engine means showing where it is found. The
+    // palette icons for these are custom drawing code and were blank
+    // until the types were given cases of their own.
+    if (!request.instrument.empty()) g_PaletteExpanded_Engines = true;
+
     if (request.tutorialStep >= 0) {
         StartTutorial();
         g_Tutorial.step = request.tutorialStep;

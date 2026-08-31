@@ -15,6 +15,7 @@
 #include "Types.h"
 #include "UndoHistory.h"
 #include "VoicePanel.h"
+#include "InstrumentPresets.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -118,6 +119,7 @@ static bool g_PaletteExpanded_Cymbals = false;
 static bool g_PaletteExpanded_Percussion = false;
 static bool g_PaletteExpanded_Reggaeton = false;
 static bool g_PaletteExpanded_Recreations = false;
+static bool g_PaletteExpanded_Engines = false;
 static bool g_PaletteExpanded_Patterns = false;
 
 // ============================================================================
@@ -10219,6 +10221,26 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         if (ImGui::TreeNode("Modulation")) {
             ModMatrix& m = osc.modMatrix;
 
+            /*
+             * The matrix is the hardest of these to start with: an empty one
+             * does nothing, and the first useful route is not obvious. These
+             * four answer "what is this for" faster than any amount of
+             * tooltip.
+             */
+            ImGui::TextDisabled("Start from:");
+            for (int i = 0; i < MOD_PRESET_COUNT; ++i) {
+                if (i > 0 && i % 2 != 0) ImGui::SameLine();
+                if (ImGui::SmallButton(MOD_PRESETS[i].name)) {
+                    g_UndoHistory.saveState(project, "Modulation Preset");
+                    MOD_PRESETS[i].apply(m);
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", MOD_PRESETS[i].description);
+                }
+            }
+            ImGui::Separator();
+
             ImGui::SetNextItemWidth(110);
             if (ImGui::DragInt("Polyphony", &m.polyphonyLimit, 0.1f, 0, 32,
                                m.polyphonyLimit == 0 ? "Max" : "%d voices")) {
@@ -10429,6 +10451,24 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
                 }
             }
 
+            ImGui::TextDisabled("Start from:");
+            for (int i = 0; i < GRANULAR_PRESET_COUNT; ++i) {
+                if (i > 0) ImGui::SameLine();
+                if (ImGui::SmallButton(GRANULAR_PRESETS[i].name)) {
+                    g_UndoHistory.saveState(project, "Granular Preset");
+                    // These keep the loaded sample deliberately: replacing
+                    // the whole config would throw away the audio the user
+                    // just picked, which is not what "try this setting"
+                    // should do.
+                    GRANULAR_PRESETS[i].apply(g);
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", GRANULAR_PRESETS[i].description);
+                }
+            }
+            ImGui::Separator();
+
             if (ImGui::SliderFloat("Position", &g.position, 0.0f, 1.0f)) {
                 seq.updateChannelConfigs();
             }
@@ -10511,6 +10551,20 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         // analogue machines made them.
         if (osc.type == OscillatorType::DrumModel) {
             DrumModelConfig& d = osc.drumModel;
+
+            ImGui::TextDisabled("Start from:");
+            for (int i = 0; i < DRUM_PRESET_COUNT; ++i) {
+                if (i > 0 && i % 3 != 0) ImGui::SameLine();
+                if (ImGui::SmallButton(DRUM_PRESETS[i].name)) {
+                    g_UndoHistory.saveState(project, "Drum Preset");
+                    DRUM_PRESETS[i].apply(d);
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", DRUM_PRESETS[i].description);
+                }
+            }
+            ImGui::Separator();
 
             int voice = static_cast<int>(d.voice);
             const char* voices = "Kick\0Snare\0Hi-hat\0";
@@ -10725,6 +10779,29 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         // of a modern DAW's toolbox: the YM2612 in the Mega Drive is
         // six-operator FM, and the DX7 that defined the eighties is too.
         if (osc.type == OscillatorType::FMSynth) {
+            /*
+             * Starting points.
+             *
+             * Six operators of ratio, level, detune and four envelope stages
+             * is sixty-odd numbers, and nobody discovers a bell by dragging
+             * them one at a time. These four are what FM is known for, and
+             * each is a different algorithm - four variations on one routing
+             * would look tidier and teach nothing.
+             */
+            ImGui::TextDisabled("Start from:");
+            for (int i = 0; i < FM_PRESET_COUNT; ++i) {
+                if (i > 0) ImGui::SameLine();
+                if (ImGui::SmallButton(FM_PRESETS[i].name)) {
+                    g_UndoHistory.saveState(project, "FM Preset");
+                    FM_PRESETS[i].apply(osc.fm);
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", FM_PRESETS[i].description);
+                }
+            }
+            ImGui::Separator();
+
             ImGui::SetNextItemWidth(230);
             int preset = std::clamp(osc.fmAlgorithmPreset, 0,
                                     static_cast<int>(FMAlgorithmPreset::Count) - 1);
@@ -12397,6 +12474,39 @@ inline void DrawWaveformIcon(ImDrawList* drawList, ImVec2 pos, ImVec2 size, Osci
             break;
         }
 
+        // The configurable engines. Short glyphs rather than waveform
+        // drawings, because none of them HAS one fixed waveform - that is
+        // the whole point of each. Without these they fell to the default
+        // case and drew nothing at all, which in a palette of icons reads
+        // as an empty button.
+        case OscillatorType::FMSynth: {
+            drawList->AddText(ImVec2(pos.x + size.x / 2 - 9, pos.y + size.y / 2 - 7),
+                              color, "FM");
+            break;
+        }
+        case OscillatorType::Sampler: {
+            drawList->AddText(ImVec2(pos.x + size.x / 2 - 12, pos.y + size.y / 2 - 7),
+                              color, "SMP");
+            break;
+        }
+        case OscillatorType::Granular: {
+            // A scatter of dots, which is what a grain cloud looks like.
+            for (int i = 0; i < 9; ++i) {
+                const float fx = pos.x + 8.0f + float((i * 7) % 34);
+                const float fy = pos.y + 8.0f + float((i * 11) % 18);
+                drawList->AddCircleFilled(ImVec2(fx, fy), 1.6f, color);
+            }
+            break;
+        }
+        case OscillatorType::DrumModel: {
+            drawList->AddCircle(ImVec2(pos.x + size.x / 2, pos.y + size.y / 2),
+                                9.0f, color, 0, 1.6f);
+            drawList->AddLine(ImVec2(pos.x + size.x / 2 - 9, pos.y + size.y / 2),
+                              ImVec2(pos.x + size.x / 2 + 9, pos.y + size.y / 2),
+                              color, 1.2f);
+            break;
+        }
+
         // ================================================================
         // SYNTHS
         // ================================================================
@@ -13122,6 +13232,16 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     constexpr int NUM_SYNTHS = 28;  // 10 original + 6 synthwave + 5 techno + 4 hip-hop + 3 additional (reggaeton synths are in Reggaeton section)
     constexpr int NUM_RECREATIONS = 2;      // Vocoder, KavinskyBass
     constexpr int RECREATIONS_START = static_cast<int>(OscillatorType::Vocoder);
+
+    // The configurable engines, which live after the recreations. Derived
+    // rather than written down: a hardcoded count here is how the palette
+    // came to be silently missing four entries in the first place.
+    constexpr int ENGINES_START = static_cast<int>(OscillatorType::FMSynth);
+    constexpr int NUM_ENGINES =
+        static_cast<int>(OscillatorType::DrumModel) - ENGINES_START + 1;
+    static_assert(ENGINES_START == RECREATIONS_START + NUM_RECREATIONS,
+                  "the engines must follow the recreations with no gap, or "
+                  "the palette skips whatever falls between them");
     // Plus FM, which lives at the end of the enum. This assert is the reason
     // the mistake of inserting FMSynth mid-enum lasted one compile instead of
     // reaching a user as every instrument past Custom playing the wrong sound.
@@ -13272,6 +13392,80 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         }
     } else {
         g_PaletteExpanded_Recreations = false;
+    }
+    ImGui::PopStyleColor(3);
+
+    // ========== ENGINES (Configurable instruments) ==========
+    //
+    // Wavetable, FM, the multisample sampler, granular and the modelled drum
+    // kit. These were reachable only from the Channel Editor's Type
+    // dropdown: the palette drew types 0 to 64 and stopped, so five whole
+    // engines were invisible in the one panel whose job is to show what the
+    // program can do.
+    PushCategoryHeaderStyle(ImVec4(0.55f, 0.90f, 1.00f, 1.0f));
+
+    if (ImGui::CollapsingHeader("Engines",
+            g_PaletteExpanded_Engines ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        g_PaletteExpanded_Engines = true;
+
+        ImGui::TextDisabled("Pick one, then set it up in the Channel Editor.");
+
+        // Wavetable is OscillatorType::Custom, which lives back at index 6
+        // with the plain oscillators - so it is listed here as well. It
+        // belongs with the engines far more than it belongs beside Sine.
+        const OscillatorType engines[] = {
+            OscillatorType::Custom,
+            OscillatorType::FMSynth,
+            OscillatorType::Sampler,
+            OscillatorType::Granular,
+            OscillatorType::DrumModel,
+        };
+        const int engineCount = static_cast<int>(sizeof(engines) / sizeof(engines[0]));
+
+        ImVec2 iconSize(50, 32);
+        for (int e = 0; e < engineCount; ++e) {
+            const int i = static_cast<int>(engines[e]);
+            ImGui::PushID(20000 + i);
+            ImVec2 pos = ImGui::GetCursorScreenPos();
+            const bool isPaletteSelected = (g_SelectedPaletteItem == i);
+
+            const ImU32 bgColor = isPaletteSelected ? IM_COL32(40, 95, 130, 255)
+                                                    : IM_COL32(34, 46, 56, 255);
+            const ImU32 waveColor = isPaletteSelected ? IM_COL32(170, 230, 255, 255)
+                                                      : IM_COL32(110, 160, 190, 255);
+            const ImU32 borderColor = isPaletteSelected ? IM_COL32(120, 210, 255, 255)
+                                                        : IM_COL32(60, 90, 110, 255);
+
+            drawList->AddRectFilled(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y),
+                                    bgColor, 4.0f);
+            drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y),
+                              borderColor, 4.0f, 0, isPaletteSelected ? 2.0f : 1.0f);
+            DrawWaveformIcon(drawList, pos, iconSize, engines[e], waveColor);
+
+            ImGui::InvisibleButton("##engine", iconSize);
+            if (ImGui::IsItemClicked()) {
+                if (g_SelectedPaletteItem == i) {
+                    g_SelectedPaletteItem = -1;
+                } else {
+                    g_SelectedPaletteItem = i;
+                    g_SelectedDurationMult = 1.0f;
+                    g_SelectedChordIndex = -1;
+                    ui.pianoRollMode = PianoRollMode::Draw;
+                    project.channels[ui.selectedChannel].oscillator.type = engines[e];
+                    seq.updateChannelConfigs();
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", oscNames[i]);
+                ImGui::TextDisabled("%s", oscDesc[i]);
+                ImGui::EndTooltip();
+            }
+            if (e < engineCount - 1 && (e + 1) % 4 != 0) ImGui::SameLine();
+            ImGui::PopID();
+        }
+    } else {
+        g_PaletteExpanded_Engines = false;
     }
     ImGui::PopStyleColor(3);
 
