@@ -1467,7 +1467,12 @@ enum class Theme : uint8_t {
     Vaporwave,      // Pink/cyan aesthetic, floating shapes
     RetroTerminal,  // Amber CRT phosphor, scanlines, vintage computer
     GameBoy,        // DMG four-shade green, dot-matrix grid
-    Daylight        // Light theme for working in a bright room
+    Daylight,       // Light theme for working in a bright room
+
+    // A sentinel, like every other enum here has. Without it the tests
+    // carried a hand-written list of all ten, which is a list that goes
+    // stale the first time someone adds a theme and forgets it.
+    Count
 };
 
 // Piano roll edit modes

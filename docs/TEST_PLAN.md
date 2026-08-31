@@ -48,8 +48,12 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**3080 checks across 53 groups.** Exit code 0 = pass, 1 = failure, and every
+**3685 checks across 82 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
+
+Since 3.8 this layer also runs the **real UI headlessly**: an ImGui context
+with a built font atlas, a fake display and no backend at all, driving the
+actual panel code through real frames. See "Headless GUI" below.
 
 | Group | What it asserts |
 |---|---|
@@ -107,6 +111,28 @@ failure names the field or parameter involved.
 | MIDI channel bounds | A 32-channel project exports byte-identically twice - the program-change flags were a file-scope array of 16 indexed by the project channel, so anything past the sixteenth wrote out of bounds and the export was non-deterministic. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
+
+## Headless GUI (part of layer 1)
+
+An ImGui context with no window and no renderer. The panels are called
+exactly as `main.cpp` calls them, a frame is run, and the result is
+inspected. It costs milliseconds, so it runs on every build rather than only
+when someone remembers.
+
+What it checks that a screenshot cannot:
+
+| Check | Why it matters |
+|---|---|
+| ID stack balance | A `PushID` without its `PopID` corrupts every widget ID after it in that window. Unrelated controls silently start sharing state — two sliders that move together, a checkbox that toggles its neighbour. ImGui asserts in debug and misbehaves quietly in release, which is what ships. |
+| `Begin`/`End` balance | An unclosed window breaks every panel drawn afterwards, not just the guilty one. |
+| Vertex sanity | A divide-by-zero in layout maths produces NaN vertices, which a GPU discards silently — so a rendering test still sees a plausible frame while a control has vanished. |
+| Clicks | Real `ImGuiIO` mouse events through real widgets. A click is three frames — move and press, hold, release — because ImGui reports it on release and only if the press landed on the same widget. Fewer frames silently does nothing, which is how a naive attempt at this passes while testing nothing. |
+
+Coverage: all thirteen main panels, all seven oscillator/engine editors,
+five display sizes from 320×240 to 3840×2160, all eight genre focuses, all
+ten themes, and click/drag on buttons, checkboxes and drag-floats.
+
+---
 
 ## Layer 2 — UI smoke test (`tools/ui-smoke-test.ps1`)
 
@@ -185,11 +211,13 @@ These need hands on a mouse. Run before tagging a release.
 
 Honest list of what nothing currently covers.
 
-1. **Interactive UI logic.** Every mouse-driven path — dragging notes, box
-   selection, clip dragging, knob sweeps — is exercised only by the manual
-   checklist. The smoke test proves the screens *draw*, not that they
-   *respond*. Closing this needs a synthetic input harness that feeds
-   `ImGuiIO` events; that is the single biggest remaining gap.
+1. **The custom-drawn editors' mouse paths.** The headless GUI layer clicks
+   ImGui widgets, which covers buttons, checkboxes, combos and drags. It does
+   *not* cover the piano roll, the arrangement and the pad controller, which
+   draw themselves into an `InvisibleButton` and do their own hit-testing
+   against canvas coordinates. Dragging a note, box-selecting, and dragging a
+   clip are still manual-checklist only. This is now the biggest remaining
+   gap, and it is much narrower than it was.
 2. **The Tools panel generators.** The nine production tools (drum pattern
    generator, arpeggiator, bass generator, scale lock, velocity curve, fill,
    variation, quick layer, humanize) live in `UI.h` behind ImGui calls. Their
@@ -197,14 +225,22 @@ Honest list of what nothing currently covers.
 3. **MP3 export.** Shells out to LAME or FFmpeg, so it depends on the
    machine. Manual only.
 4. **MIDI input.** Needs real hardware. Manual only.
-5. **Sample import.** `Sample.h` loads files, but nothing plays them yet, so
-   there is nothing to test. Tests land with the feature.
-6. **Audio correctness beyond sanity.** Tests assert audio is finite,
-   bounded, non-silent and changes when it should. They do not assert it
-   sounds *right* — no spectral assertions, no reference renders. A filter
-   with the wrong slope would pass.
+5. **Microphone capture.** The ring buffer, the tracker and the note
+   conversion are all tested against synthesised audio; opening an actual
+   capture device is not. Manual only.
+6. **Audio correctness beyond sanity, in most places.** Most tests assert
+   audio is finite, bounded, non-silent and changes when it should. The
+   engines added in 3.7 go further and assert *spectra* — that band-limiting
+   removes inharmonic energy, that a pitch shift lands on the right
+   fundamental, that a bell's centroid falls over its life, that formant
+   shifting leaves the pitch alone — but the older effects have no such
+   coverage. A reverb with the wrong decay curve would still pass.
 7. **Performance.** No assertion on CPU cost per block. A change that made
    the audio thread 10× slower would pass everything here.
+8. **Latency compensation.** The phase-vocoder effects report their latency
+   through `IEffect::latencySamples()` and nothing reads it yet, so a channel
+   using one runs about 23 ms behind the others. The reporting is tested; the
+   compensation does not exist.
 
 ---
 

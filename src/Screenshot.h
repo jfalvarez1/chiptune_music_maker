@@ -186,6 +186,10 @@ struct CaptureRequest {
     // oscillator type and are otherwise unreachable in a capture.
     std::string instrument;
 
+    // Deliberately broken settings, so the Project Check panel has real
+    // findings in it rather than its empty-state paragraph.
+    bool addConflicts = false;
+
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
 
@@ -221,6 +225,7 @@ struct CaptureRequest {
 //   --structure          add tempo/meter changes, markers and regions
 //   --instrument <name>  fm|wavetable|sampler|granular|drummodel|
 //                        modmatrix|pitchtime
+//   --conflicts          settings that trip the Project Check panel
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -273,6 +278,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.addStructure = true;
         } else if (arg == "--instrument") {
             next(request.instrument);
+        } else if (arg == "--conflicts") {
+            request.addConflicts = true;
         } else if (arg == "--genre") {
             next(request.genreFocus);
         } else if (arg == "--focus") {
@@ -592,6 +599,21 @@ inline void applyCaptureState(const CaptureRequest& request,
             project.arrangement.push_back(broken);
             project.missingSamples.push_back("D:/moved/vocal_take.wav");
         }
+    }
+
+    // --- Deliberately conflicting settings ---
+    //
+    // One of each severity, so the panel draws all three colours and the
+    // ordering is visible.
+    if (request.addConflicts) {
+        project.channels[0].solo = true;                 // Problem
+        project.channels[1].reverbEnabled = true;        // Warning
+        project.channels[1].reverbMix = 0.0f;
+        project.channels[2].sends[0].destination = 0;    // Warning
+        project.channels[2].sends[0].level = 0.6f;
+        project.auxBuses[0].muted = true;
+        project.channels[3].muted = true;                // Note
+        project.missingSamples.push_back("D:/moved/vocal_take.wav");
     }
 
     // --- Song structure ---

@@ -47,6 +47,7 @@
 #include "ModMatrix.h"
 #include "PitchShift.h"
 #include "InstrumentPresets.h"
+#include "SettingsAudit.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -56,6 +57,7 @@
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
 // ImGuiStyle, and a context can exist without a backend.
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "UI.h"
 
 #include <cstdio>
@@ -13584,6 +13586,962 @@ static void testInstrumentPresets() {
     }
 }
 
+
+
+// ============================================================================
+// 81. Conflicting settings
+// ============================================================================
+static void testSettingsAudit() {
+    beginTest("Conflicting settings audit");
+
+    auto has = [](const std::vector<AuditFinding>& findings,
+                  const std::string& fragment) {
+        for (const AuditFinding& finding : findings) {
+            if (finding.what.find(fragment) != std::string::npos) return true;
+        }
+        return false;
+    };
+
+    // ---- A fresh project says nothing --------------------------------------
+    //
+    // The hard requirement. A panel that always has something in it is one
+    // everybody learns to ignore, and then it is worse than nothing.
+    {
+        auto fresh = std::make_unique<Project>();
+        const auto findings = auditProject(*fresh);
+        if (!findings.empty()) {
+            check(false, "a fresh project reports " +
+                  std::to_string(findings.size()) +
+                  " findings, first: " + findings[0].what);
+        } else {
+            check(true, "a fresh project reports nothing at all");
+        }
+    }
+
+    // A project someone has actually filled in, with nothing wrong with it,
+    // must also be silent - the audit must not fire on ordinary use.
+    {
+        auto p = std::make_unique<Project>();
+        Pattern pattern;
+        for (int i = 0; i < 8; ++i) {
+            Note note;
+            note.pitch = 60 + i;
+            note.startTime = float(i) * 0.5f;
+            note.duration = 0.4f;
+            pattern.notes.push_back(note);
+        }
+        p->patterns.clear();
+        p->patterns.push_back(pattern);
+        p->arrangement.clear();
+        for (int ch = 0; ch < 4; ++ch) {
+            p->arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0});
+            p->channels[ch].reverbEnabled = true;
+            p->channels[ch].reverbMix = 0.3f;
+        }
+        const auto findings = auditProject(*p);
+        if (!findings.empty()) {
+            check(false, "an ordinary project reports " +
+                  std::to_string(findings.size()) +
+                  " findings, first: " + findings[0].what);
+        } else {
+            check(true, "and neither does an ordinary working project");
+        }
+    }
+
+    // ---- Solo -----------------------------------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->channels[3].solo = true;
+        const auto findings = auditProject(*p);
+        check(has(findings, "Solo is on"),
+              "a soloed channel is reported - it is the single most common "
+              "reason someone cannot hear the rest of their project");
+        check(!findings.empty() && findings[0].severity == AuditSeverity::Problem,
+              "as a Problem, and sorted to the top");
+    }
+
+    // ---- Silent by accident ---------------------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 2, 0.0f, 4.0f, 0});
+        p->channels[2].volume = 0.0f;
+        check(has(auditProject(*p), "fader at zero"),
+              "a channel with content and a zero fader is reported");
+
+        p->channels[2].volume = 0.8f;
+        p->channels[2].muted = true;
+        check(has(auditProject(*p), "muted but has clips"),
+              "and a muted one is mentioned, more gently");
+    }
+
+    {
+        auto p = std::make_unique<Project>();
+        p->masterVolume = 0.0f;
+        check(has(auditProject(*p), "Master volume is at zero"),
+              "a zero master volume is reported");
+    }
+
+    // ---- Engines with nothing to play -----------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p->channels[0].oscillator.type = OscillatorType::Sampler;
+        check(has(auditProject(*p), "sampler with no zones"),
+              "a sampler with no zones is reported");
+
+        SampleZone zone;
+        zone.sampleId = -1;
+        p->channels[0].oscillator.sampler.addZone(zone);
+        check(has(auditProject(*p), "no audio behind them"),
+              "and one whose zones point at nothing");
+    }
+
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p->channels[0].oscillator.type = OscillatorType::Granular;
+        check(has(auditProject(*p), "granular with no source"),
+              "a granular channel with no sample is reported");
+    }
+
+    // ---- On, and doing nothing -------------------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 1, 0.0f, 4.0f, 0});
+        p->channels[1].reverbEnabled = true;
+        p->channels[1].reverbMix = 0.0f;
+        check(has(auditProject(*p), "Reverb is on with its mix at zero"),
+              "an effect switched on with its mix at zero is reported - it is "
+              "running, costing CPU, and none of it reaches the output");
+    }
+
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 1, 0.0f, 4.0f, 0});
+        p->channels[1].sidechainEnabled = true;
+        p->channels[1].sidechainSource = -1;
+        p->channels[1].sidechainBus = -1;
+        check(has(auditProject(*p), "sidechain on with no source"),
+              "a sidechain with nothing to duck against is reported");
+    }
+
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 1, 0.0f, 4.0f, 0});
+        p->channels[1].autoTuneEnabled = true;
+        p->channels[1].pitchShiftEnabled = true;
+        p->channels[1].pitchShiftSemitones = 3.5f;
+        check(has(auditProject(*p), "Auto-Tune and Pitch Shift both on"),
+              "autotune fighting a pitch shifter is reported - the correction "
+              "lands somewhere between the two");
+    }
+
+    // ---- Sends into nothing ----------------------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p->channels[0].sends[0].destination = 0;
+        p->channels[0].sends[0].level = 0.5f;
+        p->auxBuses[0].muted = true;
+        check(has(auditProject(*p), "which is muted"),
+              "a send into a muted bus is reported - the bus being muted is "
+              "not visible from the channel");
+
+        p->auxBuses[0].muted = false;
+        p->channels[0].sends[0].level = 0.0f;
+        check(has(auditProject(*p), "send to"),
+              "and so is a send routed but left at zero");
+    }
+
+    // ---- Modulation that cannot reach anything ---------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p->channels[0].oscillator.type = OscillatorType::FMSynth;
+        p->channels[0].oscillator.modMatrix.addRoute(
+            ModRoute{ModSource::LFO1, ModDestination::WavetableMorph, 0.5f, true});
+
+        // Searched by the same function the finding is built from, so the
+        // test cannot drift out of step with the wording.
+        const std::string morph = modDestinationName(ModDestination::WavetableMorph);
+
+        check(has(auditProject(*p), morph),
+              "a route to " + morph + " on an FM channel is reported - it is "
+              "legal, saved, shown as enabled, and does nothing whatsoever");
+
+        // The same route on a wavetable channel is fine and must not fire.
+        p->channels[0].oscillator.type = OscillatorType::Custom;
+        check(!has(auditProject(*p), morph),
+              "and the same route on a wavetable channel is not reported");
+    }
+
+    {
+        // Filter destinations need the filter switched on.
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p->channels[0].filterEnabled = false;
+        p->channels[0].oscillator.modMatrix.addRoute(
+            ModRoute{ModSource::LFO1, ModDestination::FilterCutoff, 0.5f, true});
+        const std::string cutoff = modDestinationName(ModDestination::FilterCutoff);
+
+        check(has(auditProject(*p), cutoff),
+              "a filter route with the filter off is reported");
+
+        p->channels[0].filterEnabled = true;
+        check(!has(auditProject(*p), cutoff),
+              "and is not once the filter is on");
+    }
+
+    // ---- Monophonic channels playing chords ------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        Pattern chord;
+        for (int i = 0; i < 3; ++i) {
+            Note note;
+            note.pitch = 60 + i * 4;
+            note.startTime = 0.0f;      // all together
+            note.duration = 2.0f;
+            chord.notes.push_back(note);
+        }
+        p->patterns.clear();
+        p->patterns.push_back(chord);
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p->channels[0].oscillator.modMatrix.polyphonyLimit = 1;
+
+        check(has(auditProject(*p), "monophonic but plays chords"),
+              "a monophonic channel carrying chords is reported - each note "
+              "steals the voice from the one before it");
+
+        p->channels[0].oscillator.modMatrix.polyphonyLimit = 4;
+        check(!has(auditProject(*p), "monophonic but plays chords"),
+              "and is not once the limit is raised");
+    }
+
+    // ---- Content stranded past the chip limit ----------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->chipAuthentic = true;
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 20, 0.0f, 4.0f, 0});
+        check(has(auditProject(*p), "past the chip channel limit"),
+              "clips above the chip channel cap are reported - they are still "
+              "in the file and never mixed");
+
+        p->chipAuthentic = false;
+        check(!has(auditProject(*p), "past the chip channel limit"),
+              "and are not when chip mode is off");
+    }
+
+    // ---- Changes past the end of the song --------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->songLength = 32.0f;
+        p->tempoMap.setTempo(500.0f, 140.0f);
+        check(has(auditProject(*p), "past the end of the song"),
+              "a tempo change the playhead never reaches is reported");
+    }
+
+    // ---- Missing audio ----------------------------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->missingSamples.push_back("D:/moved/break.wav");
+        check(has(auditProject(*p), "could not be found"),
+              "missing audio files are reported");
+    }
+
+    // ---- Ordering and counting ---------------------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->channels[5].solo = true;              // Problem
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 1, 0.0f, 4.0f, 0});
+        p->channels[1].reverbEnabled = true;     // Warning
+        p->channels[1].reverbMix = 0.0f;
+        p->channels[1].muted = true;             // Note
+
+        const auto findings = auditProject(*p);
+        check(findings.size() >= 3, "all three severities are found");
+
+        bool ordered = true;
+        for (size_t i = 1; i < findings.size(); ++i) {
+            if (findings[i].severity < findings[i - 1].severity) ordered = false;
+        }
+        check(ordered,
+              "and they come back worst first, so the panel reads in the "
+              "order someone would act on it");
+
+        check(auditCount(findings, AuditSeverity::Problem) >= 1 &&
+              auditCount(findings, AuditSeverity::Warning) >= 1 &&
+              auditCount(findings, AuditSeverity::Note) >= 1,
+              "and the per-severity counts add up");
+    }
+
+    // ---- Every finding is actionable ---------------------------------------------
+    //
+    // A warning that only names a field is a puzzle rather than a help, so
+    // each one has to say what, why, and what to do.
+    {
+        auto p = std::make_unique<Project>();
+        p->channels[0].solo = true;
+        p->masterVolume = 0.0f;
+        p->missingSamples.push_back("gone.wav");
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 1, 0.0f, 4.0f, 0});
+        p->channels[1].delayEnabled = true;
+        p->channels[1].delayMix = 0.0f;
+
+        bool allComplete = true;
+        std::string incomplete;
+        for (const AuditFinding& finding : auditProject(*p)) {
+            if (finding.what.empty() || finding.why.empty() || finding.fix.empty()) {
+                allComplete = false;
+                incomplete = finding.what;
+                break;
+            }
+        }
+        check(allComplete,
+              "every finding says what, why and what to do" +
+              (allComplete ? std::string() : " (" + incomplete + " does not)"));
+    }
+
+    // ---- The audit changes nothing ------------------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->channels[0].solo = true;
+        p->channels[2].muted = true;
+        p->masterVolume = 0.0f;
+
+        const std::string before = [&] {
+            std::ostringstream out;
+            writeProject(out, *p);
+            return out.str();
+        }();
+
+        auditProject(*p);
+
+        const std::string after = [&] {
+            std::ostringstream out;
+            writeProject(out, *p);
+            return out.str();
+        }();
+
+        check(before == after,
+              "auditing a project does not change it - this reports, and the "
+              "user decides; silently unmuting a channel would be worse than "
+              "the confusion it solves");
+    }
+}
+
+
+// ============================================================================
+// 82. Nothing the program ships trips its own audit
+// ============================================================================
+static void testShippedContentIsClean() {
+    beginTest("Shipped content passes the audit");
+
+    /*
+     * A template that opens with a warning teaches the user, on their first
+     * contact with the panel, that it is noise. So every starter template
+     * and every genre kit has to be clean - and if one is not, the fault is
+     * either in the template or in the rule, and both are worth knowing.
+     */
+    for (int g = 0; g < static_cast<int>(Genre::Count); ++g) {
+        const Genre genre = static_cast<Genre>(g);
+
+        auto p = std::make_unique<Project>(makeGenreTemplate(genre));
+
+        const auto findings = auditProject(*p);
+        if (!findings.empty()) {
+            check(false, std::string(genreName(genre)) +
+                  "'s starter template trips the audit: " + findings[0].what);
+            continue;
+        }
+        check(true, std::string(genreName(genre)) +
+              "'s starter template is clean");
+    }
+
+    // The quick-start kits, which write patterns into an existing project.
+    {
+        int recipeCount = 0;
+        const KitRecipe* recipes = kitRecipes(recipeCount);
+
+        bool clean = true;
+        std::string problem;
+
+        for (int r = 0; r < recipeCount && clean; ++r) {
+            auto fresh = std::make_unique<Project>();
+            fresh->patterns.clear();
+            fresh->patterns.push_back(Pattern());
+
+            const KitVoices voices;
+            applyKitRecipe(fresh->patterns[0], recipes[r], 0.0f, 1, 60, voices);
+            fresh->arrangement.clear();
+            fresh->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            const auto findings = auditProject(*fresh);
+            if (!findings.empty()) {
+                clean = false;
+                problem = std::string(recipes[r].name) + ": " + findings[0].what;
+            }
+        }
+        check(clean,
+              "and so is every quick-start kit" +
+              (clean ? std::string() : " (" + problem + ")"));
+    }
+}
+
+// ============================================================================
+// Headless ImGui harness
+// ============================================================================
+/*
+ * A real context, a built font atlas, a fake display, and no backend.
+ *
+ * The atlas is built through the legacy path - Build() plus
+ * GetTexDataAsRGBA32() - rather than the 1.92 texture-request path, because
+ * the new one expects a backend to service ImTextureData requests and there
+ * is no backend here. Without a built atlas, NewFrame() asserts.
+ */
+class HeadlessUI {
+public:
+    HeadlessUI(float width = 1600.0f, float height = 900.0f) {
+        m_context = ImGui::CreateContext();
+        ImGui::SetCurrentContext(m_context);
+
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(width, height);
+        io.DeltaTime = 1.0f / 60.0f;
+
+        // No .ini file: a test must not read or write the user's layout, and
+        // it must not depend on one existing.
+        io.IniFilename = nullptr;
+        io.LogFilename = nullptr;
+
+        unsigned char* pixels = nullptr;
+        int texWidth = 0, texHeight = 0;
+        io.Fonts->GetTexDataAsRGBA32(&pixels, &texWidth, &texHeight);
+        // ImTextureID is a plain ImU64 in this build, not a pointer.
+        io.Fonts->SetTexID(static_cast<ImTextureID>(1));
+
+        ApplyTheme(Theme::Stock);
+    }
+
+    ~HeadlessUI() {
+        if (m_context != nullptr) {
+            ImGui::SetCurrentContext(m_context);
+            ImGui::DestroyContext(m_context);
+        }
+    }
+
+    HeadlessUI(const HeadlessUI&) = delete;
+    HeadlessUI& operator=(const HeadlessUI&) = delete;
+
+    void setDisplaySize(float width, float height) {
+        ImGui::SetCurrentContext(m_context);
+        ImGui::GetIO().DisplaySize = ImVec2(width, height);
+    }
+
+    // Where the mouse is, and whether it is down, for the NEXT frame.
+    void setMouse(float x, float y, bool down) {
+        ImGui::SetCurrentContext(m_context);
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(x, y);
+        io.AddMouseButtonEvent(0, down);
+    }
+
+    struct FrameResult {
+        bool idStackBalanced = true;
+        bool windowStackBalanced = true;
+        bool allVerticesFinite = true;
+        int vertexCount = 0;
+        int drawListCount = 0;
+        std::string firstProblem;
+    };
+
+    /*
+     * Run one frame, calling `draw` between NewFrame and Render.
+     *
+     * Checks after Render rather than during: the ID and window stacks are
+     * only meaningfully comparable once the frame has closed, and the draw
+     * data does not exist until then.
+     */
+    template <typename Fn>
+    FrameResult frame(Fn&& draw) {
+        ImGui::SetCurrentContext(m_context);
+        FrameResult result;
+
+        ImGui::NewFrame();
+
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        const int windowStackBefore = g.CurrentWindowStack.Size;
+
+        draw();
+
+        if (g.CurrentWindowStack.Size != windowStackBefore) {
+            result.windowStackBalanced = false;
+            result.firstProblem =
+                "window stack left at " +
+                std::to_string(g.CurrentWindowStack.Size) + ", expected " +
+                std::to_string(windowStackBefore) +
+                " - a Begin() without its End()";
+            // Unwind, or Render() asserts and every later frame is wrong.
+            while (g.CurrentWindowStack.Size > windowStackBefore) ImGui::End();
+        }
+
+        // Every window's ID stack must be back to its single root entry. A
+        // PushID left dangling corrupts the IDs of every widget after it,
+        // so unrelated controls silently start sharing state.
+        for (ImGuiWindow* window : g.Windows) {
+            if (window == nullptr) continue;
+            if (window->IDStack.Size != 1) {
+                result.idStackBalanced = false;
+                if (result.firstProblem.empty()) {
+                    result.firstProblem =
+                        std::string("window '") + window->Name +
+                        "' left " + std::to_string(window->IDStack.Size - 1) +
+                        " PushID(s) unpopped";
+                }
+            }
+        }
+
+        ImGui::Render();
+
+        ImDrawData* data = ImGui::GetDrawData();
+        if (data != nullptr) {
+            result.drawListCount = data->CmdListsCount;
+            for (int i = 0; i < data->CmdListsCount; ++i) {
+                const ImDrawList* list = data->CmdLists[i];
+                result.vertexCount += list->VtxBuffer.Size;
+                for (int v = 0; v < list->VtxBuffer.Size; ++v) {
+                    const ImDrawVert& vertex = list->VtxBuffer[v];
+                    if (!std::isfinite(vertex.pos.x) || !std::isfinite(vertex.pos.y) ||
+                        !std::isfinite(vertex.uv.x) || !std::isfinite(vertex.uv.y)) {
+                        result.allVerticesFinite = false;
+                        if (result.firstProblem.empty()) {
+                            result.firstProblem =
+                                "a vertex position is NaN or infinite - layout "
+                                "maths divided by zero, and a GPU discards "
+                                "those silently";
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    // Several frames of the same content. ImGui settles over two or three
+    // frames - the first has no size for anything auto-sized, docking
+    // resolves on the second - so a single frame is not representative.
+    template <typename Fn>
+    FrameResult frames(int count, Fn&& draw) {
+        FrameResult last;
+        for (int i = 0; i < count; ++i) last = frame(draw);
+        return last;
+    }
+
+private:
+    ImGuiContext* m_context = nullptr;
+};
+
+// Fold a FrameResult into one check, so a panel test is one line.
+static bool frameIsClean(const HeadlessUI::FrameResult& result) {
+    return result.idStackBalanced && result.windowStackBalanced &&
+           result.allVerticesFinite;
+}
+
+
+// ============================================================================
+// 77. Every panel draws cleanly, headlessly
+// ============================================================================
+static void testPanelsDrawHeadless() {
+    beginTest("Panels draw cleanly (headless GUI)");
+
+    auto uiPtr = std::make_unique<HeadlessUI>();
+    auto projectPtr = std::make_unique<Project>();
+    auto seqPtr = std::make_unique<Sequencer>();
+    UIState ui;
+
+    Project& project = *projectPtr;
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&project);
+
+    // Something to draw. An empty project exercises none of the note,
+    // clip or waveform paths, which are where the geometry maths lives.
+    {
+        Pattern pattern;
+        for (int i = 0; i < 8; ++i) {
+            Note note;
+            note.pitch = 60 + (i % 5) * 2;
+            note.startTime = float(i) * 0.5f;
+            note.duration = 0.45f;
+            pattern.notes.push_back(note);
+        }
+        project.patterns.clear();
+        project.patterns.push_back(pattern);
+        project.arrangement.clear();
+        project.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0xFF4488FFu});
+    }
+
+    struct Panel { const char* name; void (*draw)(Project&, UIState&, Sequencer&); };
+    static const Panel PANELS[] = {
+        {"Piano Roll",     [](Project& p, UIState& u, Sequencer& s) { DrawPianoRoll(p, u, s); }},
+        {"Tracker",        [](Project& p, UIState& u, Sequencer& s) { DrawTrackerView(p, u, s); }},
+        {"Arrangement",    [](Project& p, UIState& u, Sequencer& s) { DrawArrangement(p, u, s); }},
+        {"Mixer",          [](Project& p, UIState& u, Sequencer& s) { DrawMixer(p, u, s); }},
+        {"Channel Editor", [](Project& p, UIState& u, Sequencer& s) { DrawChannelEditor(p, u, s); }},
+        {"Sound Palette",  [](Project& p, UIState& u, Sequencer& s) { DrawSoundPalette(p, u, s); }},
+        {"Tools",          [](Project& p, UIState& u, Sequencer& s) { DrawToolsPanel(p, u, s); }},
+        {"Pad",            [](Project& p, UIState& u, Sequencer& s) { DrawPadController(p, u, s); }},
+        {"Master Bus",     [](Project& p, UIState& u, Sequencer& s) { DrawMasterBus(s, p, u); }},
+        {"File",           [](Project& p, UIState& u, Sequencer& s) { DrawFileMenu(p, u, s); }},
+        {"Voice",          [](Project& p, UIState& u, Sequencer& s) { DrawVoicePanel(p, u, s); }},
+        {"Pattern List",   [](Project& p, UIState& u, Sequencer& s) { (void)s; DrawPatternList(p, u); }},
+        {"Note Editor",    [](Project& p, UIState& u, Sequencer& s) { (void)s; DrawNoteEditor(p, u); }},
+    };
+
+    for (const Panel& panel : PANELS) {
+        // Three frames: ImGui settles over two or three - the first has no
+        // size for anything auto-sized - so one frame is not representative.
+        const auto result = uiPtr->frames(3, [&] { panel.draw(project, ui, seq); });
+
+        if (!frameIsClean(result)) {
+            check(false, std::string(panel.name) + ": " + result.firstProblem);
+            continue;
+        }
+        check(result.vertexCount > 0,
+              std::string(panel.name) + " draws something");
+    }
+}
+
+// ============================================================================
+// 78. Every engine's editor draws cleanly
+// ============================================================================
+static void testEngineEditorsDrawHeadless() {
+    beginTest("Engine editors draw cleanly (headless GUI)");
+
+    struct Case { const char* name; OscillatorType type; };
+    static const Case CASES[] = {
+        {"Pulse",      OscillatorType::Pulse},
+        {"Noise",      OscillatorType::Noise},
+        {"Wavetable",  OscillatorType::Custom},
+        {"FM",         OscillatorType::FMSynth},
+        {"Sampler",    OscillatorType::Sampler},
+        {"Granular",   OscillatorType::Granular},
+        {"Drum Model", OscillatorType::DrumModel},
+    };
+
+    for (const Case& testCase : CASES) {
+        auto uiPtr = std::make_unique<HeadlessUI>();
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        UIState ui;
+
+        Project& project = *projectPtr;
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&project);
+
+        project.channels[0].oscillator.type = testCase.type;
+        ui.selectedChannel = 0;
+
+        // A zone and a route, so the list-drawing paths run rather than the
+        // empty-state text. Each of those loops pushes an ID per entry and
+        // can delete an entry mid-iteration, which is the classic way to
+        // leave a PushID unpopped.
+        if (testCase.type == OscillatorType::Sampler) {
+            SampleZone zone;
+            zone.sampleId = -1;
+            project.channels[0].oscillator.sampler.addZone(zone);
+            project.channels[0].oscillator.sampler.addZone(zone);
+        }
+        project.channels[0].oscillator.modMatrix.addRoute(
+            ModRoute{ModSource::LFO1, ModDestination::Pitch, 0.2f, true});
+        project.channels[0].oscillator.modMatrix.addRoute(
+            ModRoute{ModSource::Velocity, ModDestination::FilterCutoff, 0.4f, true});
+
+        const auto result = uiPtr->frames(3, [&] {
+            DrawChannelEditor(project, ui, *seqPtr);
+        });
+
+        if (!frameIsClean(result)) {
+            check(false, std::string(testCase.name) + " editor: " + result.firstProblem);
+            continue;
+        }
+        check(result.vertexCount > 0,
+              std::string(testCase.name) + " editor draws cleanly");
+    }
+}
+
+// ============================================================================
+// 79. Awkward sizes and every genre
+// ============================================================================
+static void testLayoutEdgesHeadless() {
+    beginTest("Layout edges (headless GUI)");
+
+    // ---- Sizes ---------------------------------------------------------------
+    //
+    // A panel that divides by its own width produces infinities at zero and
+    // NaN geometry at one pixel. The GPU discards those silently, so the
+    // rendering smoke test still sees a plausible frame.
+    struct Size { const char* name; float w, h; };
+    static const Size SIZES[] = {
+        {"tiny",   320.0f, 240.0f},
+        {"narrow", 200.0f, 900.0f},
+        {"short",  1600.0f, 150.0f},
+        {"wide",   3840.0f, 800.0f},
+        {"huge",   3840.0f, 2160.0f},
+    };
+
+    for (const Size& size : SIZES) {
+        auto uiPtr = std::make_unique<HeadlessUI>(size.w, size.h);
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        UIState ui;
+
+        Project& project = *projectPtr;
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&project);
+        project.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        const auto result = uiPtr->frames(3, [&] {
+            DrawPianoRoll(project, ui, *seqPtr);
+            DrawArrangement(project, ui, *seqPtr);
+            DrawMixer(project, ui, *seqPtr);
+            DrawChannelEditor(project, ui, *seqPtr);
+        });
+
+        check(frameIsClean(result),
+              std::string("the main panels survive a ") + size.name +
+              " display" + (frameIsClean(result) ? "" : ": " + result.firstProblem));
+    }
+
+    // ---- Every genre focus ---------------------------------------------------
+    //
+    // The palette and the Tools panel both hide sections by genre, and the
+    // engine row wraps on the count DRAWN rather than the loop index - so a
+    // genre that hides some is a different code path, not just fewer icons.
+    for (int g = 0; g < static_cast<int>(Genre::Count); ++g) {
+        auto uiPtr = std::make_unique<HeadlessUI>();
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        UIState ui;
+
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(projectPtr.get());
+        ui.genre = static_cast<Genre>(g);
+        ui.paletteShowEverything = false;
+
+        const auto result = uiPtr->frames(3, [&] {
+            DrawSoundPalette(*projectPtr, ui, *seqPtr);
+            DrawToolsPanel(*projectPtr, ui, *seqPtr);
+        });
+
+        if (!frameIsClean(result)) {
+            check(false, std::string(genreName(static_cast<Genre>(g))) +
+                  " focus: " + result.firstProblem);
+            break;
+        }
+    }
+    check(true, "the palette and tools draw cleanly under every genre focus");
+
+    // ---- Every theme ---------------------------------------------------------
+    {
+        auto uiPtr = std::make_unique<HeadlessUI>();
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        UIState ui;
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(projectPtr.get());
+
+        bool allClean = true;
+        for (int t = 0; t < static_cast<int>(Theme::Count); ++t) {
+            ApplyTheme(static_cast<Theme>(t));
+            const auto result = uiPtr->frames(2, [&] {
+                DrawPianoRoll(*projectPtr, ui, *seqPtr);
+                DrawMixer(*projectPtr, ui, *seqPtr);
+            });
+            if (!frameIsClean(result)) { allClean = false; break; }
+        }
+        check(allClean, "every theme draws cleanly - a theme changes geometry "
+                        "as well as colour, so it is a layout path too");
+        ApplyTheme(Theme::Stock);
+    }
+}
+
+// ============================================================================
+// 80. Clicking things
+// ============================================================================
+/*
+ * Real mouse events through real widgets.
+ *
+ * ImGui reports a click on the frame the button is released, and only if the
+ * press landed on the same widget - so a click is three frames: move and
+ * press, hold, release. Doing it in fewer silently does nothing, which is
+ * why a naive attempt at this passes while testing nothing.
+ *
+ * The positions come from ImGui itself rather than being guessed: a probe
+ * frame draws the same content and records where the widget landed.
+ */
+static void testClickingHeadless() {
+    beginTest("Clicking widgets (headless GUI)");
+
+    // ---- The probe -----------------------------------------------------------
+    //
+    // Finding a widget by drawing it and asking ImGui where it went. Guessed
+    // coordinates would pass by accident when the layout moved.
+    struct Probe {
+        ImVec2 centre{0.0f, 0.0f};
+        bool found = false;
+    };
+
+    // ---- A button that changes the project -----------------------------------
+    {
+        auto uiPtr = std::make_unique<HeadlessUI>();
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+
+        Probe probe;
+        auto content = [&] {
+            ImGui::Begin("ClickTest");
+            ImGui::Button("Add Pattern");
+            if (!probe.found) {
+                const ImVec2 min = ImGui::GetItemRectMin();
+                const ImVec2 max = ImGui::GetItemRectMax();
+                probe.centre = ImVec2((min.x + max.x) * 0.5f,
+                                      (min.y + max.y) * 0.5f);
+                probe.found = true;
+            }
+            if (ImGui::IsItemClicked()) {
+                project.patterns.push_back(Pattern());
+            }
+            ImGui::End();
+        };
+
+        uiPtr->frames(3, content);
+        check(probe.found && probe.centre.x > 0.0f,
+              "the probe located the button at (" +
+              std::to_string(probe.centre.x) + ", " +
+              std::to_string(probe.centre.y) + ")");
+
+        const size_t before = project.patterns.size();
+
+        // Away from it, pressed: must not count.
+        uiPtr->setMouse(5.0f, 5.0f, true);
+        uiPtr->frame(content);
+        uiPtr->setMouse(5.0f, 5.0f, false);
+        uiPtr->frame(content);
+        check(project.patterns.size() == before,
+              "clicking away from the button does nothing");
+
+        // On it: move and press, hold, release.
+        uiPtr->setMouse(probe.centre.x, probe.centre.y, false);
+        uiPtr->frame(content);
+        uiPtr->setMouse(probe.centre.x, probe.centre.y, true);
+        uiPtr->frame(content);
+        uiPtr->frame(content);
+        uiPtr->setMouse(probe.centre.x, probe.centre.y, false);
+        uiPtr->frame(content);
+
+        check(project.patterns.size() == before + 1,
+              "clicking the button runs its handler (" +
+              std::to_string(project.patterns.size()) + " patterns, was " +
+              std::to_string(before) + ")");
+    }
+
+    // ---- A checkbox that changes a channel -----------------------------------
+    {
+        auto uiPtr = std::make_unique<HeadlessUI>();
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        Project& project = *projectPtr;
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&project);
+
+        Probe probe;
+        auto content = [&] {
+            ImGui::Begin("CheckTest");
+            if (ImGui::Checkbox("Mute", &project.channels[0].muted)) {
+                seqPtr->updateChannelConfigs();
+            }
+            if (!probe.found) {
+                const ImVec2 min = ImGui::GetItemRectMin();
+                const ImVec2 max = ImGui::GetItemRectMax();
+                probe.centre = ImVec2(min.x + 8.0f, (min.y + max.y) * 0.5f);
+                probe.found = true;
+            }
+            ImGui::End();
+        };
+
+        uiPtr->frames(3, content);
+        check(!project.channels[0].muted, "the channel starts unmuted");
+
+        uiPtr->setMouse(probe.centre.x, probe.centre.y, false);
+        uiPtr->frame(content);
+        uiPtr->setMouse(probe.centre.x, probe.centre.y, true);
+        uiPtr->frame(content);
+        uiPtr->setMouse(probe.centre.x, probe.centre.y, false);
+        uiPtr->frame(content);
+
+        check(project.channels[0].muted,
+              "clicking the checkbox mutes the channel, and the click "
+              "reaches the sequencer sync as well as the flag");
+    }
+
+    // ---- A drag that changes a value -----------------------------------------
+    {
+        auto uiPtr = std::make_unique<HeadlessUI>();
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+        project.bpm = 120.0f;
+
+        Probe probe;
+        auto content = [&] {
+            ImGui::Begin("DragTest");
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::DragFloat("BPM", &project.bpm, 1.0f, 20.0f, 300.0f);
+            if (!probe.found) {
+                const ImVec2 min = ImGui::GetItemRectMin();
+                const ImVec2 max = ImGui::GetItemRectMax();
+                probe.centre = ImVec2((min.x + max.x) * 0.5f,
+                                      (min.y + max.y) * 0.5f);
+                probe.found = true;
+            }
+            ImGui::End();
+        };
+
+        uiPtr->frames(3, content);
+        const float before = project.bpm;
+
+        uiPtr->setMouse(probe.centre.x, probe.centre.y, false);
+        uiPtr->frame(content);
+        uiPtr->setMouse(probe.centre.x, probe.centre.y, true);
+        uiPtr->frame(content);
+        for (int i = 1; i <= 12; ++i) {
+            uiPtr->setMouse(probe.centre.x + float(i) * 4.0f, probe.centre.y, true);
+            uiPtr->frame(content);
+        }
+        uiPtr->setMouse(probe.centre.x + 48.0f, probe.centre.y, false);
+        uiPtr->frame(content);
+
+        check(project.bpm > before,
+              "dragging right raises the value (" + std::to_string(before) +
+              " -> " + std::to_string(project.bpm) + ")");
+        check(project.bpm <= 300.0f,
+              "and it stops at the maximum rather than running past it");
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -13700,6 +14658,12 @@ int main(int argc, char** argv) {
     testPitchAndTime();
     testPitchEffectsInRack();
     testInstrumentPresets();
+    testSettingsAudit();
+    testShippedContentIsClean();
+    testPanelsDrawHeadless();
+    testEngineEditorsDrawHeadless();
+    testLayoutEdgesHeadless();
+    testClickingHeadless();
     testLongRunStability();
 
     std::printf("\n==========================\n");

@@ -142,6 +142,27 @@ pastel, hazy lane. They used to be two shades of the same purple.
 
 ## What's new
 
+### 3.8 — "Check"
+
+- **Project Check panel** — finds settings that are switched on and doing
+  nothing, or silently cancelling something else: an effect with its mix at
+  zero, a send into a muted bus, a modulation route pointing at an engine the
+  channel is not running, a soloed channel that is why nothing else is
+  audible. It never changes anything; it says what it found and what to do
+- **Headless GUI testing** — the real panels, driven through real ImGui
+  frames with no window, checking ID-stack and window-stack balance, vertex
+  sanity, every engine editor, every genre focus, every theme, five display
+  sizes, and clicks on buttons, checkboxes and drags
+- **The genre focus now covers the instrument engines** — chiptune is shown
+  wavetable and FM, hip hop the sampler and granular, and so on, with the
+  same "filter on attention, never on capability" rule as the rest of it
+- **The Channel Editor is reorganised** — its Oscillator section had grown to
+  850 lines holding every engine plus the modulation matrix, with the noise
+  controls stranded 800 lines from the other basic settings. Separate
+  headers now: Oscillator, the engine in use, and Modulation
+- **Fixed: the suggested-fix line in Project Check was clipped** rather than
+  wrapped
+
 ### 3.7 — "Instruments"
 
 Five configurable engines, a modulation matrix, audio on the timeline, and
@@ -247,8 +268,8 @@ along with an honest list of what is *not* covered.
 ```powershell
 cmake --build build --config Release
 
-build/bin/Release/ChiptuneTests.exe    # 3604 headless checks
-./tools/ui-smoke-test.ps1              # 55 rendering checks
+build/bin/Release/ChiptuneTests.exe    # 3685 headless checks
+./tools/ui-smoke-test.ps1              # 57 rendering checks
 python tools/audit-themes.py           # theme contrast report
 ./tools/generate-gallery.ps1           # refresh the screenshots above
 ```
@@ -257,7 +278,24 @@ The headless suite exists because this project's recurring failure is
 *silent* breakage — a control wired in the UI that never reaches the synth.
 So it asserts that turning a control on **changes the audio**, not merely
 that the code runs. That is what caught the dead stereo widener, the dead
-sidechain and the muting master EQ.
+sidechain, the muting master EQ, the filter cutoff that did nothing, and
+sample playback running a semitone and a half sharp.
+
+Part of it runs the **real UI headlessly** — an ImGui context with no window
+and no backend, driving the actual panel code through real frames. That
+catches three things a screenshot cannot:
+
+- **ID stack imbalance.** A `PushID` without its `PopID` corrupts every
+  widget ID after it, so unrelated controls silently start sharing state —
+  two sliders that move together, a checkbox that toggles its neighbour
+- **`Begin`/`End` imbalance**, which breaks every panel drawn afterwards, not
+  just the guilty one
+- **NaN geometry.** A divide-by-zero in layout maths produces vertices the
+  GPU discards silently, so a rendering test still sees a plausible frame
+  while a control has vanished
+
+It also drives the mouse, so button, checkbox and drag handlers are tested
+by clicking them rather than by calling them.
 
 ## Features
 

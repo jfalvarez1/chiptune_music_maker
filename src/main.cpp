@@ -1008,6 +1008,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         ChiptuneTracker::PollVoiceCapture();
         ChiptuneTracker::DrawVoicePanel(project, uiState, sequencer);
 
+        // Settings that are on and doing nothing, or silently cancelling
+        // something else.
+        ChiptuneTracker::DrawProjectCheck(project, uiState, sequencer);
+
         // A docked window sits behind whatever shares its tab group, so a
         // capture of one needs it brought to the front. Repeated for the
         // first few frames because the dock layout is still settling.

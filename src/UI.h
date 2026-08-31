@@ -16,6 +16,7 @@
 #include "UndoHistory.h"
 #include "VoicePanel.h"
 #include "InstrumentPresets.h"
+#include "SettingsAudit.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -8502,6 +8503,117 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
     } else {
         ImGui::Text("%d note%s ready", static_cast<int>(pending),
                     pending == 1 ? "" : "s");
+    }
+
+    ImGui::End();
+}
+
+
+// ============================================================================
+// Project Check
+//
+// Settings that are legal, saved, shown as enabled, and doing nothing - or
+// silently cancelling something else. A send into a muted bus. A modulation
+// route pointing at an engine the channel is not running. A soloed channel
+// three screens away that is why nothing else is audible.
+//
+// The rules live in SettingsAudit.h with no ImGui in them, so they are
+// testable; this only draws the result. It never changes anything: a "fix it
+// for me" button that silently unmutes a channel would be worse than the
+// confusion it solves.
+// ============================================================================
+inline void DrawProjectCheck(Project& project, UIState& ui, Sequencer& seq) {
+    ImGui::SetNextWindowPos(ImVec2(360, 240), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(520, 380), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Project Check");
+
+    /*
+     * Recomputed on a timer rather than every frame.
+     *
+     * The audit walks every channel, every clip and every note looking for
+     * stacked chords, which is fine once a second and wasteful sixty times a
+     * second. A second is also short enough that it feels live when the user
+     * is changing something to make a warning go away.
+     */
+    static std::vector<AuditFinding> findings;
+    static float sinceRefresh = 1e9f;
+    sinceRefresh += ImGui::GetIO().DeltaTime;
+
+    const bool refreshNow = ImGui::Button("Re-check");
+    if (refreshNow || sinceRefresh > 1.0f) {
+        findings = auditProject(project);
+        sinceRefresh = 0.0f;
+    }
+
+    const int problems = auditCount(findings, AuditSeverity::Problem);
+    const int warnings = auditCount(findings, AuditSeverity::Warning);
+    const int notes = auditCount(findings, AuditSeverity::Note);
+
+    ImGui::SameLine();
+    if (findings.empty()) {
+        ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.55f, 1.0f),
+                           "Nothing to report.");
+    } else {
+        ImGui::Text("%d problem%s, %d warning%s, %d note%s",
+                    problems, problems == 1 ? "" : "s",
+                    warnings, warnings == 1 ? "" : "s",
+                    notes, notes == 1 ? "" : "s");
+    }
+
+    ImGui::Separator();
+
+    if (findings.empty()) {
+        ImGui::TextWrapped(
+            "This panel looks for settings that are switched on and doing "
+            "nothing: an effect with its mix at zero, a send into a muted "
+            "bus, a modulation route pointing at an engine this channel is "
+            "not running, a soloed channel that is silencing everything "
+            "else.\n\n"
+            "It never changes anything. It only says what it found.");
+        ImGui::End();
+        return;
+    }
+
+    for (size_t i = 0; i < findings.size(); ++i) {
+        const AuditFinding& finding = findings[i];
+        ImGui::PushID(static_cast<int>(i));
+
+        ImVec4 colour;
+        switch (finding.severity) {
+            case AuditSeverity::Problem: colour = ImVec4(1.0f, 0.45f, 0.45f, 1.0f); break;
+            case AuditSeverity::Warning: colour = ImVec4(1.0f, 0.78f, 0.35f, 1.0f); break;
+            case AuditSeverity::Note:
+            default:                     colour = ImVec4(0.62f, 0.72f, 0.85f, 1.0f); break;
+        }
+
+        ImGui::PushStyleColor(ImGuiCol_Text, colour);
+        ImGui::TextUnformatted(auditSeverityName(finding.severity));
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        ImGui::TextWrapped("%s", finding.what.c_str());
+
+        ImGui::Indent();
+        ImGui::TextWrapped("%s", finding.why.c_str());
+
+        // TextColored does not wrap, so the suggested fix was being clipped
+        // at the panel edge - and the fix is the half of a finding the user
+        // actually needs. Colour pushed around a wrapped call instead.
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.80f, 0.70f, 1.0f));
+        ImGui::TextWrapped("%s", finding.fix.c_str());
+        ImGui::PopStyleColor();
+
+        // Jump straight to the channel it is about, since half of these are
+        // "something on a channel you are not looking at".
+        if (finding.channel >= 0 && finding.channel < Project::MAX_CHANNELS) {
+            if (ImGui::SmallButton("Go to channel")) {
+                ui.selectedChannel = finding.channel;
+            }
+        }
+        ImGui::Unindent();
+
+        if (i + 1 < findings.size()) ImGui::Separator();
+        ImGui::PopID();
     }
 
     ImGui::End();

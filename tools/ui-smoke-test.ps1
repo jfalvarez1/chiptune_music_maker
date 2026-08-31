@@ -205,6 +205,20 @@ foreach ($panel in $panels) {
     args = "--demo --instrument fm --focus `"Sound Palette`""
 })
 
+# The Project Check panel, with real findings in it. Empty it draws two
+# paragraphs of explanation and proves nothing about the finding rows, which
+# are the part with the severity colours and the per-finding button.
+[void]$cases.Add(@{
+    name = "project-check"
+    args = "--demo --conflicts --focus `"Project Check`""
+})
+
+# And its empty state, which is what most users will see.
+[void]$cases.Add(@{
+    name = "project-check-clean"
+    args = "--demo --focus `"Project Check`""
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"
