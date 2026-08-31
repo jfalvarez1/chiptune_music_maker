@@ -342,6 +342,53 @@ inline void clampProjectToValidRanges(Project& project) {
     project.masterLimiterCeiling = sanitizeFloat(project.masterLimiterCeiling, -12.0f, 0.0f, -0.3f);
     project.masterLimiterRelease = sanitizeFloat(project.masterLimiterRelease, 0.001f, 2.0f, 0.05f);
 
+    /*
+     * The tempo map.
+     *
+     * TempoMap clamps on the way in, so anything here came from a file that
+     * was edited by hand or damaged. A bpm of zero would divide by zero in
+     * the beat advance and freeze the playhead - in the audio thread, where
+     * there is nothing to catch it - so the map is rebuilt through the same
+     * setters the UI uses rather than trusted.
+     */
+    {
+        TempoMap rebuilt;
+        for (int i = 0; i < project.tempoMap.tempoCount(); ++i) {
+            const TempoChange& change = project.tempoMap.tempoAt(i);
+            if (!std::isfinite(change.beat) || !std::isfinite(change.bpm)) continue;
+            rebuilt.setTempo(change.beat, change.bpm);
+        }
+        for (int i = 0; i < project.tempoMap.meterCount(); ++i) {
+            const MeterChange& change = project.tempoMap.meterAt(i);
+            if (!std::isfinite(change.beat)) continue;
+            rebuilt.setMeter(change.beat, change.numerator, change.denominator);
+        }
+        project.tempoMap = rebuilt;
+    }
+
+    // Markers and regions. A region that ends before it starts would draw
+    // inside out and select nothing, and both lists are capped so a damaged
+    // file cannot make the ruler unusable.
+    if (static_cast<int>(project.markers.size()) > MAX_MARKERS) {
+        project.markers.resize(MAX_MARKERS);
+    }
+    for (Marker& marker : project.markers) {
+        marker.beat = sanitizeFloat(marker.beat, 0.0f, MAX_SONG_LENGTH, 0.0f);
+    }
+    sortMarkers(project.markers);
+
+    if (static_cast<int>(project.regions.size()) > MAX_REGIONS) {
+        project.regions.resize(MAX_REGIONS);
+    }
+    for (Region& region : project.regions) {
+        region.startBeat = sanitizeFloat(region.startBeat, 0.0f, MAX_SONG_LENGTH, 0.0f);
+        region.endBeat = sanitizeFloat(region.endBeat, 0.0f, MAX_SONG_LENGTH, 4.0f);
+        if (region.endBeat <= region.startBeat) {
+            region.endBeat = region.startBeat + 1.0f;
+        }
+    }
+    sortRegions(project.regions);
+
     // Audio clips: a missing sample or a backwards trim must not reach the
     // audio thread as an index into nothing.
     for (Clip& clip : project.arrangement) {

@@ -130,6 +130,20 @@ foreach ($panel in $panels) {
     w = 800; h = 600
 })
 
+# Markers, regions, and bar lines that follow a meter map rather than a
+# modulo. The bar walk is a loop bounded by a beat the map advances, so a
+# degenerate map would hang the frame rather than fail a check.
+[void]$cases.Add(@{
+    name = "arrangement-structure"
+    args = "--demo --view arrangement --structure"
+})
+
+[void]$cases.Add(@{
+    name = "arrangement-structure-wide"
+    args = "--demo --view arrangement --structure --audio-clip"
+    w = 2560; h = 800
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"

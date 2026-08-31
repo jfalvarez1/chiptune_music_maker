@@ -18,6 +18,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "TempoMap.h"
+
 namespace ChiptuneTracker {
 
 // Divisions are named by note value, the way a musician reads them, but the
@@ -108,6 +110,46 @@ inline float snapDuration(float beats, SnapDivision division, int beatsPerMeasur
     const float minimum = (step > 0.0f) ? step : 0.0625f;
     const float snapped = snapBeat(beats, division, beatsPerMeasure);
     return (snapped < minimum) ? minimum : snapped;
+}
+
+/*
+ * Snap through a meter map.
+ *
+ * Every division except Bar is an absolute note value and needs no map. Bar
+ * does: a song that starts in 4/4 and moves to 3/4 has bar lines at 32, 35,
+ * 38 - and dividing by a single bar length puts every one of them after the
+ * change in the wrong place. Snapping to a grid line the ruler did not draw
+ * reads as the grid being broken, so both walk the same barStartAtBeat().
+ *
+ * The overloads take the map explicitly rather than a Project, so Snap.h
+ * stays free of Project and testable on its own.
+ */
+inline float snapBeatMapped(float beat, SnapDivision division,
+                            const TempoMap& map, int baseNumerator,
+                            int baseDenominator = 4) {
+    if (!std::isfinite(beat)) return 0.0f;
+    if (division != SnapDivision::Bar) {
+        return snapBeat(beat, division, baseNumerator);
+    }
+    return map.barStartAtBeat(std::max(0.0f, beat), baseNumerator, baseDenominator);
+}
+
+inline float snapBeatNearestMapped(float beat, SnapDivision division,
+                                   const TempoMap& map, int baseNumerator,
+                                   int baseDenominator = 4) {
+    if (!std::isfinite(beat)) return 0.0f;
+    if (division != SnapDivision::Bar) {
+        return snapBeatNearest(beat, division, baseNumerator);
+    }
+
+    // Nearest, not below: the bar before and the bar after are different
+    // lengths across a meter change, so this compares the two candidates
+    // rather than assuming a fixed step either side.
+    const float clamped = std::max(0.0f, beat);
+    const int bar = map.barAtBeat(clamped, baseNumerator, baseDenominator);
+    const float here = map.beatOfBar(bar, baseNumerator, baseDenominator);
+    const float next = map.beatOfBar(bar + 1, baseNumerator, baseDenominator);
+    return ((clamped - here) <= (next - clamped)) ? here : next;
 }
 
 // Step through the divisions with the bracket keys. Wraps, and skips nothing,

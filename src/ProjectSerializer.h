@@ -60,7 +60,13 @@ namespace ctp {
 // recognise instead of misparsing a CLIP with unexpected trailing tokens.
 // Sample data is not stored - the file carries paths and the pool reloads
 // them, which keeps a .ctp a text file you can read.
-inline constexpr int FORMAT_VERSION = 5;
+// v6 added the tempo/meter map, markers and regions.
+//
+// All four are omit-if-default: a project at one tempo with no markers
+// writes exactly the bytes it wrote at v5, so the bump costs nothing to
+// anyone who never touches the feature. A v5 reader meeting a TEMPO line
+// skips a line it does not know rather than misparsing one it does.
+inline constexpr int FORMAT_VERSION = 6;
 
 // ============================================================================
 // Field tables
@@ -642,6 +648,33 @@ inline bool writeProject(std::ostream& file, const Project& project) {
         }
     }
 
+    // Tempo and meter changes, markers and regions. Written before the
+    // arrangement so a reader has the map in hand by the time it places
+    // anything against it.
+    for (int i = 0; i < project.tempoMap.tempoCount(); ++i) {
+        const TempoChange& change = project.tempoMap.tempoAt(i);
+        file << "TEMPO " << ctp::floatToToken(change.beat) << ' '
+             << ctp::floatToToken(change.bpm) << "\n";
+    }
+    for (int i = 0; i < project.tempoMap.meterCount(); ++i) {
+        const MeterChange& change = project.tempoMap.meterAt(i);
+        file << "METER " << ctp::floatToToken(change.beat) << ' '
+             << change.numerator << ' ' << change.denominator << "\n";
+    }
+    for (const Marker& marker : project.markers) {
+        file << "MARKER " << ctp::floatToToken(marker.beat) << ' '
+             << marker.color << ' ' << ctp::quote(marker.name) << "\n";
+    }
+    for (const Region& region : project.regions) {
+        file << "REGION " << ctp::floatToToken(region.startBeat) << ' '
+             << ctp::floatToToken(region.endBeat) << ' '
+             << region.color << ' ' << ctp::quote(region.name) << "\n";
+    }
+    if (!project.tempoMap.isFlat() || !project.markers.empty() ||
+        !project.regions.empty()) {
+        file << "\n";
+    }
+
     // Samples the project references, by path. Written before the clips
     // that point at them so a reader has the pool populated by the time it
     // meets an ACLIP.
@@ -954,6 +987,35 @@ inline bool readProject(std::istream& file, Project& project) {
                         static_cast<uint8_t>(type);
                 }
                 target.fxSlotCount = count;
+            }
+        }
+        else if (cmd == "TEMPO") {
+            float beat = 0.0f, bpm = 120.0f;
+            iss >> beat >> bpm;
+            project.tempoMap.setTempo(beat, bpm);
+        }
+        else if (cmd == "METER") {
+            float beat = 0.0f;
+            int numerator = 4, denominator = 4;
+            iss >> beat >> numerator >> denominator;
+            project.tempoMap.setMeter(beat, numerator, denominator);
+        }
+        else if (cmd == "MARKER") {
+            Marker marker;
+            iss >> marker.beat >> marker.color;
+            size_t pos = 0;
+            marker.name = ctp::unquote(line, pos);
+            if (static_cast<int>(project.markers.size()) < MAX_MARKERS) {
+                project.markers.push_back(marker);
+            }
+        }
+        else if (cmd == "REGION") {
+            Region region;
+            iss >> region.startBeat >> region.endBeat >> region.color;
+            size_t pos = 0;
+            region.name = ctp::unquote(line, pos);
+            if (static_cast<int>(project.regions.size()) < MAX_REGIONS) {
+                project.regions.push_back(region);
             }
         }
         else if (cmd == "SAMPLE") {

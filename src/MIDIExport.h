@@ -32,7 +32,7 @@ public:
 
         // Track 0: Tempo and time signature meta events
         midifile.addTrack();
-        addTempoTrack(midifile, project.bpm, project.beatsPerMeasure);
+        addTempoTrack(midifile, project);
 
         // Tracks 1-8: One track per channel
         for (int ch = 0; ch < Project::MAX_CHANNELS; ch++) {
@@ -72,14 +72,48 @@ private:
         return (wrapped >= MIDI_DRUM_CHANNEL) ? wrapped + 1 : wrapped;
     }
 
-    // Add tempo and time signature to Track 0
-    static void addTempoTrack(smf::MidiFile& midi, float bpm, int beatsPerMeasure) {
-        // Tempo meta event (microseconds per quarter note)
-        int microsecondsPerQuarterNote = (int)(60000000.0f / bpm);
-        midi.addTempo(0, 0, microsecondsPerQuarterNote);
+    /*
+     * Track 0: the tempo and time-signature map.
+     *
+     * MIDI ticks are musical, not wall-clock - a tick is a fixed fraction of
+     * a quarter note and the tempo events tell the player how fast to read
+     * them. So a change at beat B goes at tick B * TPQ with no integration;
+     * the player does that part.
+     *
+     * The denominator used to be passed as 2. midifile's `bottom` parameter
+     * is the ACTUAL denominator and it takes the base-2 logarithm itself, so
+     * every export has been writing x/2 - a half-note pulse - and any DAW
+     * importing one saw bars twice the intended length. It is the real
+     * denominator now, and there is a test that reads the bytes back.
+     */
+    static void addTempoTrack(smf::MidiFile& midi, const Project& project) {
+        const int tpq = midi.getTPQ();
+        auto tickOf = [tpq](float beat) {
+            return static_cast<int>(std::lround(std::max(0.0f, beat) *
+                                                static_cast<double>(tpq)));
+        };
 
-        // Time signature meta event (4/4, 3/4, etc.)
-        midi.addTimeSignature(0, 0, beatsPerMeasure, 2); // 2 = quarter note denominator
+        // The opening tempo and meter, which is all a project without a map
+        // has - and exactly what was written before.
+        midi.addTempo(0, 0, static_cast<int>(60000000.0f /
+                                             std::max(1.0f, project.bpm)));
+
+        const MeterChange opening = project.meterAt(0.0f);
+        midi.addTimeSignature(0, 0, opening.numerator, opening.denominator);
+
+        for (int i = 0; i < project.tempoMap.tempoCount(); ++i) {
+            const TempoChange& change = project.tempoMap.tempoAt(i);
+            if (change.beat <= 0.0f) continue;   // already written at tick 0
+            midi.addTempo(0, tickOf(change.beat),
+                          static_cast<int>(60000000.0f / std::max(1.0f, change.bpm)));
+        }
+
+        for (int i = 0; i < project.tempoMap.meterCount(); ++i) {
+            const MeterChange& change = project.tempoMap.meterAt(i);
+            if (change.beat <= 0.0f) continue;
+            midi.addTimeSignature(0, tickOf(change.beat),
+                                  change.numerator, change.denominator);
+        }
     }
 
     // Add all notes from a channel to its MIDI track

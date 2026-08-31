@@ -177,6 +177,10 @@ struct CaptureRequest {
     // on a fixture file existing wherever this runs.
     bool addAudioClip = false;
 
+    // Tempo changes, a meter change, markers and regions, so the
+    // structure strip and the meter-aware bar lines both draw.
+    bool addStructure = false;
+
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
 
@@ -209,6 +213,7 @@ struct CaptureRequest {
 //   --chip-panel         open the Chip Accuracy section
 //   --fx-rack            open the Effect Rack section
 //   --audio-clip         put an audio clip on the arrangement
+//   --structure          add tempo/meter changes, markers and regions
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -257,6 +262,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.expandFxRack = true;
         } else if (arg == "--audio-clip") {
             request.addAudioClip = true;
+        } else if (arg == "--structure") {
+            request.addStructure = true;
         } else if (arg == "--genre") {
             next(request.genreFocus);
         } else if (arg == "--focus") {
@@ -570,6 +577,28 @@ inline void applyCaptureState(const CaptureRequest& request,
             project.arrangement.push_back(broken);
             project.missingSamples.push_back("D:/moved/vocal_take.wav");
         }
+    }
+
+    // --- Song structure ---
+    //
+    // The bar-line walk, the marker flags and the region bands are drawing
+    // code with no headless reach. The meter change is the point: it makes
+    // the bar lines stop being every four beats, which is the case a
+    // modulo-based grid got wrong.
+    if (request.addStructure) {
+        project.tempoMap.setTempo(16.0f, 96.0f);
+        project.tempoMap.setTempo(32.0f, 174.0f);
+        project.tempoMap.setMeter(24.0f, 3, 4);
+        project.tempoMap.setMeter(40.0f, 6, 8);
+
+        project.markers.push_back(Marker{0.0f, "Intro", 0xFF66CCFFu});
+        project.markers.push_back(Marker{16.0f, "Verse", 0xFFFFCC66u});
+        project.markers.push_back(Marker{32.0f, "Chorus", 0xFFFF6699u});
+        sortMarkers(project.markers);
+
+        project.regions.push_back(Region{0.0f, 16.0f, "A", 0xFF4488FFu});
+        project.regions.push_back(Region{16.0f, 48.0f, "B", 0xFF44CC88u});
+        sortRegions(project.regions);
     }
 
     // Selecting a few notes makes the Note Editor populate and the selected

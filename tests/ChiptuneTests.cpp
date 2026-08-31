@@ -8247,8 +8247,8 @@ static void testAudioClipPersistence() {
         check(writeWavFile(wavB, l, r), "sample B is on disk");
     }
 
-    check(ctp::FORMAT_VERSION == 5,
-          "audio clips bumped the format to v5");
+    check(ctp::FORMAT_VERSION >= 5,
+          "audio clips bumped the format to v5 or later");
 
     // ---- Every field round-trips -----------------------------------------
     {
@@ -8452,10 +8452,15 @@ static void testAudioClipPersistence() {
             ss << in.rdbuf();
             text = ss.str();
         }
-        const size_t v = text.find("CHIPTUNE_PROJECT v5");
-        check(v != std::string::npos, "the header says v5");
+        // Built from the constant rather than spelled out, so this test
+        // keeps testing the v4 path through every future bump instead of
+        // failing on the number.
+        const std::string header =
+            "CHIPTUNE_PROJECT v" + std::to_string(ctp::FORMAT_VERSION);
+        const size_t v = text.find(header);
+        check(v != std::string::npos, "the header names the current version");
         if (v != std::string::npos) {
-            text.replace(v, 19, "CHIPTUNE_PROJECT v4");
+            text.replace(v, header.size(), "CHIPTUNE_PROJECT v4");
             std::ofstream out(path, std::ios::binary);
             out << text;
         }
@@ -8569,6 +8574,567 @@ static void testAudioClipPersistence() {
     std::remove(wavB.c_str());
 }
 
+
+// ============================================================================
+// 57. Tempo and meter map
+// ============================================================================
+static void testTempoMap() {
+    beginTest("Tempo and meter map");
+
+    // ---- A map with nothing in it behaves exactly as before ---------------
+    {
+        TempoMap map;
+        check(map.isFlat(), "an empty map is flat");
+        check(std::fabs(map.bpmAtBeat(100.0f, 140.0f) - 140.0f) < 1e-4f,
+              "and reports the project tempo everywhere");
+
+        // 16 beats at 120 bpm is 8 seconds.
+        check(std::fabs(map.beatToSeconds(16.0f, 120.0f) - 8.0f) < 1e-3f,
+              "beats convert to seconds by the single tempo");
+        check(std::fabs(map.secondsToBeat(8.0f, 120.0f) - 16.0f) < 1e-3f,
+              "and back again");
+    }
+
+    // ---- Tempo changes take effect at their beat --------------------------
+    {
+        TempoMap map;
+        check(map.setTempo(16.0f, 240.0f), "a tempo change is accepted");
+        check(!map.isFlat(), "and the map is no longer flat");
+
+        check(std::fabs(map.bpmAtBeat(0.0f, 120.0f) - 120.0f) < 1e-4f,
+              "before the change, the project tempo holds");
+        check(std::fabs(map.bpmAtBeat(15.9f, 120.0f) - 120.0f) < 1e-4f,
+              "right up to it");
+        check(std::fabs(map.bpmAtBeat(16.0f, 120.0f) - 240.0f) < 1e-4f,
+              "the change takes effect AT its beat, not after it");
+        check(std::fabs(map.bpmAtBeat(500.0f, 120.0f) - 240.0f) < 1e-4f,
+              "and holds until the next one");
+    }
+
+    // ---- Seconds are integrated, not divided ------------------------------
+    {
+        TempoMap map;
+        map.setTempo(16.0f, 240.0f);
+
+        // 16 beats at 120 = 8 s, then 16 beats at 240 = 4 s. Total 12.
+        // Dividing once by either tempo gives 16 or 8 - both wrong.
+        const float seconds = map.beatToSeconds(32.0f, 120.0f);
+        check(std::fabs(seconds - 12.0f) < 1e-3f,
+              "beat 32 across a tempo change is 12 s, not 16 or 8 (got " +
+              std::to_string(seconds) + ")");
+
+        check(std::fabs(map.secondsToBeat(12.0f, 120.0f) - 32.0f) < 1e-2f,
+              "and the inverse lands back on beat 32");
+
+        // Round-trip through several changes.
+        map.setTempo(48.0f, 90.0f);
+        map.setTempo(64.0f, 180.0f);
+        for (float beat : {4.0f, 20.0f, 33.0f, 55.0f, 80.0f, 200.0f}) {
+            const float s = map.beatToSeconds(beat, 120.0f);
+            const float back = map.secondsToBeat(s, 120.0f);
+            if (std::fabs(back - beat) > 1e-2f) {
+                check(false, "round trip failed at beat " + std::to_string(beat) +
+                      " (got " + std::to_string(back) + ")");
+                break;
+            }
+        }
+        check(true, "beats survive a round trip through four tempo segments");
+
+        // Time must never run backwards, whatever the map says.
+        bool monotonic = true;
+        float previous = -1.0f;
+        for (float beat = 0.0f; beat < 120.0f; beat += 0.37f) {
+            const float s = map.beatToSeconds(beat, 120.0f);
+            if (s < previous) { monotonic = false; break; }
+            previous = s;
+        }
+        check(monotonic, "and seconds increase monotonically with beats");
+    }
+
+    // ---- Entries stay sorted, and one beat holds one change ---------------
+    {
+        TempoMap map;
+        map.setTempo(32.0f, 100.0f);
+        map.setTempo(8.0f, 200.0f);
+        map.setTempo(16.0f, 150.0f);
+
+        check(map.tempoCount() == 3, "three changes went in");
+        check(map.tempoAt(0).beat < map.tempoAt(1).beat &&
+              map.tempoAt(1).beat < map.tempoAt(2).beat,
+              "and they are sorted by beat regardless of insertion order");
+
+        map.setTempo(16.0f, 175.0f);
+        check(map.tempoCount() == 3,
+              "setting a tempo at an existing beat replaces it rather than "
+              "adding a second - two entries at one beat would make the "
+              "lookup depend on insertion order, which is a bug you can only "
+              "find by ear");
+        check(std::fabs(map.bpmAtBeat(16.0f, 120.0f) - 175.0f) < 1e-4f,
+              "and the later value wins");
+
+        map.removeTempoAt(1);
+        check(map.tempoCount() == 2, "and one can be removed");
+    }
+
+    // ---- Impossible values cannot get in ----------------------------------
+    {
+        TempoMap map;
+        map.setTempo(4.0f, 0.0f);
+        check(map.bpmAtBeat(4.0f, 120.0f) >= TempoMap::MIN_BPM,
+              "a tempo of zero is clamped - it would divide by zero in the "
+              "beat advance and freeze the playhead, on the audio thread");
+
+        map.setTempo(8.0f, 99999.0f);
+        check(map.bpmAtBeat(8.0f, 120.0f) <= TempoMap::MAX_BPM,
+              "and an absurd one is bounded");
+
+        check(!map.setTempo(std::numeric_limits<float>::quiet_NaN(), 120.0f),
+              "a NaN beat is refused outright");
+        check(!map.setTempo(4.0f, std::numeric_limits<float>::infinity()),
+              "and so is an infinite tempo");
+
+        map.setTempo(-5.0f, 130.0f);
+        check(map.tempoAt(0).beat >= 0.0f, "a negative beat is pulled to zero");
+
+        // The cap holds.
+        TempoMap full;
+        for (int i = 0; i < TempoMap::MAX_TEMPO_CHANGES + 20; ++i) {
+            full.setTempo(static_cast<float>(i) * 2.0f, 100.0f + float(i));
+        }
+        check(full.tempoCount() == TempoMap::MAX_TEMPO_CHANGES,
+              "the array is fixed-capacity and stops accepting entries rather "
+              "than growing under the audio thread");
+    }
+
+    // ---- Meter: bars are counted, not divided -----------------------------
+    {
+        TempoMap map;
+        check(std::fabs(TempoMap::barLengthBeats(MeterChange{0.0f, 4, 4}) - 4.0f) < 1e-4f,
+              "4/4 is four beats");
+        check(std::fabs(TempoMap::barLengthBeats(MeterChange{0.0f, 3, 4}) - 3.0f) < 1e-4f,
+              "3/4 is three");
+        check(std::fabs(TempoMap::barLengthBeats(MeterChange{0.0f, 6, 8}) - 3.0f) < 1e-4f,
+              "and 6/8 is three beats, not six - the engine counts quarter "
+              "notes and six eighths is three of them");
+        check(std::fabs(TempoMap::barLengthBeats(MeterChange{0.0f, 7, 8}) - 3.5f) < 1e-4f,
+              "7/8 is three and a half");
+
+        check(map.barAtBeat(0.0f, 4) == 0, "beat 0 is bar 0");
+        check(map.barAtBeat(4.0f, 4) == 1, "beat 4 is bar 1 in 4/4");
+        check(map.barAtBeat(31.9f, 4) == 7, "and beat 31.9 is bar 7");
+        check(std::fabs(map.beatOfBar(8, 4) - 32.0f) < 1e-4f,
+              "bar 8 starts at beat 32");
+    }
+
+    {
+        // 4/4 for eight bars, then 3/4. Bar 8 starts at 32, bar 9 at 35,
+        // bar 10 at 38 - dividing by anything puts them all wrong.
+        TempoMap map;
+        map.setMeter(32.0f, 3, 4);
+
+        check(std::fabs(map.beatOfBar(8, 4) - 32.0f) < 1e-3f,
+              "the bar the meter changes on still starts at 32");
+        check(std::fabs(map.beatOfBar(9, 4) - 35.0f) < 1e-3f,
+              "the next bar is three beats later, not four (got " +
+              std::to_string(map.beatOfBar(9, 4)) + ")");
+        check(std::fabs(map.beatOfBar(10, 4) - 38.0f) < 1e-3f,
+              "and so is the one after");
+
+        check(map.barAtBeat(35.0f, 4) == 9, "beat 35 is bar 9");
+        check(map.barAtBeat(34.9f, 4) == 8, "and beat 34.9 is still bar 8");
+
+        // barAtBeat and beatOfBar must be each other's inverse, or the ruler
+        // and the snap disagree about where a bar line is.
+        bool consistent = true;
+        for (int bar = 0; bar < 40; ++bar) {
+            const float beat = map.beatOfBar(bar, 4);
+            if (map.barAtBeat(beat, 4) != bar) { consistent = false; break; }
+        }
+        check(consistent,
+              "every bar line reports its own bar number back - if these two "
+              "disagreed the grid would snap somewhere the ruler did not draw");
+    }
+
+    {
+        // A denominator that is not a power of two cannot be represented in
+        // a MIDI time signature, which stores its base-2 logarithm.
+        TempoMap map;
+        map.setMeter(0.0f, 5, 5);
+        check(map.meterAt(0).denominator == 4,
+              "a denominator of 5 is snapped to the nearest power of two");
+        map.setMeter(4.0f, 100, 8);
+        check(map.meterAt(1).numerator <= 32, "and the numerator is bounded");
+    }
+
+    // ---- Snap follows the meter map ---------------------------------------
+    {
+        TempoMap map;
+        map.setMeter(32.0f, 3, 4);
+
+        // Everything but Bar is an absolute note value and must not change.
+        check(std::fabs(snapBeatMapped(5.3f, SnapDivision::Sixteenth, map, 4) -
+                        snapBeat(5.3f, SnapDivision::Sixteenth, 4)) < 1e-5f,
+              "a 1/16 snap is unaffected by the meter map");
+
+        check(std::fabs(snapBeatMapped(33.5f, SnapDivision::Bar, map, 4) - 32.0f) < 1e-3f,
+              "snapping to Bar inside the 3/4 section lands on 32");
+        check(std::fabs(snapBeatMapped(36.5f, SnapDivision::Bar, map, 4) - 35.0f) < 1e-3f,
+              "and the next one on 35, which is where the ruler drew it - a "
+              "plain division would have said 36");
+
+        check(std::fabs(snapBeatNearestMapped(34.9f, SnapDivision::Bar, map, 4) - 35.0f) < 1e-3f,
+              "nearest-bar rounds up to the next line when it is closer");
+        check(std::fabs(snapBeatNearestMapped(32.4f, SnapDivision::Bar, map, 4) - 32.0f) < 1e-3f,
+              "and down when it is not");
+
+        check(snapBeatMapped(std::numeric_limits<float>::quiet_NaN(),
+                             SnapDivision::Bar, map, 4) == 0.0f,
+              "a NaN beat cannot escape into the grid");
+    }
+
+    // ---- Markers and regions ----------------------------------------------
+    {
+        std::vector<Marker> markers = {
+            {16.0f, "Chorus", 0u}, {0.0f, "Intro", 0u}, {8.0f, "Verse", 0u},
+        };
+        sortMarkers(markers);
+        check(markers[0].name == "Intro" && markers[2].name == "Chorus",
+              "markers sort by beat, so next and previous are a step through "
+              "the list rather than a search");
+
+        check(markerAtOrBefore(markers, 12.0f) == 1, "the marker at or before 12 is Verse");
+        check(markerAtOrBefore(markers, 8.0f) == 1, "one exactly on a marker is that marker");
+        check(markerAtOrBefore(markers, -1.0f) == -1, "and before the first there is none");
+        check(markerAfter(markers, 8.0f) == 2, "the next after Verse is Chorus");
+        check(markerAfter(markers, 20.0f) == -1, "and past the last there is none");
+    }
+
+    {
+        std::vector<Region> regions = {
+            {0.0f, 64.0f, "Song", 0u},
+            {16.0f, 32.0f, "Chorus", 0u},
+        };
+        check(regionAtBeat(regions, 20.0f) == 1,
+              "a beat inside two nested regions reports the inner one - the "
+              "shorter is the one the user means");
+        check(regionAtBeat(regions, 40.0f) == 0, "outside it, the outer");
+        check(regionAtBeat(regions, 100.0f) == -1, "and past both, none");
+        check(regions[1].contains(16.0f) && !regions[1].contains(32.0f),
+              "a region includes its start and excludes its end, so two "
+              "touching regions do not both claim the boundary");
+    }
+}
+
+// ============================================================================
+// 58. The tempo map reaches the audio, the file and the MIDI
+// ============================================================================
+static void testTempoMapReachesEverything() {
+    beginTest("Tempo map reaches audio, files and MIDI");
+
+    // ---- The engine plays it ----------------------------------------------
+    //
+    // A map the sequencer ignores is worth nothing. This measures how far the
+    // playhead travels in a fixed number of samples: doubling the tempo half
+    // way must cover more ground than a flat project does.
+    auto beatsTravelled = [](bool withChange) {
+        Project p;
+        p.bpm = 120.0f;
+        p.patterns.clear();
+        p.patterns.push_back(Pattern());
+        p.arrangement.clear();
+        p.songLength = 256.0f;
+
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 128.0f, 0});
+
+        if (withChange) p.tempoMap.setTempo(8.0f, 240.0f);
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&p);
+        seqPtr->updateChannelConfigs();
+        // The playhead has to have somewhere to go. In song mode the loop
+        // window falls back to m_state.loopEnd, which defaults to 16 beats -
+        // so both the flat and the mapped run would park at exactly 16 and
+        // the test would pass while measuring nothing at all.
+        seqPtr->setLoop(false, 0.0f, 200.0f);
+        seqPtr->play();
+
+        std::vector<float> l(512), r(512);
+        // 8 seconds. At a flat 120 bpm that is 16 beats.
+        for (int i = 0; i < 689; ++i) seqPtr->process(l.data(), r.data(), 512);
+        return seqPtr->getCurrentBeat();
+    };
+
+    {
+        const float flat = beatsTravelled(false);
+        const float mapped = beatsTravelled(true);
+
+        check(std::fabs(flat - 16.0f) < 0.2f,
+              "eight seconds at 120 bpm is sixteen beats (got " +
+              std::to_string(flat) + ")");
+
+        // 8 beats at 120 takes 4 s; the remaining 4 s at 240 covers 16 beats.
+        check(std::fabs(mapped - 24.0f) < 0.3f,
+              "with the tempo doubling at beat 8, the same eight seconds "
+              "covers twenty-four beats - the audio thread reads the map "
+              "(got " + std::to_string(mapped) + ")");
+    }
+
+    // ---- A flat project is untouched --------------------------------------
+    {
+        Project p;
+        check(p.tempoMap.isFlat(),
+              "a new project has no tempo changes, so the per-sample lookup "
+              "is hoisted out of the loop and costs what it always did");
+        check(std::fabs(p.beatToSeconds(16.0f) - 8.0f) < 1e-3f,
+              "and its beat-to-seconds is the plain division");
+    }
+
+    // ---- Audio clips follow the tempo where they sit ----------------------
+    {
+        const std::string wav = testPath("tempo_clip.wav");
+        {
+            std::vector<float> l(44100), r(44100);
+            for (size_t i = 0; i < l.size(); ++i) {
+                const float t = float(i) / 44100.0f;
+                l[i] = r[i] = 0.7f * std::sin(6.28318530718f * 220.0f * t);
+            }
+            check(writeWavFile(wav, l, r), "a one-second tone for the clip test");
+        }
+
+        Project p;
+        p.bpm = 120.0f;
+        p.patterns.clear();
+        p.arrangement.clear();
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+
+        const int id = p.samplePool.loadSample(wav);
+        check(id >= 0, "and it loads");
+
+        // At 120 bpm the one-second sample fills two beats. Doubling the
+        // tempo at beat 0 makes it fill four - so a four-beat clip that was
+        // half silence becomes full.
+        Clip c;
+        c.type = ClipType::Audio;
+        c.sampleId = id;
+        c.channelIndex = 0;
+        c.startBeat = 0.0f;
+        c.lengthBeats = 4.0f;
+        p.arrangement.push_back(c);
+
+        auto rmsOfLastBeat = [](Project& proj) {
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&proj);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(256), r(256);
+            double sum = 0.0;
+            int counted = 0;
+            const int total = int(proj.beatToSeconds(3.5f) * 44100.0f);
+            const int skip = int(proj.beatToSeconds(3.0f) * 44100.0f);
+            for (int done = 0; done < total; done += 256) {
+                seqPtr->process(l.data(), r.data(), 256);
+                if (done < skip) continue;
+                for (float v : l) { sum += double(v) * double(v); ++counted; }
+            }
+            return (counted > 0) ? std::sqrt(sum / counted) : 0.0;
+        };
+
+        const double slow = rmsOfLastBeat(p);
+        check(slow < 1e-6,
+              "at 120 bpm the one-second sample has run out by beat 3");
+
+        p.tempoMap.setTempo(0.0f, 240.0f);
+        const double fast = rmsOfLastBeat(p);
+        check(fast > 0.005,
+              "at 240 bpm the same sample still has audio left at beat 3 - "
+              "the clip mixer reads the tempo where the playhead is (rms " +
+              std::to_string(fast) + ")");
+
+        std::remove(wav.c_str());
+    }
+
+    // ---- It survives a save and load --------------------------------------
+    {
+        Project p;
+        p.bpm = 128.0f;
+        p.beatsPerMeasure = 4;
+        p.tempoMap.setTempo(16.0f, 96.0f);
+        p.tempoMap.setTempo(48.0f, 174.0f);
+        p.tempoMap.setMeter(32.0f, 6, 8);
+        p.markers.push_back(Marker{8.0f, "Verse 1", 0xFF3366CCu});
+        p.markers.push_back(Marker{24.0f, "Drop \"the\" bass", 0xFFCC3366u});
+        p.regions.push_back(Region{16.0f, 32.0f, "Chorus", 0xFF44CC88u});
+
+        const std::string path = testPath("tempomap.ctp");
+        check(saveProject(p, path), "a project with a tempo map saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+
+        check(loaded.tempoMap.tempoCount() == 2, "both tempo changes survive");
+        check(std::fabs(loaded.tempoMap.bpmAtBeat(20.0f, loaded.bpm) - 96.0f) < 1e-3f,
+              "at the right beats");
+        check(std::fabs(loaded.tempoMap.bpmAtBeat(50.0f, loaded.bpm) - 174.0f) < 1e-3f,
+              "and the right values");
+
+        check(loaded.tempoMap.meterCount() == 1, "the meter change survives");
+        check(loaded.meterAt(33.0f).numerator == 6 &&
+              loaded.meterAt(33.0f).denominator == 8,
+              "as 6/8, numerator and denominator both");
+
+        check(loaded.markers.size() == 2, "both markers survive");
+        check(loaded.markers.size() == 2 && loaded.markers[0].name == "Verse 1",
+              "with their names");
+        check(loaded.markers.size() == 2 &&
+              loaded.markers[1].name == "Drop \"the\" bass",
+              "including one with quotes in it, which the quoting must escape");
+        check(loaded.markers.size() == 2 &&
+              loaded.markers[1].color == 0xFFCC3366u,
+              "and their colours");
+
+        check(loaded.regions.size() == 1, "the region survives");
+        check(loaded.regions.size() == 1 && loaded.regions[0].name == "Chorus" &&
+              std::fabs(loaded.regions[0].endBeat - 32.0f) < 1e-3f,
+              "with its name and its span");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- A project with no map writes nothing extra -----------------------
+    {
+        Project plain;
+        const std::string path = testPath("tempomap_plain.ctp");
+        check(saveProject(plain, path), "a project with no tempo map saves");
+
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        const std::string text = ss.str();
+
+        check(text.find("TEMPO ") == std::string::npos &&
+              text.find("METER ") == std::string::npos &&
+              text.find("MARKER ") == std::string::npos &&
+              text.find("REGION ") == std::string::npos,
+              "and writes not one line about any of it - the bump costs "
+              "nothing to a project that never uses the feature");
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation cannot be bypassed by a hand-edited file --------------
+    {
+        Project p;
+        p.markers.push_back(Marker{std::numeric_limits<float>::quiet_NaN(), "bad", 0u});
+        p.markers.push_back(Marker{-40.0f, "negative", 0u});
+        p.regions.push_back(Region{40.0f, 8.0f, "backwards", 0u});
+
+        clampProjectToValidRanges(p);
+
+        for (const Marker& m : p.markers) {
+            if (!std::isfinite(m.beat) || m.beat < 0.0f) {
+                check(false, "a marker escaped validation");
+                break;
+            }
+        }
+        check(true, "NaN and negative marker positions are repaired");
+        check(p.regions[0].endBeat > p.regions[0].startBeat,
+              "a region that ends before it starts is turned the right way "
+              "round rather than drawn inside out");
+    }
+
+    // ---- MIDI carries the map ---------------------------------------------
+    //
+    // The time signature was being written with a denominator of 2 - a
+    // half-note pulse - because midifile's `bottom` parameter is the actual
+    // denominator and takes its own logarithm. Every export said x/2, and
+    // any DAW importing one saw bars twice the intended length.
+    {
+        auto readFile = [](const std::string& path) {
+            std::ifstream in(path, std::ios::binary);
+            std::ostringstream ss;
+            ss << in.rdbuf();
+            return ss.str();
+        };
+
+        // Find every FF 58 04 time-signature meta event.
+        auto timeSignatures = [](const std::string& data) {
+            std::vector<std::pair<int, int>> found;
+            for (size_t i = 0; i + 5 < data.size(); ++i) {
+                if (static_cast<unsigned char>(data[i]) != 0xFF) continue;
+                if (static_cast<unsigned char>(data[i + 1]) != 0x58) continue;
+                if (static_cast<unsigned char>(data[i + 2]) != 0x04) continue;
+                const int top = static_cast<unsigned char>(data[i + 3]);
+                const int logBottom = static_cast<unsigned char>(data[i + 4]);
+                found.emplace_back(top, 1 << logBottom);
+            }
+            return found;
+        };
+
+        auto tempoEvents = [](const std::string& data) {
+            int count = 0;
+            for (size_t i = 0; i + 5 < data.size(); ++i) {
+                if (static_cast<unsigned char>(data[i]) != 0xFF) continue;
+                if (static_cast<unsigned char>(data[i + 1]) != 0x51) continue;
+                if (static_cast<unsigned char>(data[i + 2]) != 0x03) continue;
+                ++count;
+            }
+            return count;
+        };
+
+        Project p;
+        p.bpm = 120.0f;
+        p.beatsPerMeasure = 4;
+        p.patterns.clear();
+        p.arrangement.clear();
+        Pattern pat;
+        Note n;
+        n.pitch = 60;
+        n.startTime = 0.0f;
+        n.duration = 1.0f;
+        pat.notes.push_back(n);
+        p.patterns.push_back(pat);
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        const std::string plain = testPath("midi_meter_plain.mid");
+        check(exportProjectToMIDI(p, plain), "a plain project exports to MIDI");
+        {
+            const auto sigs = timeSignatures(readFile(plain));
+            check(!sigs.empty(), "and carries a time signature");
+            check(!sigs.empty() && sigs[0].first == 4 && sigs[0].second == 4,
+                  "which says 4/4 - it said 4/2 before, because midifile's "
+                  "bottom parameter is the denominator itself and takes its "
+                  "own base-2 logarithm");
+        }
+        std::remove(plain.c_str());
+
+        p.tempoMap.setTempo(16.0f, 90.0f);
+        p.tempoMap.setTempo(32.0f, 200.0f);
+        p.tempoMap.setMeter(16.0f, 6, 8);
+
+        const std::string mapped = testPath("midi_meter_mapped.mid");
+        check(exportProjectToMIDI(p, mapped), "a mapped project exports");
+        {
+            const std::string data = readFile(mapped);
+            check(tempoEvents(data) == 3,
+                  "three tempo events reach the file: the opening one and "
+                  "both changes");
+
+            const auto sigs = timeSignatures(data);
+            check(sigs.size() == 2, "and two time signatures");
+            check(sigs.size() == 2 && sigs[0].first == 4 && sigs[0].second == 4,
+                  "opening in 4/4");
+            check(sigs.size() == 2 && sigs[1].first == 6 && sigs[1].second == 8,
+                  "and changing to 6/8, with the eight surviving as an eight");
+        }
+        std::remove(mapped.c_str());
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -8665,6 +9231,8 @@ int main(int argc, char** argv) {
     testMidiChannelBounds();
     testAudioClips();
     testAudioClipPersistence();
+    testTempoMap();
+    testTempoMapReachesEverything();
     testLongRunStability();
 
     std::printf("\n==========================\n");

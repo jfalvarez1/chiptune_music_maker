@@ -2522,6 +2522,36 @@ inline SnapDivision effectiveSnap(const UIState& ui) {
     return ImGui::GetIO().KeyAlt ? SnapDivision::Off : ui.snapDivision;
 }
 
+/*
+ * Project-aware snapping.
+ *
+ * Every call site used to pass project.beatsPerMeasure - one number, which
+ * is the right bar length only while the meter never changes. These
+ * overloads route Bar through the meter map so the grid snaps to the bar
+ * line the ruler actually drew, and leave every other division exactly as it
+ * was, since a 1/16 is a 1/16 in any time signature.
+ *
+ * They are overloads rather than renamed functions so that the fourteen
+ * existing call sites keep reading the way they did.
+ */
+inline float snapBeat(float beat, SnapDivision division, const Project& project) {
+    return snapBeatMapped(beat, division, project.tempoMap, project.beatsPerMeasure);
+}
+
+inline float snapBeatNearest(float beat, SnapDivision division, const Project& project) {
+    return snapBeatNearestMapped(beat, division, project.tempoMap,
+                                 project.beatsPerMeasure);
+}
+
+// A duration is a length, not a position, so it takes the bar length in
+// force where it sits rather than walking the map.
+inline float snapDuration(float beats, SnapDivision division, const Project& project) {
+    const MeterChange meter = project.meterAt(0.0f);
+    const int barBeats = std::max(1, static_cast<int>(
+        std::lround(TempoMap::barLengthBeats(meter))));
+    return snapDuration(beats, division, barBeats);
+}
+
 // Scale state. These used to live beside the other Tools globals, several
 // thousand lines below the piano roll - which is precisely why the "Snap to
 // Scale" checkbox set a flag that nothing in the note-placement path could
@@ -6575,7 +6605,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         float ghostRelX = mousePos.x - canvasPos.x - keyWidth + ui.scrollX;
         float ghostRelY = mousePos.y - canvasPos.y + ui.scrollY;
         int ghostBaseNote = highestNote - 1 - static_cast<int>(ghostRelY / noteHeight);
-        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project.beatsPerMeasure);  // Snap to 1/4 beat
+        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project);  // Snap to 1/4 beat
 
         // Calculate pitch offset from clipboard base
         int pitchOffset = ghostBaseNote - g_ClipboardBasePitch;
@@ -6627,7 +6657,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         ImVec2 mousePos = ImGui::GetMousePos();
         float ghostRelX = mousePos.x - canvasPos.x - keyWidth + ui.scrollX;
         float ghostRelY = mousePos.y - canvasPos.y + ui.scrollY;
-        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project.beatsPerMeasure);  // Snap to 1/4 beat
+        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project);  // Snap to 1/4 beat
         if (ghostBaseBeat < 0) ghostBaseBeat = 0;
 
         // Draw each ghost note from the pattern
@@ -6678,7 +6708,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
         // Calculate mouse position for ghost notes
         ImVec2 mousePos = ImGui::GetMousePos();
         float ghostRelX = mousePos.x - canvasPos.x - keyWidth + ui.scrollX;
-        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project.beatsPerMeasure);  // Snap to 1/4 beat
+        float ghostBaseBeat = snapBeat(ghostRelX / beatWidth, effectiveSnap(ui), project);  // Snap to 1/4 beat
         if (ghostBaseBeat < 0) ghostBaseBeat = 0;
 
         // Draw each ghost note from the sample track
@@ -6969,7 +6999,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             if (relX >= 0 && droppedNote >= lowestNote && droppedNote < highestNote) {
                 Note newNote;
                 newNote.pitch = std::clamp(droppedNote, lowestNote, highestNote - 1);
-                newNote.startTime = snapBeat(droppedBeat, effectiveSnap(ui), project.beatsPerMeasure);
+                newNote.startTime = snapBeat(droppedBeat, effectiveSnap(ui), project);
                 newNote.oscillatorType = static_cast<OscillatorType>(oscType);  // Per-note oscillator
 
                 // Drums auto-adjust duration based on BPM and selected duration variant
@@ -7045,7 +7075,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 g_UndoHistory.saveState(project, "Paste Notes");
 
                 // Calculate placement position
-                float placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
+                float placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project);
                 int pitchOffset = hoveredNote - g_ClipboardBasePitch;
 
                 // Clear selection and prepare to select pasted notes
@@ -7101,7 +7131,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 g_UndoHistory.saveState(project, "Place Drum Pattern");
 
                 // Calculate placement position (snap to 1/4 beat)
-                float placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
+                float placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project);
                 if (placeBeat < 0) placeBeat = 0;
 
                 // Clear selection and prepare to select placed notes
@@ -7158,7 +7188,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                     placeBeat = 0.0f;
                 } else {
                     // Relative position tracks snap to 1/4 beat based on mouse position
-                    placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
+                    placeBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project);
                     if (placeBeat < 0) placeBeat = 0;
                 }
 
@@ -7684,7 +7714,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                             // Place chord notes
                             const ChordPreset& chord = g_ChordPresets[g_SelectedChordIndex];
                             int rootPitch = std::clamp(hoveredNote, lowestNote, highestNote - chord.intervals[chord.noteCount - 1]);
-                            float startTime = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
+                            float startTime = snapBeat(hoveredBeat, effectiveSnap(ui), project);
 
                             ui.selectedNoteIndices.clear();
 
@@ -7725,7 +7755,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                                     lowestNote, highestNote - 1);
                             }
 
-                            newNote.startTime = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
+                            newNote.startTime = snapBeat(hoveredBeat, effectiveSnap(ui), project);
 
                             // Use selected palette item's oscillator type if one is selected
                             if (g_SelectedPaletteItem >= 0) {
@@ -7798,14 +7828,14 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             if (ui.isDraggingNote && ui.selectedNoteIndex >= 0) {
                 // Single note drag
                 Note& note = pattern.notes[ui.selectedNoteIndex];
-                float newBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
+                float newBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project);
                 int newPitch = std::clamp(hoveredNote, lowestNote, highestNote - 1);
                 note.startTime = std::max(0.0f, newBeat);
                 note.pitch = newPitch;
             }
             if (ui.isDraggingMultiple && !ui.selectedNoteIndices.empty()) {
                 // Multi-note drag - move all selected notes together
-                float snappedBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project.beatsPerMeasure);
+                float snappedBeat = snapBeat(hoveredBeat, effectiveSnap(ui), project);
                 int currentPitch = hoveredNote;
 
                 // Apply offset to each selected note
@@ -7819,7 +7849,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         float newBeat = snappedBeat + beatOffset;
                         int newPitch = currentPitch + pitchOffset;
 
-                        note.startTime = std::max(0.0f, snapBeat(newBeat, effectiveSnap(ui), project.beatsPerMeasure));
+                        note.startTime = std::max(0.0f, snapBeat(newBeat, effectiveSnap(ui), project));
                         note.pitch = std::clamp(newPitch, lowestNote, highestNote - 1);
                     }
                 }
@@ -7830,7 +7860,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 if (!isDrumType(note.oscillatorType)) {
                     float deltaBeats = hoveredBeat - ui.dragStartBeat;
                     float newDuration = ui.dragStartDuration + deltaBeats;
-                    note.duration = snapDuration(newDuration, effectiveSnap(ui), project.beatsPerMeasure);
+                    note.duration = snapDuration(newDuration, effectiveSnap(ui), project);
                 }
             }
             // Handle multi-note resize
@@ -7845,7 +7875,7 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                         // Skip drums - they have fixed duration
                         if (!isDrumType(note.oscillatorType)) {
                             float newDuration = ui.multiResizeStartDurations[i] + deltaBeats;
-                            note.duration = snapDuration(newDuration, effectiveSnap(ui), project.beatsPerMeasure);
+                            note.duration = snapDuration(newDuration, effectiveSnap(ui), project);
                         }
                     }
                 }
@@ -8573,6 +8603,235 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
             "which is how you repair one whose file moved.");
     }
 
+    // ---- Song structure ---------------------------------------------------
+    //
+    // The project had one bpm and one time signature for the whole song. A
+    // chiptune with a slow intro, a double-time B section or a 6/8 bridge
+    // could not be written at all.
+    ImGui::SameLine(0, 20);
+    if (ImGui::Button("Structure##arr")) ImGui::OpenPopup("SongStructure");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Tempo changes, time-signature changes, markers and regions.\n"
+            "Right-clicking the strip under the loop ruler also drops a\n"
+            "marker where you click.");
+    }
+
+    if (ImGui::BeginPopup("SongStructure")) {
+        const float playhead = std::max(0.0f, seq.getCurrentBeat());
+
+        ImGui::TextDisabled("Everything below applies from a beat onward.");
+        ImGui::Separator();
+
+        // ---- Tempo ---------------------------------------------------------
+        ImGui::TextUnformatted("Tempo changes");
+        if (ImGui::Button("Add at playhead##tempo")) {
+            g_UndoHistory.saveState(project, "Add Tempo Change");
+            project.tempoMap.setTempo(
+                snapBeatNearest(playhead, effectiveSnap(ui), project),
+                project.bpmAt(playhead));
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "A tempo change takes effect at its beat and holds until the\n"
+                "next one. There is no ramp - an accelerando is a different\n"
+                "feature, and pretending a step is a ramp would put the\n"
+                "playhead somewhere it is not.");
+        }
+
+        for (int i = 0; i < project.tempoMap.tempoCount(); ++i) {
+            ImGui::PushID(1000 + i);
+            const TempoChange change = project.tempoMap.tempoAt(i);
+
+            ImGui::SetNextItemWidth(80);
+            float beat = change.beat;
+            if (ImGui::DragFloat("##tbeat", &beat, 0.25f, 0.0f, 100000.0f, "@ %.2f")) {
+                g_UndoHistory.saveState(project, "Move Tempo Change");
+                project.tempoMap.removeTempoAt(i);
+                project.tempoMap.setTempo(std::max(0.0f, beat), change.bpm);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90);
+            float bpm = change.bpm;
+            if (ImGui::DragFloat("##tbpm", &bpm, 0.5f, TempoMap::MIN_BPM,
+                                 TempoMap::MAX_BPM, "%.1f BPM")) {
+                g_UndoHistory.saveState(project, "Tempo Change");
+                project.tempoMap.setTempo(change.beat, bpm);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) {
+                g_UndoHistory.saveState(project, "Remove Tempo Change");
+                project.tempoMap.removeTempoAt(i);
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+
+        ImGui::Separator();
+
+        // ---- Meter ---------------------------------------------------------
+        ImGui::TextUnformatted("Time signature changes");
+        if (ImGui::Button("Add at playhead##meter")) {
+            const MeterChange here = project.meterAt(playhead);
+            g_UndoHistory.saveState(project, "Add Meter Change");
+            project.tempoMap.setMeter(
+                snapBeatNearest(playhead, effectiveSnap(ui), project),
+                here.numerator, here.denominator);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Bar lines and Snap-to-Bar both follow this, so a 6/8\n"
+                "section snaps to six eighths rather than to the project's\n"
+                "opening signature.");
+        }
+
+        for (int i = 0; i < project.tempoMap.meterCount(); ++i) {
+            ImGui::PushID(2000 + i);
+            const MeterChange change = project.tempoMap.meterAt(i);
+
+            ImGui::SetNextItemWidth(80);
+            float beat = change.beat;
+            if (ImGui::DragFloat("##mbeat", &beat, 0.25f, 0.0f, 100000.0f, "@ %.2f")) {
+                g_UndoHistory.saveState(project, "Move Meter Change");
+                project.tempoMap.removeMeterAt(i);
+                project.tempoMap.setMeter(std::max(0.0f, beat),
+                                          change.numerator, change.denominator);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(55);
+            int numerator = change.numerator;
+            if (ImGui::DragInt("##mnum", &numerator, 0.1f, 1, 32, "%d")) {
+                g_UndoHistory.saveState(project, "Meter Change");
+                project.tempoMap.setMeter(change.beat, numerator, change.denominator);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("/");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60);
+            // Powers of two only: MIDI stores the denominator as its base-2
+            // logarithm, so a 4/5 bar has no representation at all.
+            const char* denominators = "1\0" "2\0" "4\0" "8\0" "16\0" "32\0";
+            int denomIndex = 2;
+            for (int d = 0, value = 1; d < 6; ++d, value *= 2) {
+                if (value == change.denominator) denomIndex = d;
+            }
+            if (ImGui::Combo("##mden", &denomIndex, denominators)) {
+                g_UndoHistory.saveState(project, "Meter Change");
+                project.tempoMap.setMeter(change.beat, change.numerator,
+                                          1 << denomIndex);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) {
+                g_UndoHistory.saveState(project, "Remove Meter Change");
+                project.tempoMap.removeMeterAt(i);
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+
+        ImGui::Separator();
+
+        // ---- Markers and regions -------------------------------------------
+        ImGui::TextUnformatted("Markers");
+        if (ImGui::Button("Add at playhead##marker") &&
+            static_cast<int>(project.markers.size()) < MAX_MARKERS) {
+            g_UndoHistory.saveState(project, "Add Marker");
+            Marker marker;
+            marker.beat = snapBeatNearest(playhead, effectiveSnap(ui), project);
+            marker.name = "Marker " + std::to_string(project.markers.size() + 1);
+            marker.color = channelColor(static_cast<int>(project.markers.size()));
+            project.markers.push_back(marker);
+            sortMarkers(project.markers);
+        }
+
+        for (size_t i = 0; i < project.markers.size(); ++i) {
+            ImGui::PushID(3000 + static_cast<int>(i));
+            Marker& marker = project.markers[i];
+
+            ImGui::SetNextItemWidth(80);
+            if (ImGui::DragFloat("##kbeat", &marker.beat, 0.25f, 0.0f, 100000.0f,
+                                 "@ %.2f")) {
+                marker.beat = std::max(0.0f, marker.beat);
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(130);
+            char nameBuffer[64];
+            snprintf(nameBuffer, sizeof(nameBuffer), "%s", marker.name.c_str());
+            if (ImGui::InputText("##kname", nameBuffer, sizeof(nameBuffer))) {
+                marker.name = nameBuffer;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("go")) {
+                seq.setPosition(marker.beat);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) {
+                g_UndoHistory.saveState(project, "Remove Marker");
+                project.markers.erase(project.markers.begin() +
+                                      static_cast<long>(i));
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Regions");
+        if (ImGui::Button("Add from loop range##region") &&
+            static_cast<int>(project.regions.size()) < MAX_REGIONS) {
+            const PlaybackState& pb = seq.getState();
+            const float a = pb.loopRangeActive ? pb.loopStart : playhead;
+            const float b = pb.loopRangeActive ? pb.loopEnd : playhead + 8.0f;
+            if (b > a) {
+                g_UndoHistory.saveState(project, "Add Region");
+                Region region;
+                region.startBeat = a;
+                region.endBeat = b;
+                region.name = "Section " + std::to_string(project.regions.size() + 1);
+                region.color = channelColor(static_cast<int>(project.regions.size()) + 3);
+                project.regions.push_back(region);
+                sortRegions(project.regions);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Names the span you have looped, so the structure you were\n"
+                "working on stays labelled after you move the loop.");
+        }
+
+        for (size_t i = 0; i < project.regions.size(); ++i) {
+            ImGui::PushID(4000 + static_cast<int>(i));
+            Region& region = project.regions[i];
+
+            ImGui::SetNextItemWidth(130);
+            char nameBuffer[64];
+            snprintf(nameBuffer, sizeof(nameBuffer), "%s", region.name.c_str());
+            if (ImGui::InputText("##rname", nameBuffer, sizeof(nameBuffer))) {
+                region.name = nameBuffer;
+            }
+            ImGui::SameLine();
+            ImGui::Text("%.1f - %.1f", region.startBeat, region.endBeat);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("loop")) {
+                seq.setLoopRange(region.startBeat, region.endBeat);
+                seq.setLoopEnabled(true);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) {
+                g_UndoHistory.saveState(project, "Remove Region");
+                project.regions.erase(project.regions.begin() +
+                                      static_cast<long>(i));
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+
+        ImGui::EndPopup();
+    }
+
     ImGui::SameLine(0, 20);
     ImGui::TextDisabled("Double-click to add clip | Right-click clip to delete | Drag to move");
 
@@ -8611,6 +8870,23 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     const float headerWidth = 100.0f;
     const float beatWidth = 20.0f * ui.zoomX;
 
+    /*
+     * The rulers sit ABOVE the lanes.
+     *
+     * They used to be drawn under the last lane, at canvasPos.y + laneCount
+     * * trackHeight. At eight channels that was 240px down and on screen. At
+     * thirty-two it is 960px down - off the bottom of a panel nowhere near
+     * that tall, which made the loop range unreachable by mouse. A position
+     * that depends on the channel count is the bug; this one does not.
+     */
+    const float loopBarH = 16.0f;
+    const float regionBarH = 15.0f;   // region bands and their names
+    const float markerBarH = 16.0f;   // marker flags and their names
+    // Plus a lane for the bar numbers, which shared the marker row and drew
+    // straight through the marker names.
+    const float rulerHeight = loopBarH + regionBarH + markerBarH + 16.0f;
+    const float tracksTop = canvasPos.y + rulerHeight;
+
     // Static state for dragging
     static bool isDraggingClip = false;
     static int draggingClipIndex = -1;
@@ -8627,7 +8903,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     // hardcoded, in seven separate places.
     const int laneCount = project.activeChannelCount();
     for (int ch = 0; ch < laneCount; ++ch) {
-        float y = canvasPos.y + ch * trackHeight;
+        float y = tracksTop + ch * trackHeight;
 
         // Header
         ImU32 headerColor = (ch == ui.selectedChannel)
@@ -8649,23 +8925,50 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     }
 
     // Beat grid
-    for (float beat = 0; beat < project.songLength; beat += 1.0f) {
-        float x = canvasPos.x + headerWidth + beat * beatWidth - ui.scrollX;
-        if (x < canvasPos.x + headerWidth || x > canvasPos.x + canvasSize.x) continue;
+    //
+    // Bar lines are walked through the meter map rather than found by
+    // `beat % beatsPerMeasure`. A song that changes to 3/4 at bar 8 has bar
+    // lines at 32, 35, 38 - the modulo puts every one of them after the
+    // change in the wrong place, and the grid then snaps somewhere the ruler
+    // did not draw. Snap-to-Bar walks the same beatOfBar().
+    {
+        // Collect this screen's bar lines once, so the per-beat loop below
+        // can ask "is this one" without re-walking the map each time.
+        std::vector<float> barBeats;
+        for (int bar = 0; bar < 4096; ++bar) {
+            const float barBeat = project.beatOfBar(bar);
+            if (barBeat > project.songLength) break;
+            barBeats.push_back(barBeat);
+            // A degenerate map could return the same beat forever.
+            if (bar > 0 && barBeat <= barBeats[static_cast<size_t>(bar) - 1]) break;
+        }
 
-        bool isMeasure = (static_cast<int>(beat) % project.beatsPerMeasure == 0);
-        ImU32 lineColor = isMeasure ? IM_COL32(80, 80, 90, 255) : IM_COL32(45, 45, 50, 255);
-        drawList->AddLine(
-            ImVec2(x, canvasPos.y),
-            ImVec2(x, canvasPos.y + laneCount * trackHeight),
-            lineColor);
+        for (float beat = 0; beat < project.songLength; beat += 1.0f) {
+            float x = canvasPos.x + headerWidth + beat * beatWidth - ui.scrollX;
+            if (x < canvasPos.x + headerWidth || x > canvasPos.x + canvasSize.x) continue;
 
-        // Draw beat numbers on measure lines
-        if (isMeasure) {
+            drawList->AddLine(
+                ImVec2(x, tracksTop),
+                ImVec2(x, tracksTop + laneCount * trackHeight),
+                IM_COL32(45, 45, 50, 255));
+        }
+
+        for (size_t bar = 0; bar < barBeats.size(); ++bar) {
+            const float beat = barBeats[bar];
+            const float x = canvasPos.x + headerWidth + beat * beatWidth - ui.scrollX;
+            if (x < canvasPos.x + headerWidth || x > canvasPos.x + canvasSize.x) continue;
+
+            drawList->AddLine(
+                ImVec2(x, tracksTop),
+                ImVec2(x, tracksTop + laneCount * trackHeight),
+                IM_COL32(80, 80, 90, 255));
+
+            // The bar number goes at the TOP now, on the ruler, where it is
+            // legible whatever the channel count.
             char beatLabel[16];
             snprintf(beatLabel, sizeof(beatLabel), "%d", static_cast<int>(beat));
-            drawList->AddText(ImVec2(x + 2, canvasPos.y + laneCount * trackHeight + 2),
-                IM_COL32(100, 100, 110, 255), beatLabel);
+            drawList->AddText(ImVec2(x + 2, tracksTop - 14.0f),
+                IM_COL32(120, 120, 135, 255), beatLabel);
         }
     }
 
@@ -8679,8 +8982,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     // ========================================================================
     const float gridLeft = canvasPos.x + headerWidth;
     const float gridRight = canvasPos.x + canvasSize.x;
-    const float loopBarY = canvasPos.y + laneCount * trackHeight + 18.0f;
-    const float loopBarH = 16.0f;
+    const float loopBarY = canvasPos.y;
 
     auto beatToScreenX = [&](float beat) {
         return gridLeft + beat * beatWidth - ui.scrollX;
@@ -8734,16 +9036,16 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
             if (xb > xa) {
                 // Shade the looping span across the tracks so the range is
                 // readable without looking down at the ruler.
-                drawList->AddRectFilled(ImVec2(xa, canvasPos.y),
-                                        ImVec2(xb, canvasPos.y + laneCount * trackHeight),
+                drawList->AddRectFilled(ImVec2(xa, tracksTop),
+                                        ImVec2(xb, tracksTop + laneCount * trackHeight),
                                         IM_COL32(90, 170, 255, 22));
                 drawList->AddRectFilled(ImVec2(xa, loopBarY),
                                         ImVec2(xb, loopBarY + loopBarH),
                                         IM_COL32(90, 170, 255, 150));
-                drawList->AddLine(ImVec2(xa, canvasPos.y),
+                drawList->AddLine(ImVec2(xa, tracksTop),
                                   ImVec2(xa, loopBarY + loopBarH),
                                   IM_COL32(150, 205, 255, 220), 1.5f);
-                drawList->AddLine(ImVec2(xb, canvasPos.y),
+                drawList->AddLine(ImVec2(xb, tracksTop),
                                   ImVec2(xb, loopBarY + loopBarH),
                                   IM_COL32(150, 205, 255, 220), 1.5f);
 
@@ -8760,12 +9062,126 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
         }
     }
 
+    // ========================================================================
+    // Markers, regions and tempo changes
+    //
+    // All three live on one strip under the loop ruler. They are the song's
+    // structure - "the chorus starts here", "it slows down here" - and a
+    // structure you cannot see is a structure you have to remember.
+    // ========================================================================
+    const float regionBarY = loopBarY + loopBarH + 1.0f;
+    const float markerBarY = regionBarY + regionBarH + 1.0f;
+
+    drawList->AddRectFilled(ImVec2(gridLeft, regionBarY),
+                            ImVec2(gridRight, markerBarY + markerBarH),
+                            IM_COL32(18, 18, 24, 255));
+
+    // Regions first, as a filled band behind the markers.
+    for (const Region& region : project.regions) {
+        const float xa = beatToScreenX(region.startBeat);
+        const float xb = beatToScreenX(region.endBeat);
+        if (xb < gridLeft || xa > gridRight) continue;
+
+        const float ca = std::max(xa, gridLeft);
+        const float cb = std::min(xb, gridRight);
+        const ImU32 fill = (region.color & 0x00FFFFFFu) | 0x40000000u;
+        drawList->AddRectFilled(ImVec2(ca, regionBarY),
+                                ImVec2(cb, regionBarY + regionBarH), fill);
+        drawList->AddRect(ImVec2(ca, regionBarY),
+                          ImVec2(cb, regionBarY + regionBarH), region.color);
+        if (!region.name.empty() && cb - ca > 30.0f) {
+            drawList->AddText(ImVec2(ca + 4, regionBarY + 1),
+                              IM_COL32(235, 235, 245, 255), region.name.c_str());
+        }
+    }
+
+    // Then the markers, as a flag with a line dropped through the tracks so
+    // it can be read against the clips it names.
+    for (const Marker& marker : project.markers) {
+        const float mx = beatToScreenX(marker.beat);
+        if (mx < gridLeft || mx > gridRight) continue;
+
+        drawList->AddLine(ImVec2(mx, markerBarY),
+                          ImVec2(mx, tracksTop + laneCount * trackHeight),
+                          (marker.color & 0x00FFFFFFu) | 0x70000000u);
+        drawList->AddTriangleFilled(ImVec2(mx, markerBarY),
+                                    ImVec2(mx + 9, markerBarY + 4),
+                                    ImVec2(mx, markerBarY + 8),
+                                    marker.color);
+        if (!marker.name.empty()) {
+            drawList->AddText(ImVec2(mx + 11, markerBarY + 1),
+                              IM_COL32(225, 225, 235, 255), marker.name.c_str());
+        }
+    }
+
+    // Tempo and meter changes sit on the same strip, right-aligned in their
+    // own colour, because they answer a different question than a marker
+    // does and mixing them would make both harder to read.
+    for (int i = 0; i < project.tempoMap.tempoCount(); ++i) {
+        const TempoChange& change = project.tempoMap.tempoAt(i);
+        const float tx = beatToScreenX(change.beat);
+        if (tx < gridLeft || tx > gridRight) continue;
+
+        drawList->AddLine(ImVec2(tx, markerBarY),
+                          ImVec2(tx, tracksTop + laneCount * trackHeight),
+                          IM_COL32(255, 190, 90, 130));
+        // Right-aligned against its own line. A tempo change usually sits on
+        // a bar line, and the bar number is drawn to the RIGHT of that line -
+        // so a left-aligned label lands straight on top of it.
+        char label[24];
+        snprintf(label, sizeof(label), "%.0f", change.bpm);
+        const float labelWidth = ImGui::CalcTextSize(label).x;
+        drawList->AddText(ImVec2(tx - labelWidth - 3.0f, markerBarY + markerBarH + 1),
+                          IM_COL32(255, 200, 110, 255), label);
+    }
+    for (int i = 0; i < project.tempoMap.meterCount(); ++i) {
+        const MeterChange& change = project.tempoMap.meterAt(i);
+        const float tx = beatToScreenX(change.beat);
+        if (tx < gridLeft || tx > gridRight) continue;
+
+        char label[24];
+        // Right-aligned for the same reason: a meter change lands on a bar
+        // line, and a region starting there names itself to the right of it.
+        snprintf(label, sizeof(label), "%d/%d", change.numerator, change.denominator);
+        const float labelWidth = ImGui::CalcTextSize(label).x;
+        drawList->AddText(ImVec2(tx - labelWidth - 3.0f, regionBarY + 1),
+                          IM_COL32(140, 230, 190, 255), label);
+    }
+
+    // Right-click the strip to drop a marker where the cursor is.
+    {
+        const ImVec2 mousePos = ImGui::GetMousePos();
+        const bool overStrip = mousePos.x >= gridLeft && mousePos.x <= gridRight &&
+                               mousePos.y >= regionBarY &&
+                               mousePos.y <= markerBarY + markerBarH;
+
+        if (overStrip && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(1) &&
+            static_cast<int>(project.markers.size()) < MAX_MARKERS) {
+            const float beat = std::max(0.0f,
+                snapBeatNearest(screenXToBeat(mousePos.x), effectiveSnap(ui), project));
+
+            g_UndoHistory.saveState(project, "Add Marker");
+            Marker marker;
+            marker.beat = beat;
+            marker.name = "Marker " + std::to_string(project.markers.size() + 1);
+            marker.color = channelColor(static_cast<int>(project.markers.size()));
+            project.markers.push_back(marker);
+            sortMarkers(project.markers);
+        }
+
+        if (overStrip && project.markers.empty() && project.regions.empty()) {
+            drawList->AddText(ImVec2(gridLeft + 6, markerBarY + 1),
+                              IM_COL32(110, 110, 125, 255),
+                              "right-click to drop a marker");
+        }
+    }
+
     // Draw clips
     int hoveredClipIndex = -1;
     for (size_t i = 0; i < project.arrangement.size(); ++i) {
         const auto& clip = project.arrangement[i];
         float x = canvasPos.x + headerWidth + clip.startBeat * beatWidth - ui.scrollX;
-        float y = canvasPos.y + clip.channelIndex * trackHeight;
+        float y = tracksTop + clip.channelIndex * trackHeight;
         float w = clip.lengthBeats * beatWidth;
 
         if (x + w < canvasPos.x + headerWidth || x > canvasPos.x + canvasSize.x) continue;
@@ -8920,7 +9336,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     if (playheadX >= canvasPos.x + headerWidth && playheadX <= canvasPos.x + canvasSize.x) {
         drawList->AddLine(
             ImVec2(playheadX, canvasPos.y),
-            ImVec2(playheadX, canvasPos.y + laneCount * trackHeight),
+            ImVec2(playheadX, tracksTop + laneCount * trackHeight),
             IM_COL32(255, 80, 80, 255), 2.0f);
 
         // Playhead triangle
@@ -8935,10 +9351,10 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     float songEndX = canvasPos.x + headerWidth + project.songLength * beatWidth - ui.scrollX;
     if (songEndX >= canvasPos.x + headerWidth && songEndX <= canvasPos.x + canvasSize.x) {
         drawList->AddLine(
-            ImVec2(songEndX, canvasPos.y),
-            ImVec2(songEndX, canvasPos.y + laneCount * trackHeight),
+            ImVec2(songEndX, tracksTop),
+            ImVec2(songEndX, tracksTop + laneCount * trackHeight),
             IM_COL32(150, 80, 80, 200), 2.0f);
-        drawList->AddText(ImVec2(songEndX + 4, canvasPos.y + 4),
+        drawList->AddText(ImVec2(songEndX + 4, tracksTop + 4),
             IM_COL32(150, 80, 80, 255), "END");
     }
 
@@ -8951,7 +9367,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     if (ImGui::IsItemHovered() || isDraggingClip) {
         ImVec2 mousePos = ImGui::GetMousePos();
         float relX = mousePos.x - canvasPos.x - headerWidth + ui.scrollX;
-        int hoveredChannel = static_cast<int>((mousePos.y - canvasPos.y) / trackHeight);
+        int hoveredChannel = static_cast<int>((mousePos.y - tracksTop) / trackHeight);
         hoveredChannel = std::clamp(hoveredChannel, 0, 7);
 
         // Left click to select channel or clip
@@ -9018,7 +9434,7 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     if (ImGui::BeginPopup("ArrangementContextMenu")) {
         ImVec2 mousePos = ImGui::GetMousePos();
         float relX = mousePos.x - canvasPos.x - headerWidth + ui.scrollX;
-        int targetChannel = static_cast<int>((mousePos.y - canvasPos.y) / trackHeight);
+        int targetChannel = static_cast<int>((mousePos.y - tracksTop) / trackHeight);
         targetChannel = std::clamp(targetChannel, 0, 7);
         float targetBeat = std::floor(relX / beatWidth);
 

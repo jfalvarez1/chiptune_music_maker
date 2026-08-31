@@ -17,6 +17,7 @@
 
 #include "Snap.h"
 #include "Sample.h"
+#include "TempoMap.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -911,6 +912,34 @@ struct Project {
     // clip playing silence with no explanation is worse than one that says
     // which file moved.
     std::vector<std::string> missingSamples;
+
+    /*
+     * Tempo and meter changes through the song.
+     *
+     * bpm and beatsPerMeasure above stay exactly what they were - the value
+     * in force from beat 0 until the first change - so every existing
+     * control, every existing file and every path that has not been taught
+     * about the map keeps working. An empty map is a project at one tempo,
+     * which is every project written before this, and it writes nothing at
+     * all to the file.
+     */
+    TempoMap tempoMap;
+
+    // Named points and named spans. Not read by the audio thread, which is
+    // why they can afford to carry strings.
+    std::vector<Marker> markers;
+    std::vector<Region> regions;
+
+    // Convenience wrappers, so call sites do not have to remember to pass
+    // the base tempo and meter every time.
+    float bpmAt(float beat) const { return tempoMap.bpmAtBeat(beat, bpm); }
+    float beatToSeconds(float beat) const { return tempoMap.beatToSeconds(beat, bpm); }
+    float secondsToBeat(float seconds) const { return tempoMap.secondsToBeat(seconds, bpm); }
+    int barAt(float beat) const { return tempoMap.barAtBeat(beat, beatsPerMeasure); }
+    float beatOfBar(int bar) const { return tempoMap.beatOfBar(bar, beatsPerMeasure); }
+    MeterChange meterAt(float beat) const {
+        return tempoMap.meterAtBeat(beat, beatsPerMeasure);
+    }
 
     // How many channels this project actually uses. Everything that walks
     // channels - the mixer, the tracker, the arrangement, and the audio mix

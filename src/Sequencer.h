@@ -165,7 +165,23 @@ public:
             return;
         }
 
-        float bpm = m_project->bpm;
+        /*
+         * The beat advance follows the tempo map.
+         *
+         * This used to be one division per block from a single project bpm.
+         * With a tempo change in the song that is wrong from the change
+         * onward, and wrong by more the longer it runs.
+         *
+         * The lookup is hoisted out of the per-sample loop when the map is
+         * flat, which is every project that has no tempo changes - so the
+         * common case costs exactly what it did before. When the map is not
+         * flat the rate is recomputed per sample, which is a scan of at most
+         * 64 floats and still allocates nothing.
+         */
+        const bool flatTempo = m_project->tempoMap.isFlat();
+        const float baseBpm = m_project->bpm;
+        float bpm = flatTempo ? baseBpm
+                              : m_project->tempoMap.bpmAtBeat(m_state.currentBeat, baseBpm);
         float beatsPerSample = bpm / 60.0f / m_sampleRate;
 
         // Console filters are reconfigured here, once per block - the
@@ -185,6 +201,10 @@ public:
 
             // Advance time if playing
             if (m_state.isPlaying) {
+                if (!flatTempo) {
+                    bpm = m_project->tempoMap.bpmAtBeat(m_state.currentBeat, baseBpm);
+                    beatsPerSample = bpm / 60.0f / m_sampleRate;
+                }
                 m_state.currentBeat += beatsPerSample;
                 m_state.currentTime += 1.0f / m_sampleRate;
 
@@ -572,9 +592,12 @@ private:
     // ========================================================================
     // Internal Helpers
     // ========================================================================
+    // An absolute position, so it integrates across every tempo change
+    // before it. Dividing once by the project bpm is only right when the
+    // tempo never changes, and drifts further out the longer the song runs.
     float beatToTime(float beat) const {
         if (!m_project) return 0.0f;
-        return beat * 60.0f / m_project->bpm;
+        return m_project->beatToSeconds(beat);
     }
 
     void allNotesOff() {
@@ -596,7 +619,10 @@ private:
                        float beat, int activeChannels) {
         if (!m_project) return;
 
-        const float bpm = (m_project->bpm > 1.0f) ? m_project->bpm : 120.0f;
+        // The tempo where the playhead is, so a clip under a tempo change
+        // plays at the tempo the user can hear rather than the project's
+        // opening one.
+        const float bpm = std::max(1.0f, m_project->bpmAt(beat));
         const float secondsPerBeat = 60.0f / bpm;
 
         for (const Clip& clip : m_project->arrangement) {
@@ -832,9 +858,15 @@ private:
     }
 
     // Convert beats to seconds based on current BPM
+    // A DURATION, not a position: how long `beats` lasts at the tempo in
+    // force right now. Deliberately not integrated through the map - the
+    // callers use it for note lengths and envelope times at the playhead,
+    // where the tempo three minutes later is not the question being asked.
     float beatsToSeconds(float beats) const {
-        if (!m_project || m_project->bpm <= 0.0f) return 0.0f;
-        return beats * 60.0f / m_project->bpm;
+        if (!m_project) return 0.0f;
+        const float bpm = m_project->bpmAt(m_state.currentBeat);
+        if (bpm <= 0.0f) return 0.0f;
+        return beats * 60.0f / bpm;
     }
 
     // Apply swing to a beat position
