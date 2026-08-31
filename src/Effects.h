@@ -8,6 +8,7 @@
  */
 
 #include "Types.h"
+#include "PitchShift.h"
 #include <cmath>
 #include <cstring>
 #include <array>
@@ -1146,6 +1147,20 @@ enum class EffectType : uint8_t {
     Chorus,
     Delay,
     Reverb,
+
+    // ---- Pitch and time (Task G1) ---------------------------------------
+    //
+    // Appended, never inserted: these tokens are part of the .ctp format and
+    // CLASSIC_EFFECT_ORDER is the migration target for every existing file.
+    // Appending leaves an old project's rack exactly as it was, with the
+    // three new slots at the end and switched off.
+    //
+    // None of these is chip-authentic - a 2A03 could not begin to do them -
+    // so per the ground rules all three default to off.
+    PitchShift,
+    FormantShift,
+    AutoTune,
+
     Count
 };
 
@@ -1169,6 +1184,9 @@ inline const char* effectTypeId(EffectType type) {
         case EffectType::Chorus:         return "chorus";
         case EffectType::Delay:          return "delay";
         case EffectType::Reverb:         return "reverb";
+        case EffectType::PitchShift:     return "pitchshift";
+        case EffectType::FormantShift:   return "formantshift";
+        case EffectType::AutoTune:       return "autotune";
         default:                         return "?";
     }
 }
@@ -1189,6 +1207,9 @@ inline const char* effectDisplayName(EffectType type) {
         case EffectType::Chorus:         return "Chorus";
         case EffectType::Delay:          return "Delay";
         case EffectType::Reverb:         return "Reverb";
+        case EffectType::PitchShift:     return "Pitch Shift";
+        case EffectType::FormantShift:   return "Formant Shift";
+        case EffectType::AutoTune:       return "Auto-Tune";
         default:                         return "Unknown";
     }
 }
@@ -1298,6 +1319,78 @@ public:
     }
 };
 
+/*
+ * The phase-vocoder effects.
+ *
+ * Each reports a window of latency, which is real and unavoidable: a bin's
+ * true frequency cannot be known without seeing two frames of it. That is
+ * what latencySamples() is for, and it is why these are studio effects
+ * rather than things to monitor through while playing.
+ *
+ * The dry/wet mix is applied here rather than inside the vocoder, so a
+ * bypassed-by-mix effect still runs its analysis and does not click when the
+ * mix is brought back up.
+ */
+class PitchShiftFx final : public IEffect {
+public:
+    PitchShifter* target = nullptr;
+    const char* typeId() const override { return "pitchshift"; }
+    float process(float input, float time) override {
+        (void)time;
+        if (target == nullptr) return input;
+        const float wet = target->process(input);
+        const float mix = std::clamp(target->mix, 0.0f, 1.0f);
+        return input * (1.0f - mix) + wet * mix;
+    }
+    void setSampleRate(float sampleRate) override {
+        if (target) target->configure(sampleRate);
+    }
+    void reset() override { if (target) target->reset(); }
+    int latencySamples() const override {
+        return target ? target->latency() : 0;
+    }
+};
+
+class FormantShiftFx final : public IEffect {
+public:
+    FormantShifter* target = nullptr;
+    const char* typeId() const override { return "formantshift"; }
+    float process(float input, float time) override {
+        (void)time;
+        if (target == nullptr) return input;
+        const float wet = target->process(input);
+        const float mix = std::clamp(target->mix, 0.0f, 1.0f);
+        return input * (1.0f - mix) + wet * mix;
+    }
+    void setSampleRate(float sampleRate) override {
+        if (target) target->configure(sampleRate);
+    }
+    void reset() override { if (target) target->reset(); }
+    int latencySamples() const override {
+        return target ? target->latency() : 0;
+    }
+};
+
+class AutoTuneFx final : public IEffect {
+public:
+    AutoTune* target = nullptr;
+    const char* typeId() const override { return "autotune"; }
+    float process(float input, float time) override {
+        (void)time;
+        if (target == nullptr) return input;
+        const float wet = target->process(input);
+        const float mix = std::clamp(target->mix, 0.0f, 1.0f);
+        return input * (1.0f - mix) + wet * mix;
+    }
+    void setSampleRate(float sampleRate) override {
+        if (target) target->configure(sampleRate);
+    }
+    void reset() override { if (target) target->reset(); }
+    int latencySamples() const override {
+        return target ? target->latency() : 0;
+    }
+};
+
 class ChorusFx final : public IEffect {
 public:
     Chorus* target = nullptr;
@@ -1325,6 +1418,15 @@ inline constexpr EffectType CLASSIC_EFFECT_ORDER[] = {
     EffectType::Chorus,
     EffectType::Delay,
     EffectType::Reverb,
+
+    // The pitch and time effects sit at the END of the classic order, after
+    // reverb. That is not where a mixing engineer would put a pitch shifter,
+    // but it is where they have to go: the order is what every existing file
+    // migrates onto, and moving reverb off the end would change how every
+    // one of those projects sounds. A user who wants them earlier drags them.
+    EffectType::PitchShift,
+    EffectType::FormantShift,
+    EffectType::AutoTune,
 };
 inline constexpr int CLASSIC_EFFECT_COUNT =
     static_cast<int>(sizeof(CLASSIC_EFFECT_ORDER) / sizeof(CLASSIC_EFFECT_ORDER[0]));
@@ -1355,6 +1457,12 @@ struct EffectsChain {
     TapeSaturation tapeSaturation;
     Unison unison;
 
+    // The phase-vocoder effects. Each carries a window of FFT state, which
+    // is why they are here rather than being created per note.
+    PitchShifter pitchShifter;
+    FormantShifter formantShifter;
+    AutoTune autoTune;
+
     // Enable flags. Authoritative: presets write these, the rack reads them.
     bool bitcrusherEnabled = false;
     bool distortionEnabled = false;
@@ -1372,6 +1480,13 @@ struct EffectsChain {
     bool reverbEnabled = false;
     bool stereoWidenerEnabled = false;
     bool tapeSaturationEnabled = false;
+
+    // Off by default, and they have to be: none of these is anything a 2A03
+    // could do, and the ground rule is that non-chip DSP ships silent.
+    bool pitchShiftEnabled = false;
+    bool formantShiftEnabled = false;
+    bool autoTuneEnabled = false;
+
     int sidechainSource = -1;  // Source channel index (-1 = none)
 
     // ---- The rack ----------------------------------------------------------
@@ -1445,6 +1560,16 @@ struct EffectsChain {
         m_active.store(next, std::memory_order_release);
     }
 
+    /*
+     * The adapter for a type, or nullptr when there is none.
+     *
+     * Public so a test can walk every EffectType and assert each one
+     * resolves. A missing arm below is invisible at runtime - the rack skips
+     * the slot and the effect just never runs - so the guard has to be
+     * external.
+     */
+    IEffect* effectFor(EffectType type) { return lookup(type); }
+
     IEffect* lookup(EffectType type) {
         switch (type) {
             case EffectType::EQ:             return &eqFx;
@@ -1461,6 +1586,13 @@ struct EffectsChain {
             case EffectType::Chorus:         return &chorusFx;
             case EffectType::Delay:          return &delayFx;
             case EffectType::Reverb:         return &reverbFx;
+            case EffectType::PitchShift:     return &pitchShiftFx;
+            case EffectType::FormantShift:   return &formantShiftFx;
+            case EffectType::AutoTune:       return &autoTuneFx;
+            // A type with no arm here is silently skipped by the rack, with
+            // no error anywhere - the effect simply never runs. That is
+            // exactly what happened when these three were added, so there is
+            // a test asserting every EffectType resolves to an adapter.
             default:                         return nullptr;
         }
     }
@@ -1481,6 +1613,9 @@ struct EffectsChain {
             case EffectType::Chorus:         return chorusEnabled;
             case EffectType::Delay:          return delayEnabled;
             case EffectType::Reverb:         return reverbEnabled;
+            case EffectType::PitchShift:     return pitchShiftEnabled;
+            case EffectType::FormantShift:   return formantShiftEnabled;
+            case EffectType::AutoTune:       return autoTuneEnabled;
             default:                         return false;
         }
     }
@@ -1501,6 +1636,9 @@ struct EffectsChain {
             case EffectType::Chorus:         chorusEnabled = on; break;
             case EffectType::Delay:          delayEnabled = on; break;
             case EffectType::Reverb:         reverbEnabled = on; break;
+            case EffectType::PitchShift:     pitchShiftEnabled = on; break;
+            case EffectType::FormantShift:   formantShiftEnabled = on; break;
+            case EffectType::AutoTune:       autoTuneEnabled = on; break;
             default: break;
         }
     }
@@ -1545,6 +1683,14 @@ struct EffectsChain {
         reverb.setSampleRate(sr);
         stereoWidener.setSampleRate(sr);
         tapeSaturation.setSampleRate(sr);
+
+        // The phase vocoders allocate their windows and FFT plans here.
+        // configure() is the only place they do, so it has to be reached -
+        // an unconfigured vocoder passes its input straight through, which
+        // looks exactly like the effect being switched off.
+        pitchShifter.configure(sr);
+        formantShifter.configure(sr);
+        autoTune.configure(sr);
     }
 
     float process(float input, float time) {
@@ -1606,6 +1752,8 @@ private:
     BitcrusherFx bitcrusherFx; DistortionFx distortionFx; FilterFx filterFx;
     RingModFx ringModFx; TremoloFx tremoloFx; PhaserFx phaserFx;
     FlangerFx flangerFx; ChorusFx chorusFx; DelayFx delayFx; ReverbFx reverbFx;
+    PitchShiftFx pitchShiftFx; FormantShiftFx formantShiftFx;
+    AutoTuneFx autoTuneFx;
 
     void bindAdapters() {
         eqFx.target = &eq;
@@ -1622,6 +1770,9 @@ private:
         chorusFx.target = &chorus;
         delayFx.target = &delay;
         reverbFx.target = &reverb;
+        pitchShiftFx.target = &pitchShifter;
+        formantShiftFx.target = &formantShifter;
+        autoTuneFx.target = &autoTune;
     }
 
     void copyFrom(const EffectsChain& other) {
@@ -1632,6 +1783,23 @@ private:
         ringMod = other.ringMod; sidechain = other.sidechain; reverb = other.reverb;
         stereoWidener = other.stereoWidener; tapeSaturation = other.tapeSaturation;
         unison = other.unison;
+
+        // The vocoders' PARAMETERS, not their FFT state. Copying a running
+        // analysis into another chain would splice one channel's spectrum
+        // onto another's.
+        pitchShifter.semitones = other.pitchShifter.semitones;
+        pitchShifter.mix = other.pitchShifter.mix;
+        formantShifter.semitones = other.formantShifter.semitones;
+        formantShifter.mix = other.formantShifter.mix;
+        autoTune.scaleMask = other.autoTune.scaleMask;
+        autoTune.rootNote = other.autoTune.rootNote;
+        autoTune.strength = other.autoTune.strength;
+        autoTune.minimumMagnitude = other.autoTune.minimumMagnitude;
+        autoTune.mix = other.autoTune.mix;
+
+        pitchShiftEnabled = other.pitchShiftEnabled;
+        formantShiftEnabled = other.formantShiftEnabled;
+        autoTuneEnabled = other.autoTuneEnabled;
 
         bitcrusherEnabled = other.bitcrusherEnabled;
         distortionEnabled = other.distortionEnabled;

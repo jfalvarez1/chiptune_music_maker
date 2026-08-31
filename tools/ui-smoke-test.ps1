@@ -189,6 +189,13 @@ foreach ($panel in $panels) {
     args = "--demo --instrument modmatrix --focus `"Channel Editor`""
 })
 
+# The phase-vocoder effects. Each sub-block only draws when its own checkbox
+# is ticked, so this case has all three on.
+[void]$cases.Add(@{
+    name = "pitch-and-time"
+    args = "--demo --instrument pitchtime --focus `"Channel Editor`""
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"

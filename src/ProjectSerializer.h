@@ -158,6 +158,13 @@ inline constexpr FloatField<ChannelConfig> CHANNEL_FLOATS[] = {
     {"cmpGain",    &ChannelConfig::compGain},
 
     {"fmtRes",     &ChannelConfig::formantResonance},
+
+    {"psSemi",     &ChannelConfig::pitchShiftSemitones},
+    {"psMix",      &ChannelConfig::pitchShiftMix},
+    {"fsSemi",     &ChannelConfig::formantShiftSemitones},
+    {"fsMix",      &ChannelConfig::formantShiftMix},
+    {"atStr",      &ChannelConfig::autoTuneStrength},
+    {"atMix",      &ChannelConfig::autoTuneMix},
 };
 
 inline constexpr IntField<ChannelConfig> CHANNEL_INTS[] = {
@@ -165,6 +172,8 @@ inline constexpr IntField<ChannelConfig> CHANNEL_INTS[] = {
     {"dstType",  &ChannelConfig::distortionType},
     {"scSource", &ChannelConfig::sidechainSource},
     {"fmtVowel", &ChannelConfig::formantVowel},
+    {"atRoot",   &ChannelConfig::autoTuneRoot},
+    {"atScale",  &ChannelConfig::autoTuneScaleMask},
 };
 
 inline constexpr BoolField<ChannelConfig> CHANNEL_BOOLS[] = {
@@ -188,6 +197,9 @@ inline constexpr BoolField<ChannelConfig> CHANNEL_BOOLS[] = {
     {"echOn",  &ChannelConfig::echoEnabled},
     {"fenvOn", &ChannelConfig::filterEnvEnabled},
     {"eqOn",   &ChannelConfig::eqEnabled},
+    {"psOn",   &ChannelConfig::pitchShiftEnabled},
+    {"fsOn",   &ChannelConfig::formantShiftEnabled},
+    {"atOn",   &ChannelConfig::autoTuneEnabled},
     {"cmpOn",  &ChannelConfig::compressorEnabled},
     {"fmtOn",  &ChannelConfig::formantEnabled},
 };

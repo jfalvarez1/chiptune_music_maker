@@ -338,6 +338,21 @@ inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain)
     // coefficients, so setting these fields alone left the filter running at
     // whatever setSampleRate last computed - the 1000 Hz default - and the
     // cutoff and resonance controls did nothing at all.
+    // ---- Pitch and time --------------------------------------------------
+    chain.pitchShiftEnabled = config.pitchShiftEnabled;
+    chain.pitchShifter.semitones = config.pitchShiftSemitones;
+    chain.pitchShifter.mix = config.pitchShiftMix;
+
+    chain.formantShiftEnabled = config.formantShiftEnabled;
+    chain.formantShifter.semitones = config.formantShiftSemitones;
+    chain.formantShifter.mix = config.formantShiftMix;
+
+    chain.autoTuneEnabled = config.autoTuneEnabled;
+    chain.autoTune.strength = config.autoTuneStrength;
+    chain.autoTune.rootNote = config.autoTuneRoot;
+    chain.autoTune.scaleMask = static_cast<uint16_t>(config.autoTuneScaleMask);
+    chain.autoTune.mix = config.autoTuneMix;
+
     chain.filter.cutoff = config.filterCutoff;
     chain.filter.resonance = config.filterResonance;
     chain.filter.refresh();

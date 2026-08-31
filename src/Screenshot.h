@@ -219,7 +219,8 @@ struct CaptureRequest {
 //   --fx-rack            open the Effect Rack section
 //   --audio-clip         put an audio clip on the arrangement
 //   --structure          add tempo/meter changes, markers and regions
-//   --instrument <name>  fm|wavetable|sampler|granular|drummodel|modmatrix
+//   --instrument <name>  fm|wavetable|sampler|granular|drummodel|
+//                        modmatrix|pitchtime
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -626,6 +627,18 @@ inline void applyCaptureState(const CaptureRequest& request,
             project.channels[0].oscillator.wavetableBank = 0;
             project.channels[0].oscillator.wavetableMorph = 0.4f;
             project.channels[0].oscillator.wavetableMorphSweep = 0.5f;
+        } else if (request.instrument == "pitchtime") {
+            // All three on, so every sub-block draws - each only shows its
+            // controls when its own checkbox is ticked.
+            project.channels[0].pitchShiftEnabled = true;
+            project.channels[0].pitchShiftSemitones = -5.0f;
+            project.channels[0].pitchShiftMix = 0.7f;
+            project.channels[0].formantShiftEnabled = true;
+            project.channels[0].formantShiftSemitones = 3.0f;
+            project.channels[0].autoTuneEnabled = true;
+            project.channels[0].autoTuneStrength = 0.85f;
+            project.channels[0].autoTuneRoot = 9;              // A
+            project.channels[0].autoTuneScaleMask = 0b010110101101;  // minor
         } else if (request.instrument == "modmatrix") {
             // FM, because FM Brightness is the destination that most
             // obviously demonstrates what the matrix is for.

@@ -45,6 +45,7 @@
 #include "GranularSynth.h"
 #include "DrumMachine.h"
 #include "ModMatrix.h"
+#include "PitchShift.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -6666,10 +6667,25 @@ static void testEffectRackIdentity() {
         chain.reverb.roomSize = 0.7f; chain.reverb.damping = 0.4f; chain.reverb.mix = 0.45f;
     };
 
+    /*
+     * Only the effects the frozen chain actually has.
+     *
+     * LegacyEffectsChain is a verbatim copy of the pre-rack chain, and
+     * anything added since has no counterpart in it - so enabling one is a
+     * divergence by definition, and a correct one. Reverb was the last
+     * effect at the freeze; everything after it in the enum is newer.
+     *
+     * Named rather than numbered so that adding another effect does not
+     * silently widen or narrow what this compares.
+     */
+    const int LEGACY_EFFECT_COUNT = static_cast<int>(EffectType::Reverb) + 1;
+    check(LEGACY_EFFECT_COUNT <= EFFECT_TYPE_COUNT,
+          "the legacy chain covers a prefix of the current effect list");
+
     struct Case { const char* name; EffectType only; bool all; };
     std::vector<Case> cases;
     cases.push_back({"every effect at once", EffectType::EQ, true});
-    for (int i = 0; i < EFFECT_TYPE_COUNT; ++i) {
+    for (int i = 0; i < LEGACY_EFFECT_COUNT; ++i) {
         cases.push_back({effectDisplayName(static_cast<EffectType>(i)),
                          static_cast<EffectType>(i), false});
     }
@@ -6687,8 +6703,12 @@ static void testEffectRackIdentity() {
         configure(oldChain);
         configure(newChain);
 
-        // Same enables on both sides.
-        for (int i = 0; i < EFFECT_TYPE_COUNT; ++i) {
+        // Same enables on both sides. Effects newer than the freeze stay
+        // off throughout, including in the "every effect at once" case -
+        // the legacy chain has no way to switch them on, so leaving them
+        // running would compare a rack that has them against one that
+        // cannot.
+        for (int i = 0; i < LEGACY_EFFECT_COUNT; ++i) {
             const EffectType type = static_cast<EffectType>(i);
             const bool on = testCase.all || (type == testCase.only);
             newChain.setEnabled(type, on);
@@ -12682,6 +12702,538 @@ static void testModulationReachesAudio() {
     }
 }
 
+
+// ============================================================================
+// 74. Pitch and time
+// ============================================================================
+static void testPitchAndTime() {
+    beginTest("Pitch shift, formants and autotune");
+
+    const float rate = 44100.0f;
+
+    // A harmonic tone, because a pure sine tells you nothing about whether
+    // the partials moved together.
+    auto tone = [rate](float frequency, int samples) {
+        std::vector<float> out(static_cast<size_t>(samples));
+        for (int i = 0; i < samples; ++i) {
+            const float t = float(i) / rate;
+            out[static_cast<size_t>(i)] = 0.5f * (
+                std::sin(6.28318530718f * frequency * t) +
+                0.4f * std::sin(6.28318530718f * frequency * 2.0f * t) +
+                0.25f * std::sin(6.28318530718f * frequency * 3.0f * t));
+        }
+        return out;
+    };
+
+    // The strongest partial below 2 kHz, which for these signals is the
+    // fundamental.
+    auto fundamental = [rate](const std::vector<float>& signal, size_t from) {
+        const size_t N = 16384;
+        if (signal.size() < from + N) return 0.0;
+
+        std::vector<float> re(N), im(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                float(i) / float(N - 1)));
+            re[i] = signal[from + i] * w;
+        }
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(re.data(), im.data());
+
+        const double binHz = double(rate) / double(N);
+        size_t loudest = 0;
+        double peak = 0.0;
+        for (size_t bin = 2; bin < size_t(2000.0 / binHz); ++bin) {
+            const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                               double(im[bin]) * im[bin]);
+            if (magnitude > peak) { peak = magnitude; loudest = bin; }
+        }
+        return double(loudest) * binHz;
+    };
+
+    auto runShifter = [&](PitchShifter& shifter, const std::vector<float>& input) {
+        std::vector<float> out(input.size());
+        for (size_t i = 0; i < input.size(); ++i) {
+            out[i] = shifter.process(input[i]);
+        }
+        return out;
+    };
+
+    // ---- Unity is (nearly) the signal back -----------------------------------
+    {
+        PitchShifter shifter;
+        shifter.configure(rate);
+        shifter.semitones = 0.0f;
+
+        const std::vector<float> input = tone(220.0f, 65536);
+        const std::vector<float> output = runShifter(shifter, input);
+
+        const double inHz = fundamental(input, 20000);
+        const double outHz = fundamental(output, 20000);
+        check(std::fabs(inHz - 220.0) < 6.0, "the test tone is at 220 Hz");
+        check(std::fabs(outHz - inHz) < 6.0,
+              "a shift of zero semitones returns the same pitch (" +
+              std::to_string(outHz) + " Hz)");
+
+        double energy = 0.0;
+        for (size_t i = 20000; i < output.size(); ++i) energy += std::fabs(double(output[i]));
+        check(energy > 100.0,
+              "and it is not silence - a phase vocoder whose overlap-add "
+              "constant is wrong cancels itself out entirely");
+    }
+
+    // ---- It shifts by the amount asked for -----------------------------------
+    {
+        struct Case { float semitones; double ratio; };
+        const Case cases[] = {
+            {12.0f, 2.0},      // an octave up
+            {-12.0f, 0.5},     // an octave down
+            {7.0f, 1.4983},    // a fifth
+            {-5.0f, 0.7492},   // a fourth down
+        };
+
+        for (const Case& c : cases) {
+            PitchShifter shifter;
+            shifter.configure(rate);
+            shifter.semitones = c.semitones;
+
+            const std::vector<float> input = tone(220.0f, 65536);
+            const std::vector<float> output = runShifter(shifter, input);
+            const double outHz = fundamental(output, 20000);
+            const double want = 220.0 * c.ratio;
+
+            // Within a couple of analysis bins. A phase vocoder quantises
+            // the shift to bin positions, so exactness is not on offer.
+            if (std::fabs(outHz - want) > want * 0.06) {
+                check(false, "shifting " + std::to_string(c.semitones) +
+                      " semitones gave " + std::to_string(outHz) +
+                      " Hz, wanted about " + std::to_string(want));
+                break;
+            }
+        }
+        check(true,
+              "an octave up, an octave down, a fifth and a fourth all land "
+              "where they should - which requires recovering each bin's TRUE "
+              "frequency from its phase advance, not assuming it sits at the "
+              "bin centre");
+    }
+
+    // ---- Output stays bounded -------------------------------------------------
+    {
+        PitchShifter shifter;
+        shifter.configure(rate);
+        shifter.semitones = 12.0f;
+
+        const std::vector<float> input = tone(110.0f, 131072);
+        const std::vector<float> output = runShifter(shifter, input);
+
+        float peak = 0.0f;
+        bool finite = true;
+        for (float v : output) {
+            if (!std::isfinite(v)) { finite = false; break; }
+            peak = std::max(peak, std::fabs(v));
+        }
+        check(finite, "the shifter stays finite over a long run");
+        check(peak < 4.0f,
+              "and bounded (peak " + std::to_string(peak) + ") - the gain "
+              "depends on the window's overlap constant, and getting that "
+              "wrong shows up here rather than anywhere obvious");
+    }
+
+    // ---- Latency is reported -------------------------------------------------
+    {
+        PitchShifter shifter;
+        shifter.configure(rate);
+        check(shifter.latency() == PhaseVocoder::WINDOW,
+              "the shifter reports a window of latency - it is real and "
+              "unavoidable, since a bin's true frequency needs two frames");
+
+        PitchShiftFx adapter;
+        adapter.target = &shifter;
+        check(adapter.latencySamples() == PhaseVocoder::WINDOW,
+              "and the rack adapter passes it through, which is what a "
+              "delay-compensating host would read");
+    }
+
+    // ---- The formant shifter moves the envelope, NOT the pitch --------------
+    {
+        FormantShifter shifter;
+        shifter.configure(rate);
+        shifter.semitones = 7.0f;
+
+        const std::vector<float> input = tone(220.0f, 65536);
+        std::vector<float> output(input.size());
+        for (size_t i = 0; i < input.size(); ++i) output[i] = shifter.process(input[i]);
+
+        const double outHz = fundamental(output, 20000);
+        check(std::fabs(outHz - 220.0) < 10.0,
+              "shifting formants by a fifth leaves the PITCH at 220 Hz (got " +
+              std::to_string(outHz) + ") - that separation is the whole "
+              "point: a pitch shifter moves both, which is why a voice an "
+              "octave up is a chipmunk rather than a soprano");
+
+        // And it must actually change the timbre, or it is a very expensive
+        // passthrough.
+        FormantShifter flat;
+        flat.configure(rate);
+        flat.semitones = 0.0f;
+        std::vector<float> unshifted(input.size());
+        for (size_t i = 0; i < input.size(); ++i) unshifted[i] = flat.process(input[i]);
+
+        double difference = 0.0;
+        for (size_t i = 30000; i < input.size(); ++i) {
+            difference += std::fabs(double(output[i]) - double(unshifted[i]));
+        }
+        check(difference > 10.0,
+              "while changing the timbre, or it would be an expensive "
+              "passthrough");
+    }
+
+    // ---- Autotune pulls a flat note to the scale ----------------------------
+    {
+        AutoTune tuner;
+        tuner.configure(rate);
+        tuner.strength = 1.0f;
+        tuner.rootNote = 0;
+        tuner.scaleMask = 0x0FFF;      // chromatic
+        tuner.minimumMagnitude = 0.0f;
+
+        // 30 cents flat of A3 (220 Hz). Chromatic autotune should pull it to
+        // 220, since A is the nearest allowed note.
+        const float flatHz = 220.0f * std::pow(2.0f, -0.30f / 12.0f);
+        const std::vector<float> input = tone(flatHz, 131072);
+
+        std::vector<float> output(input.size());
+        for (size_t i = 0; i < input.size(); ++i) output[i] = tuner.process(input[i]);
+
+        const double before = fundamental(input, 40000);
+        const double after = fundamental(output, 60000);
+
+        check(std::fabs(before - double(flatHz)) < 6.0,
+              "the input is flat of A3 (" + std::to_string(before) + " Hz)");
+        check(after > before,
+              "and autotune pulls it upward toward the note (" +
+              std::to_string(after) + " Hz)");
+        check(std::fabs(tuner.correctionSemitones()) > 0.05f,
+              "reporting a real correction rather than none");
+    }
+
+    {
+        // A scale that excludes the sung note moves it further - to the
+        // nearest note the scale DOES allow.
+        AutoTune tuner;
+        tuner.configure(rate);
+        tuner.strength = 1.0f;
+        tuner.rootNote = 0;
+        // C major: no A-sharp, no G-sharp. A is in it.
+        tuner.scaleMask = 0b0000101010110101u;
+        tuner.minimumMagnitude = 0.0f;
+
+        check(tuner.detectedHz() == 0.0f,
+              "nothing is detected before any audio has been fed in");
+
+        const std::vector<float> input = tone(220.0f, 65536);
+        for (float v : input) tuner.process(v);
+        check(tuner.detectedHz() > 100.0f,
+              "and a fundamental is found once there is (" +
+              std::to_string(tuner.detectedHz()) + " Hz)");
+    }
+
+    {
+        // Strength zero corrects nothing, which is what a bypass switch
+        // ought to mean.
+        AutoTune tuner;
+        tuner.configure(rate);
+        tuner.strength = 0.0f;
+        tuner.minimumMagnitude = 0.0f;
+
+        const float flatHz = 220.0f * std::pow(2.0f, -0.4f / 12.0f);
+        const std::vector<float> input = tone(flatHz, 65536);
+        for (float v : input) tuner.process(v);
+
+        check(std::fabs(tuner.correctionSemitones()) < 0.02f,
+              "a strength of zero corrects nothing at all");
+    }
+
+    {
+        // Silence must not be "corrected", or every breath and consonant
+        // produces a warble.
+        AutoTune tuner;
+        tuner.configure(rate);
+        tuner.strength = 1.0f;
+        tuner.minimumMagnitude = 0.05f;
+
+        std::vector<float> quiet(65536, 0.0f);
+        for (float v : quiet) tuner.process(v);
+        check(std::fabs(tuner.correctionSemitones()) < 0.01f,
+              "and silence is left alone rather than being tuned, which "
+              "would warble on every breath");
+    }
+
+    // ---- Time stretch is offline, and changes length ------------------------
+    {
+        const std::vector<float> input = tone(220.0f, 44100);
+
+        const std::vector<float> longer = timeStretch(input, 2.0f);
+        const std::vector<float> shorter = timeStretch(input, 0.5f);
+
+        check(longer.size() > input.size() * 1.8 &&
+              longer.size() < input.size() * 2.2,
+              "stretching by 2 roughly doubles the length (" +
+              std::to_string(longer.size()) + " from " +
+              std::to_string(input.size()) + ")");
+        check(shorter.size() < input.size() * 0.7,
+              "and halving it roughly halves the length");
+
+        check(timeStretch(input, 1.0f).size() == input.size(),
+              "a ratio of 1 is the input untouched");
+
+        // The pitch must NOT change - that is the difference between time
+        // stretching and simply resampling.
+        auto stretchedPitch = [&](const std::vector<float>& signal) {
+            const size_t N = 8192;
+            if (signal.size() < N + 4096) return 0.0;
+            std::vector<float> re(N), im(N, 0.0f);
+            for (size_t i = 0; i < N; ++i) {
+                const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                    float(i) / float(N - 1)));
+                re[i] = signal[4096 + i] * w;
+            }
+            DSP::FFTPlan plan;
+            plan.resize(N);
+            plan.transform(re.data(), im.data());
+            const double binHz = 44100.0 / double(N);
+            size_t loudest = 0;
+            double peak = 0.0;
+            for (size_t bin = 2; bin < N / 2; ++bin) {
+                const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                                   double(im[bin]) * im[bin]);
+                if (magnitude > peak) { peak = magnitude; loudest = bin; }
+            }
+            return double(loudest) * binHz;
+        };
+
+        check(std::fabs(stretchedPitch(longer) - 220.0) < 12.0,
+              "and the stretched audio is still at 220 Hz (" +
+              std::to_string(stretchedPitch(longer)) +
+              ") - resampling would have moved it, which is the whole "
+              "distinction");
+
+        bool finite = true;
+        for (float v : longer) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "the stretched buffer is finite throughout");
+
+        // Hostile input.
+        check(timeStretch({}, 2.0f).empty(), "an empty buffer stretches to empty");
+        check(!timeStretch(input,
+                           std::numeric_limits<float>::quiet_NaN()).empty(),
+              "a NaN ratio returns the input rather than an empty buffer");
+        check(timeStretch(input, 0.0f).size() > 0,
+              "and a ratio of zero is clamped rather than producing an "
+              "output longer than memory");
+    }
+}
+
+// ============================================================================
+// 75. The pitch effects reach the rack
+// ============================================================================
+static void testPitchEffectsInRack() {
+    beginTest("Pitch effects in the insert rack");
+
+    // ---- The rack knows about them ------------------------------------------
+    {
+        check(EFFECT_TYPE_COUNT == CLASSIC_EFFECT_COUNT,
+              "the classic order still lists every effect exactly once");
+
+        EffectType parsed;
+        check(effectTypeFromId("pitchshift", parsed) &&
+              parsed == EffectType::PitchShift,
+              "the pitch shifter has a stable token");
+        check(effectTypeFromId("formantshift", parsed) &&
+              parsed == EffectType::FormantShift, "and so does the formant shifter");
+        check(effectTypeFromId("autotune", parsed) &&
+              parsed == EffectType::AutoTune, "and autotune");
+
+        // Appended, not inserted: every token that existed before must still
+        // resolve to the same enumerator, or existing .ctp racks are
+        // reinterpreted.
+        check(effectTypeFromId("reverb", parsed) && parsed == EffectType::Reverb,
+              "reverb still resolves where it always did");
+        check(static_cast<int>(EffectType::PitchShift) >
+              static_cast<int>(EffectType::Reverb),
+              "and the new effects sit after it, so no existing file's rack "
+              "order is renumbered");
+    }
+
+    // ---- Every type resolves to an adapter -----------------------------------
+    //
+    // EffectsChain::lookup() has a switch with a `default: return nullptr`,
+    // and a type with no arm is skipped by the rack silently - no error, the
+    // effect simply never runs. That is precisely what happened when these
+    // three were added: the vocoder worked perfectly in isolation and did
+    // nothing at all in a channel. This is the structural guard.
+    {
+        auto chainPtr = std::make_unique<EffectsChain>();
+        bool allResolve = true;
+        std::string missing;
+
+        for (int i = 0; i < EFFECT_TYPE_COUNT; ++i) {
+            const EffectType type = static_cast<EffectType>(i);
+            if (chainPtr->effectFor(type) == nullptr) {
+                allResolve = false;
+                missing = effectDisplayName(type);
+                break;
+            }
+        }
+        check(allResolve,
+              "every EffectType resolves to an adapter" +
+              (allResolve ? std::string() : " (" + missing + " does not)"));
+    }
+
+    // ---- Off by default ------------------------------------------------------
+    {
+        const ChannelConfig fresh;
+        check(!fresh.pitchShiftEnabled && !fresh.formantShiftEnabled &&
+              !fresh.autoTuneEnabled,
+              "all three are off on a new channel - none of them is anything "
+              "a 2A03 could do, and the ground rule is that non-chip DSP "
+              "ships silent");
+
+        auto chainPtr = std::make_unique<EffectsChain>();
+        check(!chainPtr->isEnabled(EffectType::PitchShift) &&
+              !chainPtr->isEnabled(EffectType::FormantShift) &&
+              !chainPtr->isEnabled(EffectType::AutoTune),
+              "and off in a fresh chain too");
+    }
+
+    // ---- Enabling one changes the audio -------------------------------------
+    {
+        auto render = [](bool shift) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+            if (shift) {
+                p.channels[0].pitchShiftEnabled = true;
+                p.channels[0].pitchShiftSemitones = 12.0f;
+                p.channels[0].pitchShiftMix = 1.0f;
+            }
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 48;
+            note.startTime = 0.0f;
+            note.duration = 4.0f;
+            note.oscillatorType = OscillatorType::Sawtooth;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512);
+            std::vector<float> collected;
+            for (int b = 0; b < 60; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                if (b >= 20) collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> plain = render(false);
+        const std::vector<float> shifted = render(true);
+
+        double difference = 0.0;
+        const size_t n = std::min(plain.size(), shifted.size());
+        for (size_t i = 0; i < n; ++i) {
+            difference += std::fabs(double(plain[i]) - double(shifted[i]));
+        }
+        check(n > 0 && difference / double(n) > 1e-3,
+              "switching the pitch shifter on changes what comes out of the "
+              "channel");
+
+        bool finite = true;
+        for (float v : shifted) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and the result is finite");
+    }
+
+    // ---- Settings survive a save and load -----------------------------------
+    {
+        Project p;
+        p.channels[3].pitchShiftEnabled = true;
+        p.channels[3].pitchShiftSemitones = -7.5f;
+        p.channels[3].pitchShiftMix = 0.65f;
+        p.channels[3].formantShiftEnabled = true;
+        p.channels[3].formantShiftSemitones = 4.0f;
+        p.channels[3].formantShiftMix = 0.8f;
+        p.channels[3].autoTuneEnabled = true;
+        p.channels[3].autoTuneStrength = 0.9f;
+        p.channels[3].autoTuneRoot = 9;             // A
+        p.channels[3].autoTuneScaleMask = 0b0000101010110101;
+        p.channels[3].autoTuneMix = 0.75f;
+        p.arrangement.push_back(Clip{0, 3, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("pitchfx_roundtrip.ctp");
+        check(saveProject(p, path), "the project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+
+        const ChannelConfig& c = loaded.channels[3];
+        check(c.pitchShiftEnabled &&
+              std::fabs(c.pitchShiftSemitones + 7.5f) < 1e-3f &&
+              std::fabs(c.pitchShiftMix - 0.65f) < 1e-3f,
+              "the pitch shifter's settings survive");
+        check(c.formantShiftEnabled &&
+              std::fabs(c.formantShiftSemitones - 4.0f) < 1e-3f,
+              "the formant shifter's survive");
+        check(c.autoTuneEnabled && c.autoTuneRoot == 9 &&
+              c.autoTuneScaleMask == 0b0000101010110101 &&
+              std::fabs(c.autoTuneStrength - 0.9f) < 1e-3f,
+              "and autotune's, including the scale mask");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation -----------------------------------------------------------
+    {
+        Project p;
+        p.channels[0].pitchShiftSemitones = 500.0f;
+        p.channels[0].formantShiftSemitones = std::numeric_limits<float>::quiet_NaN();
+        p.channels[0].autoTuneStrength = -3.0f;
+        p.channels[0].autoTuneRoot = 47;
+        p.channels[0].autoTuneScaleMask = 0;
+
+        clampProjectToValidRanges(p);
+
+        check(std::fabs(p.channels[0].pitchShiftSemitones) <= 24.0f,
+              "an absurd shift is clamped to two octaves - past that the bin "
+              "mapping folds most of the spectrum off the end of the array");
+        check(std::isfinite(p.channels[0].formantShiftSemitones),
+              "a NaN formant shift is replaced");
+        check(p.channels[0].autoTuneStrength >= 0.0f, "a negative strength is repaired");
+        check(p.channels[0].autoTuneRoot >= 0 && p.channels[0].autoTuneRoot < 12,
+              "an impossible root is repaired");
+        check(p.channels[0].autoTuneScaleMask != 0,
+              "and an empty scale becomes chromatic - a scale allowing no "
+              "notes would correct nothing and read as autotune being broken");
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -12795,6 +13347,8 @@ int main(int argc, char** argv) {
     testGranularAndDrumsReachAudio();
     testModMatrix();
     testModulationReachesAudio();
+    testPitchAndTime();
+    testPitchEffectsInRack();
     testLongRunStability();
 
     std::printf("\n==========================\n");

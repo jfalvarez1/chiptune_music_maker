@@ -221,6 +221,24 @@ inline void clampChannelToValidRanges(ChannelConfig& c, int poolSize = 0) {
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
 
+    // ---- Pitch and time --------------------------------------------------
+    //
+    // Two octaves either way. Past that a phase vocoder is producing an
+    // effect rather than a transposition, and the bin mapping starts folding
+    // most of the spectrum off the end of the array.
+    c.pitchShiftSemitones = sanitizeFloat(c.pitchShiftSemitones, -24.0f, 24.0f, 0.0f);
+    c.pitchShiftMix = sanitizeFloat(c.pitchShiftMix, 0.0f, 1.0f, 1.0f);
+    c.formantShiftSemitones = sanitizeFloat(c.formantShiftSemitones, -24.0f, 24.0f, 0.0f);
+    c.formantShiftMix = sanitizeFloat(c.formantShiftMix, 0.0f, 1.0f, 1.0f);
+    c.autoTuneStrength = sanitizeFloat(c.autoTuneStrength, 0.0f, 1.0f, 0.5f);
+    c.autoTuneMix = sanitizeFloat(c.autoTuneMix, 0.0f, 1.0f, 1.0f);
+    c.autoTuneRoot = sanitizeInt(c.autoTuneRoot, 0, 11, 0);
+    // A scale mask of zero would allow no notes at all, and the search for
+    // the nearest allowed degree would find none and correct nothing - which
+    // reads as autotune being broken rather than as an empty scale.
+    c.autoTuneScaleMask &= 0x0FFF;
+    if (c.autoTuneScaleMask == 0) c.autoTuneScaleMask = 0x0FFF;
+
     // Modulation. A route naming a source or destination this build does
     // not have becomes None rather than wrapping onto a different one.
     clampModMatrix(c.oscillator.modMatrix);

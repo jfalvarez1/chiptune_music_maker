@@ -479,6 +479,24 @@ struct ChannelConfig {
     // A count of 0 means "the classic order" - which is precisely what every
     // project file written before v3 implies, so those migrate by doing
     // nothing at all rather than by a translation that could be wrong.
+    // ---- Pitch and time --------------------------------------------------
+    //
+    // All three are phase-vocoder effects with a window of latency, and none
+    // of them is remotely chip-authentic - so all three are off by default.
+    bool pitchShiftEnabled = false;
+    float pitchShiftSemitones = 0.0f;
+    float pitchShiftMix = 1.0f;
+
+    bool formantShiftEnabled = false;
+    float formantShiftSemitones = 0.0f;
+    float formantShiftMix = 1.0f;
+
+    bool autoTuneEnabled = false;
+    float autoTuneStrength = 0.5f;
+    int autoTuneRoot = 0;              // 0 = C
+    int autoTuneScaleMask = 0x0FFF;    // chromatic
+    float autoTuneMix = 1.0f;
+
     std::array<uint8_t, MAX_FX_SLOTS> fxOrder{};
     int fxSlotCount = 0;
 

@@ -8909,6 +8909,52 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
                     "Off, the clip falls silent once the sample runs out.");
             }
 
+            /*
+             * Fit the clip's audio to its length on the timeline.
+             *
+             * This is where time stretching is actually wanted, and it is
+             * deliberately not an insert effect: an insert gets one sample
+             * per sample, so there is nowhere for the extra time to go. Here
+             * there is - the whole buffer is rewritten.
+             *
+             * It writes a NEW sample rather than editing the existing one,
+             * because the pool is shared and another clip may be using it.
+             */
+            ImGui::SameLine(0, 12);
+            if (ImGui::Button("Fit to Clip")) {
+                const Sample* source = project.samplePool.getSample(selected.sampleId);
+                if (source != nullptr && source->lengthSeconds > 0.01f) {
+                    const float wantSeconds =
+                        project.beatToSeconds(selected.startBeat + selected.lengthBeats) -
+                        project.beatToSeconds(selected.startBeat);
+                    const float ratio = wantSeconds / source->lengthSeconds;
+
+                    Sample stretched = *source;
+                    stretched.audioData = timeStretch(source->audioData, ratio);
+                    stretched.lengthSeconds =
+                        static_cast<float>(stretched.audioData.size()) /
+                        static_cast<float>(std::max(1, stretched.sampleRate));
+                    stretched.name = source->name + " (fitted)";
+                    stretched.filepath.clear();   // no longer what is on disk
+
+                    const int id = project.samplePool.addSample(stretched);
+                    if (id >= 0) {
+                        g_UndoHistory.saveState(project, "Fit Audio to Clip");
+                        selected.sampleId = id;
+                        selected.trimStartSeconds = 0.0f;
+                        selected.trimEndSeconds = 0.0f;
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Stretch the audio to exactly fill this clip, without\n"
+                    "changing its pitch - which is what you want for fitting\n"
+                    "an imported break to the project tempo.\n\n"
+                    "Writes a new sample rather than editing the original,\n"
+                    "since another clip may be using it.");
+            }
+
             const Sample* s = project.samplePool.getSample(selected.sampleId);
             if (s == nullptr) {
                 ImGui::SameLine(0, 12);
@@ -10888,6 +10934,133 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
     }
     
     // Formant Filter (Vocoder Effect)
+    // ========================================================================
+    // Pitch and time
+    //
+    // Three phase-vocoder effects. Each costs a window of latency - about
+    // 23 ms at 44.1 kHz - which is unavoidable rather than sloppy: a bin's
+    // true frequency cannot be known without seeing two frames of it. That
+    // is why the header says so rather than leaving it to be discovered.
+    // ========================================================================
+    if (ImGui::CollapsingHeader("Pitch & Time")) {
+        ImGui::TextDisabled("~23 ms latency each. Studio effects, not for "
+                            "monitoring while you play.");
+
+        if (ImGui::Checkbox("Pitch Shift", &channel.pitchShiftEnabled)) {
+            seq.updateChannelConfigs();
+        }
+        if (channel.pitchShiftEnabled) {
+            if (ImGui::SliderFloat("Shift##ps", &channel.pitchShiftSemitones,
+                                   -24.0f, 24.0f, "%.2f st")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Moves the pitch and the formants together, which is why\n"
+                    "a voice an octave up is a chipmunk. Add Formant Shift\n"
+                    "the other way to keep it sounding like the same singer.");
+            }
+            if (ImGui::SliderFloat("Mix##ps", &channel.pitchShiftMix, 0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Blend against the dry signal. Around 0.5 with a shift\n"
+                    "of +12 or -12 is the classic octave doubler.");
+            }
+        }
+
+        ImGui::Separator();
+        if (ImGui::Checkbox("Formant Shift", &channel.formantShiftEnabled)) {
+            seq.updateChannelConfigs();
+        }
+        if (channel.formantShiftEnabled) {
+            if (ImGui::SliderFloat("Shift##fs", &channel.formantShiftSemitones,
+                                   -24.0f, 24.0f, "%.2f st")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Moves the resonances WITHOUT moving the notes - it\n"
+                    "changes the apparent size of the singer at constant\n"
+                    "pitch. Up is smaller, down is larger.");
+            }
+            if (ImGui::SliderFloat("Mix##fs", &channel.formantShiftMix, 0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+        }
+
+        ImGui::Separator();
+        if (ImGui::Checkbox("Auto-Tune", &channel.autoTuneEnabled)) {
+            seq.updateChannelConfigs();
+        }
+        if (channel.autoTuneEnabled) {
+            if (ImGui::SliderFloat("Retune##at", &channel.autoTuneStrength,
+                                   0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How fast it pulls to the note, and the whole character\n"
+                    "of the effect. Slow leaves the performance intact and\n"
+                    "only nudges the settled pitch. All the way up snaps\n"
+                    "between scale degrees with no glide, which is the sound\n"
+                    "the effect became famous for.");
+            }
+
+            static const char* NOTE_NAMES[12] = {
+                "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+            };
+            ImGui::SetNextItemWidth(80);
+            int root = std::clamp(channel.autoTuneRoot, 0, 11);
+            if (ImGui::BeginCombo("Key##at", NOTE_NAMES[root])) {
+                for (int i = 0; i < 12; ++i) {
+                    const bool selected = (i == root);
+                    if (ImGui::Selectable(NOTE_NAMES[i], selected)) {
+                        channel.autoTuneRoot = i;
+                        seq.updateChannelConfigs();
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            // The common scales as buttons. A twelve-checkbox grid is the
+            // honest representation and nobody wants to click it; these are
+            // what people actually reach for.
+            ImGui::SameLine();
+            struct ScalePreset { const char* name; int mask; };
+            static const ScalePreset SCALES[] = {
+                {"Chromatic", 0b111111111111},
+                {"Major",     0b101010110101},
+                {"Minor",     0b010110101101},
+                {"Penta",     0b001010010101},
+            };
+            for (const ScalePreset& scale : SCALES) {
+                ImGui::SameLine();
+                const bool active = (channel.autoTuneScaleMask == scale.mask);
+                if (active) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,
+                                          ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                }
+                if (ImGui::SmallButton(scale.name)) {
+                    channel.autoTuneScaleMask = scale.mask;
+                    seq.updateChannelConfigs();
+                }
+                if (active) ImGui::PopStyleColor();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Which notes it is allowed to pull to. A tighter scale\n"
+                    "corrects harder, because more sung pitches are wrong.");
+            }
+
+            if (ImGui::SliderFloat("Mix##at", &channel.autoTuneMix, 0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+        }
+    }
+
     if (ImGui::CollapsingHeader("Formant Filter (Vocoder)")) {
         ImGui::Checkbox("Enable Formant", &channel.formantEnabled);
         if (channel.formantEnabled) {
