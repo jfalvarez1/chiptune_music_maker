@@ -7,6 +7,149 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.8.0] - 2026-08-31 - "Check"
+
+Two things this release is about: testing the UI without a window, and
+telling the user when a setting is switched on and doing nothing.
+
+### Added
+
+- **Headless GUI testing.** An ImGui context with a built font atlas, a fake
+  display and no backend at all, driving the real panel code through real
+  frames as part of the headless suite. It catches three things the
+  rendering smoke test cannot: **ID stack imbalance** (a `PushID` without its
+  `PopID` corrupts every widget ID after it, so unrelated controls silently
+  share state - two sliders that move together, a checkbox that toggles its
+  neighbour), **`Begin`/`End` imbalance** (which breaks every panel drawn
+  afterwards, not just the guilty one), and **NaN geometry** (which a GPU
+  discards silently, so a rendering test still sees a plausible frame while
+  a control has vanished).
+- **Click testing.** Real `ImGuiIO` mouse events through real widgets. A
+  click is three frames - move and press, hold, release - because ImGui
+  reports it on release and only if the press landed on the same widget;
+  doing it in fewer silently does nothing, which is how a naive attempt at
+  this passes while testing nothing. Widget positions come from ImGui via a
+  probe frame rather than being guessed, so the tests do not quietly stop
+  hitting anything when a layout moves. Coverage: thirteen panels, seven
+  engine editors, five display sizes from 320x240 to 3840x2160, eight genre
+  focuses, ten themes, and clicks and drags.
+- **Project Check.** Validation asks "could this crash". This asks whether
+  the project is quietly not doing what its owner thinks. Every finding is a
+  setting that is legal, saved, displayed as enabled, and has no effect - or
+  silently cancels something else: a send into a muted bus, an effect on
+  with its mix at zero, a modulation route pointing at an engine the channel
+  is not running, a soloed channel three screens away that is why nothing
+  else is audible. Each says what, why and what to do, and there is a test
+  that none of them is missing a part.
+
+### Changed
+
+- **The genre focus now covers the instrument engines.** Chiptune is shown
+  wavetable and FM - the Game Boy's wave channel and the Mega Drive's
+  YM2612 - and not the multisample sampler, which is the one thing that era
+  could not do. Hip hop is the reverse. Same rule as the rest of the focus
+  system: a filter on attention, never on capability, with the Type menu
+  still listing everything and the hidden count reporting honestly.
+- **The Channel Editor is reorganised.** Its Oscillator section had grown to
+  850 lines holding every engine plus the modulation matrix, with the noise
+  controls stranded 800 lines below the other basic settings because each
+  new engine was appended in front of them. Separate headers now:
+  Oscillator, the engine in use, and Modulation.
+- **`Theme` gained a `Count` sentinel** like every other enum here, so the
+  tests stop carrying a hand-written list of all ten.
+- **`docs/TEST_PLAN.md` gaps list rewritten.** It named a synthetic input
+  harness as "the single biggest remaining gap"; that is closed. What
+  remains is the custom-drawn editors - piano roll, arrangement, pad - which
+  hit-test canvas coordinates inside an `InvisibleButton` rather than using
+  ImGui widgets.
+
+### Fixed
+
+- **Project Check's suggested-fix line was clipped rather than wrapped.**
+  `TextColored` does not wrap, and the fix is the half of a finding the user
+  actually needs.
+
+### Testing
+
+3685 checks across 82 groups, 57 UI rendering cases. Every genre starter
+template and every quick-start kit is asserted to produce no audit findings
+at all - a panel that always has something in it is one everybody learns to
+ignore, at which point it is worse than not having it.
+
+---
+
+## [3.7.0] - 2026-08-31 - "Instruments"
+
+Five configurable instrument engines, a modulation matrix, audio on the
+timeline, and song structure. Everything here defaults to off or absent, so
+an existing project sounds exactly as it did.
+
+### Added
+
+- **Wavetable synthesis.** The editor had existed for a long time and drove
+  nothing - the "Custom" oscillator ran `generateTriangle()`, so you could
+  draw a waveform, watch the preview redraw, save it, reopen it, and hear a
+  triangle. There is a real engine now, band-limited with mipmapped tables
+  so a drawn square played three octaves up is dull rather than full of
+  alias tones descending as the note ascends.
+- **Six-operator FM.** A full routing matrix rather than a numbered list of
+  algorithms, feedback, and a separate envelope per operator - which is
+  where FM's expressiveness actually lives. Modulation is applied to phase,
+  not frequency; feedback averages the last two samples, not the last one.
+  Both are the standard mistakes and both are tested.
+- **Multisample sampler.** Key zones, velocity layers and round-robin, so
+  repeated hits do not comb-filter against each other.
+- **Granular synthesis.** Grain size, density, spray, pitch scatter, reverse
+  chance and window shape. Freeze the read position for a drone that holds
+  one moment without moving its pitch.
+- **Modelled drums.** The editable version of the 21 fixed drum voices, built
+  the way the analogue circuits were: the kick's pitch sweep, the snare's
+  shell-versus-rattle balance, the 808 hat's six inharmonic squares.
+- **Modulation matrix.** Nine sources to nine destinations, per-voice LFOs
+  and a second envelope so held notes do not wobble in lockstep, plus
+  per-channel polyphony limits and pitch-bend range.
+- **Audio clips on the timeline.** Recorded or imported audio on a channel,
+  running through that channel's volume, pan, effects and sends like
+  anything else.
+- **Tempo and time-signature changes**, markers and regions. Beat-to-seconds
+  is a piecewise integral now; bars are counted through the meter map rather
+  than found with a modulo.
+- **Voice to notes.** Sing or beatbox and get notes, live or from a recorded
+  take. The capture callback fills a lock-free ring and does nothing else.
+- **Pitch shift, formant shift and autotune** - a phase vocoder - plus an
+  offline time stretch wired to audio clips as "Fit to Clip".
+- **Starting points for every engine**, since picking one otherwise gave you
+  a single sound and sixty-odd parameters.
+
+### Fixed
+
+Four bugs, all older than the work that found them:
+
+- **Sample playback was a semitone and a half sharp.** The read step never
+  accounted for the 48 kHz pool against the 44.1 kHz engine, so every sample
+  instrument was out of tune with the synths.
+- **The per-channel filter cutoff and resonance did nothing.** `process()`
+  reads cached coefficients and only `setCutoff()` recomputed them, so the
+  filter ran at its 1000 Hz default wherever the slider was.
+- **The filter went unstable above about 7 kHz** once that was fixed,
+  producing NaN - silence for the rest of the session. It had never
+  surfaced because the first bug pinned the cutoff.
+- **MIDI export wrote the wrong time signature**, `x/2` rather than `x/4`, so
+  any DAW importing one saw bars of twice the intended length.
+- **The loop ruler was unreachable** after the channel count went to 32: it
+  was positioned below the last lane, roughly 960px down.
+- **The Channel Editor's type dropdown selected the wrong instrument.** Six
+  names indexed straight into an enum whose sixth entry is `Supersaw`, not
+  `Custom`.
+- **Five engines were invisible in the Sound Palette**, which drew types 0 to
+  64 and stopped.
+
+### Testing
+
+3604 checks, 55 UI cases at the close of this release.
+
+---
+
 ## [3.6.0] - 2026-08-30 - "Welcome"
 
 The research pass was unambiguous about how projects die: a blank page nobody

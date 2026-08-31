@@ -23,8 +23,8 @@ change rather than going stale.
 ### Piano roll
 
 Draw notes directly, or place whole chords and drum patterns from the sound
-palette. Sixty-five instruments across oscillators, synths, drums and genre
-kits.
+palette. Sixty-seven instruments across oscillators, synths, drums and genre
+kits, plus five configurable engines of their own.
 
 ![Piano roll](docs/images/piano-roll.png)
 
@@ -99,6 +99,74 @@ MPC-style pads for playing drums and auditioning sounds live.
 | Parameter automation | MIDI input |
 |---|---|
 | ![Automation](docs/images/automation.png) | ![MIDI input](docs/images/midi-input.png) |
+
+### Instrument engines
+
+Five engines with editors of their own, found under **Engines** in the sound
+palette. Each opens with a short row of starting points rather than sixty
+parameters and no idea where to begin.
+
+| Six-operator FM | Multisample sampler |
+|---|---|
+| ![FM](docs/images/engine-fm.png) | ![Sampler](docs/images/engine-sampler.png) |
+
+| Granular | Modelled drums |
+|---|---|
+| ![Granular](docs/images/engine-granular.png) | ![Drum model](docs/images/engine-drums.png) |
+
+The palette section they live in, and what a genre focus does to it —
+chiptune is shown the wavetable and FM engines, and not the sampler.
+
+![Engines in the palette](docs/images/palette-engines.png)
+
+### Modulation
+
+Nine sources to nine destinations, with per-voice LFOs so held notes do not
+wobble in lockstep. This is what makes the engines worth having: a wavetable
+whose morph never moves is a sampled waveform.
+
+![Modulation matrix](docs/images/mod-matrix.png)
+
+### Audio on the timeline
+
+Recorded or imported audio on a channel, drawn as its own waveform and
+running through that channel's volume, pan, effects and sends like anything
+else. A clip whose file has moved keeps its place and its edits and says so.
+
+![Audio clips](docs/images/audio-clips.png)
+
+### Song structure
+
+Tempo and time-signature changes, markers and regions. Bar lines follow the
+meter map rather than a modulo, and Snap-to-Bar walks the same function the
+ruler draws.
+
+![Song structure](docs/images/song-structure.png)
+
+### Voice to notes
+
+Sing a line or beatbox a groove and get notes — live as you make them, or
+from a recorded take. The capture callback fills a lock-free ring and does
+nothing else; every FFT happens off the audio thread.
+
+![Voice to notes](docs/images/voice-to-notes.png)
+
+### Pitch and time
+
+A phase vocoder: pitch shift, formant shift and autotune. Formant shifting
+moves the resonances *without* moving the notes, which is the difference
+between transposing a voice and turning it into a chipmunk.
+
+![Pitch and time](docs/images/pitch-time.png)
+
+### Project Check
+
+Settings that are switched on and doing nothing, or silently cancelling
+something else — a send into a muted bus, an effect with its mix at zero, a
+soloed channel that is why nothing else is audible. It reports and never
+changes anything.
+
+![Project Check](docs/images/project-check.png)
 
 ### Workspaces
 

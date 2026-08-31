@@ -66,6 +66,26 @@ $shots = @(
     @{ name = "tools-euclidean"; args = "--workspace sounddesign --theme stock --demo" }
 
     # --- Workspaces -------------------------------------------------------
+    # The instrument engines. Each only shows its controls for its own
+    # oscillator type, so each needs its own shot.
+    @{ name = "engine-fm";       args = "--demo --theme stock --instrument fm --focus `"Channel Editor`"" }
+    @{ name = "engine-sampler";  args = "--demo --theme stock --instrument sampler --focus `"Channel Editor`"" }
+    @{ name = "engine-granular"; args = "--demo --theme stock --instrument granular --focus `"Channel Editor`"" }
+    @{ name = "engine-drums";    args = "--demo --theme stock --instrument drummodel --focus `"Channel Editor`"" }
+    @{ name = "mod-matrix";      args = "--demo --theme stock --instrument modmatrix --focus `"Channel Editor`"" }
+    @{ name = "pitch-time";      args = "--demo --theme stock --instrument pitchtime --focus `"Channel Editor`"" }
+
+    # The timeline: audio clips drawn as waveforms, and the structure strip.
+    @{ name = "audio-clips";     args = "--demo --theme cyberpunk --view arrangement --audio-clip" }
+    @{ name = "song-structure";  args = "--demo --theme cyberpunk --view arrangement --structure --loop 8 24" }
+
+    # Voice to notes, and the check panel with real findings in it.
+    @{ name = "voice-to-notes";  args = "--demo --theme stock --focus `"Voice to Notes`"" }
+    @{ name = "project-check";   args = "--demo --theme stock --conflicts --focus `"Project Check`"" }
+
+    # The Engines row in the palette, which is where they are found.
+    @{ name = "palette-engines"; args = "--demo --theme stock --instrument fm --focus `"Sound Palette`"" }
+
     @{ name = "workspace-sound"; args = "--workspace sounddesign --theme stock --demo --show macros --show wavetable" }
     @{ name = "workspace-mix";   args = "--workspace mix --theme stock --demo --show spectrum --playing" }
 
