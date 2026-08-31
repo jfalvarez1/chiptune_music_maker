@@ -44,6 +44,7 @@
 #include "Sampler.h"
 #include "GranularSynth.h"
 #include "DrumMachine.h"
+#include "ModMatrix.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -11914,6 +11915,773 @@ static void testGranularAndDrumsReachAudio() {
     }
 }
 
+
+// ============================================================================
+// 72. The modulation matrix
+// ============================================================================
+static void testModMatrix() {
+    beginTest("Modulation matrix");
+
+    const float rate = 44100.0f;
+    PerformanceState performance;
+
+    // ---- Nothing routed is nothing applied ---------------------------------
+    {
+        ModMatrix matrix;
+        check(!matrix.anyActive(),
+              "a fresh matrix has no active routes, so the per-sample walk "
+              "is skipped entirely");
+
+        ModState state;
+        state.start(matrix, 1u);
+        const ModValues values = mod::evaluate(matrix, state, 60, 1.0f,
+                                               performance, rate, false);
+        check(values.pitchSemitones == 0.0f && values.level == 0.0f,
+              "and it resolves to no offset at all");
+    }
+
+    // ---- An LFO actually oscillates ----------------------------------------
+    {
+        ModMatrix matrix;
+        matrix.lfos[0].shape = LFOShape::Sine;
+        matrix.lfos[0].rateHz = 4.0f;
+        matrix.addRoute(ModRoute{ModSource::LFO1, ModDestination::Pitch, 0.5f, true});
+        check(matrix.anyActive(), "a route makes the matrix active");
+
+        ModState state;
+        state.start(matrix, 1u);
+
+        float lowest = 1e9f, highest = -1e9f;
+        for (int i = 0; i < static_cast<int>(rate); ++i) {
+            const ModValues values = mod::evaluate(matrix, state, 60, 1.0f,
+                                                   performance, rate, false);
+            lowest = std::min(lowest, values.pitchSemitones);
+            highest = std::max(highest, values.pitchSemitones);
+        }
+        check(highest > 5.0f && lowest < -5.0f,
+              "an LFO on pitch swings both ways (" + std::to_string(lowest) +
+              " .. " + std::to_string(highest) + " semitones)");
+        check(std::fabs(highest + lowest) < 2.0f,
+              "and symmetrically about zero, so it is a vibrato rather than "
+              "a transpose");
+    }
+
+    // ---- Each shape is a different shape -----------------------------------
+    {
+        auto sampleShape = [&](LFOShape shape) {
+            ModMatrix matrix;
+            matrix.lfos[0].shape = shape;
+            matrix.lfos[0].rateHz = 1.0f;
+            matrix.addRoute(ModRoute{ModSource::LFO1, ModDestination::Level, 1.0f, true});
+
+            ModState state;
+            state.start(matrix, 7u);
+            std::vector<float> trace;
+            // A little over one second at 1 Hz. Exactly one second wraps the
+            // phase on the sample AFTER the last one, so the saw's reset
+            // falls outside the trace and the test sees no jump at all.
+            for (int i = 0; i < static_cast<int>(rate) + 200; ++i) {
+                trace.push_back(mod::evaluate(matrix, state, 60, 1.0f,
+                                              performance, rate, false).level);
+            }
+            return trace;
+        };
+
+        const std::vector<float> sine = sampleShape(LFOShape::Sine);
+        const std::vector<float> square = sampleShape(LFOShape::Square);
+        const std::vector<float> saw = sampleShape(LFOShape::Saw);
+
+        // A square spends all its time at the extremes; a sine does not.
+        auto extremeFraction = [](const std::vector<float>& trace) {
+            int extreme = 0;
+            for (float v : trace) if (std::fabs(v) > 0.9f) ++extreme;
+            return double(extreme) / double(trace.size());
+        };
+        check(extremeFraction(square) > 0.9,
+              "a square LFO sits at its extremes");
+        check(extremeFraction(sine) < 0.4,
+              "and a sine does not");
+
+        // A saw rises steadily then jumps back exactly once per cycle.
+        int jumps = 0;
+        for (size_t i = 1; i < saw.size(); ++i) {
+            if (saw[i] < saw[i - 1] - 1.0f) ++jumps;
+        }
+        check(jumps == 1, "and a saw resets once per second at 1 Hz (got " +
+              std::to_string(jumps) + ")");
+    }
+
+    // ---- Sample and hold changes once per cycle ----------------------------
+    {
+        ModMatrix matrix;
+        matrix.lfos[0].shape = LFOShape::SampleHold;
+        matrix.lfos[0].rateHz = 8.0f;
+        matrix.addRoute(ModRoute{ModSource::LFO1, ModDestination::Level, 1.0f, true});
+
+        ModState state;
+        state.start(matrix, 42u);
+
+        int changes = 0;
+        float previous = 1e9f;
+        for (int i = 0; i < static_cast<int>(rate); ++i) {
+            const float value = mod::evaluate(matrix, state, 60, 1.0f,
+                                              performance, rate, false).level;
+            if (i > 0 && std::fabs(value - previous) > 1e-6f) ++changes;
+            previous = value;
+        }
+        check(changes >= 6 && changes <= 10,
+              "sample and hold picks a new value about eight times a second "
+              "at 8 Hz (got " + std::to_string(changes) + ") - it is held "
+              "flat in between, which is the whole shape");
+    }
+
+    // ---- LFO delay and fade -------------------------------------------------
+    {
+        ModMatrix matrix;
+        matrix.lfos[0].shape = LFOShape::Sine;
+        matrix.lfos[0].rateHz = 6.0f;
+        matrix.lfos[0].delaySeconds = 0.3f;
+        matrix.lfos[0].fadeSeconds = 0.3f;
+        matrix.addRoute(ModRoute{ModSource::LFO1, ModDestination::Pitch, 1.0f, true});
+
+        ModState state;
+        state.start(matrix, 3u);
+
+        float earlyMax = 0.0f, lateMax = 0.0f;
+        for (int i = 0; i < static_cast<int>(rate); ++i) {
+            const float value = std::fabs(
+                mod::evaluate(matrix, state, 60, 1.0f, performance, rate, false)
+                    .pitchSemitones);
+            if (i < static_cast<int>(rate * 0.25f)) earlyMax = std::max(earlyMax, value);
+            if (i > static_cast<int>(rate * 0.8f)) lateMax = std::max(lateMax, value);
+        }
+        check(earlyMax < 0.01f,
+              "the LFO is silent during its delay - vibrato that starts the "
+              "instant a note does sounds mechanical, and no player does it");
+        check(lateMax > 10.0f, "and at full depth once it has faded in");
+    }
+
+    // ---- The second envelope releases ---------------------------------------
+    {
+        ModMatrix matrix;
+        matrix.env2Attack = 0.0f;
+        matrix.env2Decay = 0.0f;
+        matrix.env2Sustain = 1.0f;
+        matrix.env2Release = 0.2f;
+        matrix.addRoute(ModRoute{ModSource::Envelope2, ModDestination::Level, 1.0f, true});
+
+        ModState state;
+        state.start(matrix, 5u);
+        for (int i = 0; i < 4410; ++i) {
+            mod::evaluate(matrix, state, 60, 1.0f, performance, rate, false);
+        }
+        const float held = mod::evaluate(matrix, state, 60, 1.0f, performance,
+                                         rate, false).level;
+        check(held > 0.5f, "the second envelope holds its sustain");
+
+        state.release();
+        for (int i = 0; i < static_cast<int>(rate * 0.5f); ++i) {
+            mod::evaluate(matrix, state, 60, 1.0f, performance, rate, false);
+        }
+        const float after = mod::evaluate(matrix, state, 60, 1.0f, performance,
+                                          rate, false).level;
+        check(after < 0.05f,
+              "and falls when released - without that, a filter it was "
+              "opening never closes after the key comes up");
+    }
+
+    // ---- The static sources -------------------------------------------------
+    {
+        ModMatrix matrix;
+        matrix.addRoute(ModRoute{ModSource::Velocity, ModDestination::Level, 1.0f, true});
+        ModState soft, hard;
+        soft.start(matrix, 1u);
+        hard.start(matrix, 1u);
+
+        const float atSoft = mod::evaluate(matrix, soft, 60, 0.2f, performance,
+                                           rate, false).level;
+        const float atHard = mod::evaluate(matrix, hard, 60, 1.0f, performance,
+                                           rate, false).level;
+        check(atHard > atSoft, "velocity reaches its destination");
+    }
+
+    {
+        ModMatrix matrix;
+        matrix.addRoute(ModRoute{ModSource::KeyTrack, ModDestination::FilterCutoff,
+                                 1.0f, true});
+        ModState low, high;
+        low.start(matrix, 1u);
+        high.start(matrix, 1u);
+
+        const float atLow = mod::evaluate(matrix, low, 24, 1.0f, performance,
+                                          rate, true).filterCutoff;
+        const float atHigh = mod::evaluate(matrix, high, 96, 1.0f, performance,
+                                           rate, true).filterCutoff;
+        check(atHigh > atLow,
+              "key tracking opens the filter further up the keyboard, which "
+              "is what stops high notes sounding dull under a fixed cutoff");
+    }
+
+    {
+        ModMatrix matrix;
+        matrix.addRoute(ModRoute{ModSource::ModWheel, ModDestination::FMBrightness,
+                                 1.0f, true});
+        ModState state;
+        state.start(matrix, 1u);
+
+        PerformanceState down, up;
+        down.modWheel = 0.0f;
+        up.modWheel = 1.0f;
+
+        const float atDown = mod::evaluate(matrix, state, 60, 1.0f, down, rate,
+                                           false).fmBrightness;
+        const float atUp = mod::evaluate(matrix, state, 60, 1.0f, up, rate,
+                                         false).fmBrightness;
+        check(atUp > atDown, "the mod wheel reaches its destination");
+    }
+
+    // ---- Per-note randomness is per note ------------------------------------
+    {
+        ModMatrix matrix;
+        matrix.addRoute(ModRoute{ModSource::RandomPerNote, ModDestination::Pitch,
+                                 1.0f, true});
+
+        ModState a, b;
+        a.start(matrix, 111u);
+        b.start(matrix, 222u);
+
+        const float first = mod::evaluate(matrix, a, 60, 1.0f, performance,
+                                          rate, false).pitchSemitones;
+        const float second = mod::evaluate(matrix, b, 60, 1.0f, performance,
+                                           rate, false).pitchSemitones;
+        check(std::fabs(first - second) > 1e-4f,
+              "two notes get different random values");
+
+        // And it is HELD for the life of the note rather than re-rolled.
+        float held = first;
+        for (int i = 0; i < 1000; ++i) {
+            held = mod::evaluate(matrix, a, 60, 1.0f, performance, rate,
+                                 false).pitchSemitones;
+        }
+        check(std::fabs(held - first) < 1e-4f,
+              "and each one holds for the life of its note rather than "
+              "re-rolling every sample, which would be noise, not variation");
+    }
+
+    // ---- Routes sum ----------------------------------------------------------
+    {
+        ModMatrix matrix;
+        matrix.lfos[0].rateHz = 0.0001f;      // effectively static
+        matrix.addRoute(ModRoute{ModSource::Velocity, ModDestination::Level, 0.3f, true});
+        matrix.addRoute(ModRoute{ModSource::ModWheel, ModDestination::Level, 0.4f, true});
+
+        PerformanceState wheel;
+        wheel.modWheel = 1.0f;
+
+        ModState state;
+        state.start(matrix, 1u);
+        const float combined = mod::evaluate(matrix, state, 60, 1.0f, wheel,
+                                             rate, false).level;
+        check(std::fabs(combined - 0.7f) < 0.01f,
+              "two routes to one destination add (got " +
+              std::to_string(combined) + ", want 0.7)");
+    }
+
+    // ---- A disabled route does nothing ---------------------------------------
+    {
+        ModMatrix matrix;
+        ModRoute route{ModSource::Velocity, ModDestination::Level, 1.0f, false};
+        matrix.addRoute(route);
+        check(!matrix.anyActive(), "a disabled route leaves the matrix inactive");
+
+        matrix.routes[0].enabled = true;
+        check(matrix.anyActive(), "and enabling it turns the matrix on");
+    }
+
+    // ---- Scope separation ----------------------------------------------------
+    {
+        ModMatrix matrix;
+        matrix.addRoute(ModRoute{ModSource::Velocity, ModDestination::Pitch, 1.0f, true});
+        matrix.addRoute(ModRoute{ModSource::Velocity, ModDestination::FilterCutoff,
+                                 1.0f, true});
+
+        ModState voiceState, channelState;
+        voiceState.start(matrix, 1u);
+        channelState.start(matrix, 1u);
+
+        const ModValues voice = mod::evaluate(matrix, voiceState, 60, 1.0f,
+                                              performance, rate, false);
+        const ModValues channel = mod::evaluate(matrix, channelState, 60, 1.0f,
+                                                performance, rate, true);
+
+        check(voice.pitchSemitones != 0.0f && voice.filterCutoff == 0.0f,
+              "the per-voice pass fills only per-voice destinations");
+        check(channel.filterCutoff != 0.0f && channel.pitchSemitones == 0.0f,
+              "and the channel pass only channel ones - they are applied in "
+              "different places, so they cannot share a result");
+
+        check(isChannelDestination(ModDestination::FilterCutoff),
+              "the filter is a channel destination");
+        check(!isChannelDestination(ModDestination::Pitch),
+              "and pitch is not");
+    }
+
+    // ---- Validation ----------------------------------------------------------
+    {
+        ModMatrix hostile;
+        hostile.routeCount = 900;
+        hostile.routes[0].source = static_cast<ModSource>(77);
+        hostile.routes[0].destination = static_cast<ModDestination>(88);
+        hostile.routes[0].amount = std::numeric_limits<float>::quiet_NaN();
+        hostile.lfos[0].rateHz = 5000.0f;
+        hostile.lfos[1].shape = static_cast<LFOShape>(40);
+        hostile.polyphonyLimit = -5;
+        hostile.pitchBendSemitones = 1e9f;
+
+        clampModMatrix(hostile);
+
+        check(hostile.routeCount <= ModMatrix::MAX_ROUTES,
+              "an impossible route count is bounded");
+        check(hostile.routes[0].source == ModSource::None &&
+              hostile.routes[0].destination == ModDestination::None,
+              "a source or destination this build does not have becomes None "
+              "rather than wrapping onto a different one, which would "
+              "silently route a file's LFO somewhere else entirely");
+        check(std::isfinite(hostile.routes[0].amount), "a NaN amount is replaced");
+        check(hostile.lfos[0].rateHz <= 40.0f,
+              "an audio-rate LFO is bounded - above about 40 Hz it is an "
+              "oscillator, which is a real sound but not what these "
+              "destinations expect");
+        check(hostile.lfos[1].shape < LFOShape::Count, "an unknown shape falls back");
+        check(hostile.polyphonyLimit >= 0, "a negative polyphony limit is repaired");
+        check(hostile.pitchBendSemitones <= 48.0f, "and an absurd bend range is bounded");
+    }
+}
+
+// ============================================================================
+// 73. Modulation reaches the audio
+// ============================================================================
+static void testModulationReachesAudio() {
+    beginTest("Modulation reaches the audio");
+
+    // Render a note on a channel and hand back the samples. `setup` gets to
+    // configure the channel however the case needs.
+    auto render = [](void (*setup)(Project&), int blocks) {
+        Project p;
+        p.bpm = 120.0f;
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+        p.masterVolume = 0.7f;
+
+        p.patterns.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = 60;
+        note.startTime = 0.0f;
+        note.duration = 4.0f;
+        pattern.notes.push_back(note);
+        p.patterns.push_back(pattern);
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        p.channels[0].volume = 0.8f;
+        p.channels[0].pan = 0.0f;
+        setup(p);
+        p.patterns[0].notes[0].oscillatorType = p.channels[0].oscillator.type;
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&p);
+        seqPtr->updateChannelConfigs();
+        seqPtr->updateMasterEffects();
+        seqPtr->play();
+
+        std::vector<float> l(512), r(512);
+        std::vector<float> collected;
+        for (int b = 0; b < blocks; ++b) {
+            seqPtr->process(l.data(), r.data(), 512);
+            if (b >= 4) collected.insert(collected.end(), l.begin(), l.end());
+        }
+        return collected;
+    };
+
+    auto meanAbsDifference = [](const std::vector<float>& a,
+                                const std::vector<float>& b) {
+        const size_t n = std::min(a.size(), b.size());
+        if (n == 0) return 0.0;
+        double sum = 0.0;
+        for (size_t i = 0; i < n; ++i) sum += std::fabs(double(a[i]) - double(b[i]));
+        return sum / double(n);
+    };
+
+    // ---- Pitch ---------------------------------------------------------------
+    {
+        const std::vector<float> plain = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Pulse;
+        }, 40);
+
+        const std::vector<float> wobbled = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Pulse;
+            ModMatrix& m = p.channels[0].oscillator.modMatrix;
+            m.lfos[0].rateHz = 6.0f;
+            m.addRoute(ModRoute{ModSource::LFO1, ModDestination::Pitch, 0.2f, true});
+        }, 40);
+
+        check(meanAbsDifference(plain, wobbled) > 1e-3,
+              "an LFO routed to pitch changes the audio - a matrix that "
+              "computes offsets nothing reads is the bug this codebase keeps "
+              "finding");
+    }
+
+    // ---- Level ---------------------------------------------------------------
+    {
+        const std::vector<float> plain = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Pulse;
+        }, 40);
+
+        const std::vector<float> tremolo = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Pulse;
+            ModMatrix& m = p.channels[0].oscillator.modMatrix;
+            m.lfos[0].rateHz = 5.0f;
+            m.addRoute(ModRoute{ModSource::LFO1, ModDestination::Level, 0.6f, true});
+        }, 40);
+
+        check(meanAbsDifference(plain, tremolo) > 1e-3,
+              "and so does one routed to level");
+    }
+
+    // ---- Wavetable morph ------------------------------------------------------
+    {
+        const std::vector<float> still = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Custom;
+        }, 40);
+
+        const std::vector<float> moving = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Custom;
+            ModMatrix& m = p.channels[0].oscillator.modMatrix;
+            m.lfos[0].rateHz = 3.0f;
+            m.addRoute(ModRoute{ModSource::LFO1, ModDestination::WavetableMorph,
+                                0.8f, true});
+        }, 40);
+
+        check(meanAbsDifference(still, moving) > 1e-3,
+              "morphing a wavetable from an LFO changes the audio - a table "
+              "that does not move is a sampled waveform");
+    }
+
+    // ---- FM brightness --------------------------------------------------------
+    {
+        const std::vector<float> fixed = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::FMSynth;
+        }, 40);
+
+        const std::vector<float> swept = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::FMSynth;
+            ModMatrix& m = p.channels[0].oscillator.modMatrix;
+            m.lfos[0].rateHz = 2.0f;
+            m.addRoute(ModRoute{ModSource::LFO1, ModDestination::FMBrightness,
+                                0.7f, true});
+        }, 40);
+
+        check(meanAbsDifference(fixed, swept) > 1e-3,
+              "and sweeping an FM patch's index changes it - a fixed index "
+              "is one timbre");
+    }
+
+    // ---- The filter cutoff control itself ------------------------------------
+    //
+    // This is a regression test for a bug the modulation work uncovered, not
+    // for the modulation. Filter::process() reads cached coefficients that
+    // only setCutoff() recomputes, and applyEffectsConfig was assigning the
+    // public field directly - so the per-channel cutoff and resonance
+    // controls had never moved the sound at all. The filter ran at whatever
+    // setSampleRate last computed, which is the 1000 Hz default.
+    {
+        const std::vector<float> open = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].filterEnabled = true;
+            p.channels[0].filterType = 0;          // low pass
+            p.channels[0].filterCutoff = 16000.0f;
+        }, 40);
+
+        const std::vector<float> shut = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].filterEnabled = true;
+            p.channels[0].filterType = 0;
+            p.channels[0].filterCutoff = 200.0f;
+        }, 40);
+
+        double openEnergy = 0.0, shutEnergy = 0.0;
+        for (float v : open) openEnergy += double(v) * v;
+        for (float v : shut) shutEnergy += double(v) * v;
+
+        check(openEnergy > 1e-4, "a filtered sawtooth sounds");
+        check(shutEnergy < openEnergy * 0.6,
+              "and closing the cutoff to 200 Hz makes it quieter than at "
+              "16 kHz (" + std::to_string(shutEnergy) + " vs " +
+              std::to_string(openEnergy) + ") - it did not before, because "
+              "the coefficients were cached and nothing recomputed them");
+    }
+
+    // ---- The filter is stable across its whole range -------------------------
+    //
+    // Fixing the stale coefficients immediately exposed a worse bug: a
+    // Chamberlin state-variable filter diverges once 2*sin(pi*fc/fs) passes
+    // 1, which is around fs/6 - about 7 kHz at 44.1. A 16 kHz cutoff went to
+    // NaN in a few dozen samples, and a NaN in a channel's insert rack is
+    // silence from then on. It had never shown because the filter was pinned
+    // at its 1000 Hz default.
+    {
+        bool allFinite = true;
+        float worstPeak = 0.0f;
+        float failedAt = 0.0f;
+
+        for (float cutoff : {20.0f, 200.0f, 1000.0f, 5000.0f, 7000.0f,
+                             12000.0f, 16000.0f, 20000.0f, 40000.0f}) {
+            for (float resonance : {0.0f, 0.5f, 0.99f}) {
+                Filter filter;
+                filter.setSampleRate(44100.0f);
+                filter.type = FilterType::LowPass;
+                filter.cutoff = cutoff;
+                filter.resonance = resonance;
+                filter.refresh();
+
+                // A saw, which has energy everywhere and is the least
+                // forgiving input a resonant filter can be given.
+                float phase = 0.0f;
+                for (int i = 0; i < 8000; ++i) {
+                    phase += 220.0f / 44100.0f;
+                    if (phase >= 1.0f) phase -= 1.0f;
+                    const float out = filter.process(2.0f * phase - 1.0f);
+                    if (!std::isfinite(out)) {
+                        allFinite = false;
+                        failedAt = cutoff;
+                        break;
+                    }
+                    worstPeak = std::max(worstPeak, std::fabs(out));
+                }
+                if (!allFinite) break;
+            }
+            if (!allFinite) break;
+        }
+
+        check(allFinite,
+              "the filter is finite at every cutoff from 20 Hz to past "
+              "Nyquist and at full resonance" +
+              (allFinite ? std::string()
+                         : " (diverged at " + std::to_string(failedAt) + " Hz)"));
+        check(worstPeak < 50.0f,
+              "and bounded (peak " + std::to_string(worstPeak) + ")");
+    }
+
+    // ---- Filter cutoff, the channel-scope path -------------------------------
+    {
+        const std::vector<float> fixed = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].filterEnabled = true;
+            p.channels[0].filterCutoff = 1200.0f;
+        }, 40);
+
+        const std::vector<float> swept = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].filterEnabled = true;
+            p.channels[0].filterCutoff = 1200.0f;
+            ModMatrix& m = p.channels[0].oscillator.modMatrix;
+            m.lfos[0].rateHz = 3.0f;
+            m.addRoute(ModRoute{ModSource::LFO1, ModDestination::FilterCutoff,
+                                0.5f, true});
+        }, 40);
+
+        check(meanAbsDifference(fixed, swept) > 1e-3,
+              "and a filter sweep reaches the audio through the channel-scope "
+              "pass, which is separate because the filter runs on the summed "
+              "mix rather than per voice");
+    }
+
+    // ---- Nothing runs away ----------------------------------------------------
+    {
+        // The channel-scope cutoff is applied as an offset from the
+        // CONFIGURED value. Accumulating it instead would compound every
+        // sample and open the filter fully within milliseconds - so this
+        // renders a long stretch and checks the sound is still there and
+        // still bounded.
+        const std::vector<float> audio = render([](Project& p) {
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].filterEnabled = true;
+            p.channels[0].filterCutoff = 900.0f;
+            ModMatrix& m = p.channels[0].oscillator.modMatrix;
+            m.lfos[0].rateHz = 0.5f;
+            m.addRoute(ModRoute{ModSource::LFO1, ModDestination::FilterCutoff,
+                                1.0f, true});
+        }, 200);
+
+        float peak = 0.0f;
+        bool finite = true;
+        for (float v : audio) {
+            if (!std::isfinite(v)) { finite = false; break; }
+            peak = std::max(peak, std::fabs(v));
+        }
+        check(finite, "a long filter sweep stays finite");
+        check(peak < 4.0f,
+              "and bounded (peak " + std::to_string(peak) + ") - the offset "
+              "is held against the configured cutoff rather than accumulated, "
+              "which would run the filter away in milliseconds");
+    }
+
+    // ---- The polyphony limit --------------------------------------------------
+    {
+        auto renderChord = [](int limit) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+            p.channels[0].oscillator.modMatrix.polyphonyLimit = limit;
+
+            p.patterns.clear();
+            Pattern pattern;
+            for (int i = 0; i < 4; ++i) {
+                Note note;
+                note.pitch = 60 + i * 4;
+                note.startTime = 0.0f;
+                note.duration = 4.0f;
+                note.oscillatorType = OscillatorType::Sawtooth;
+                pattern.notes.push_back(note);
+            }
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512);
+            double energy = 0.0;
+            for (int b = 0; b < 30; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                if (b >= 6) for (float v : l) energy += double(v) * v;
+            }
+            return energy;
+        };
+
+        const double full = renderChord(0);
+        const double mono = renderChord(1);
+
+        check(full > 1e-4 && mono > 1e-4, "both play something");
+        check(mono < full * 0.85,
+              "a four-note chord on a monophonic channel is quieter than on a "
+              "polyphonic one (" + std::to_string(mono) + " vs " +
+              std::to_string(full) + ") - a mono bass that steals its own "
+              "voice is a different instrument from one that stacks");
+    }
+
+    // ---- Persistence -----------------------------------------------------------
+    {
+        Project p;
+        ModMatrix& m = p.channels[2].oscillator.modMatrix;
+        m.polyphonyLimit = 4;
+        m.pitchBendSemitones = 7.0f;
+        m.env2Attack = 0.02f;
+        m.env2Decay = 0.4f;
+        m.env2Sustain = 0.35f;
+        m.env2Release = 0.6f;
+        m.lfos[0].shape = LFOShape::SampleHold;
+        m.lfos[0].rateHz = 9.5f;
+        m.lfos[0].delaySeconds = 0.15f;
+        m.lfos[0].fadeSeconds = 0.25f;
+        m.lfos[0].retrigger = false;
+        m.lfos[2].shape = LFOShape::Square;
+        m.addRoute(ModRoute{ModSource::LFO1, ModDestination::WavetableMorph, 0.6f, true});
+        m.addRoute(ModRoute{ModSource::Envelope2, ModDestination::FilterCutoff,
+                            -0.45f, true});
+        m.addRoute(ModRoute{ModSource::Velocity, ModDestination::FMBrightness,
+                            0.8f, false});
+
+        p.arrangement.push_back(Clip{0, 2, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("modmatrix_roundtrip.ctp");
+        check(saveProject(p, path), "a modulated project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+
+        const ModMatrix& g = loaded.channels[2].oscillator.modMatrix;
+        check(g.routeCount == 3, "all three routes survive");
+        if (g.routeCount == 3) {
+            check(g.routes[0].source == ModSource::LFO1 &&
+                  g.routes[0].destination == ModDestination::WavetableMorph &&
+                  std::fabs(g.routes[0].amount - 0.6f) < 1e-3f,
+                  "with their sources, destinations and amounts");
+            check(g.routes[1].destination == ModDestination::FilterCutoff &&
+                  std::fabs(g.routes[1].amount + 0.45f) < 1e-3f,
+                  "including negative amounts");
+            check(!g.routes[2].enabled,
+                  "and a disabled route stays disabled rather than coming "
+                  "back on");
+        }
+        check(g.polyphonyLimit == 4 &&
+              std::fabs(g.pitchBendSemitones - 7.0f) < 1e-3f,
+              "the polyphony limit and bend range survive");
+        check(g.lfos[0].shape == LFOShape::SampleHold &&
+              std::fabs(g.lfos[0].rateHz - 9.5f) < 1e-3f &&
+              std::fabs(g.lfos[0].delaySeconds - 0.15f) < 1e-3f &&
+              !g.lfos[0].retrigger,
+              "the first LFO survives entirely");
+        check(g.lfos[2].shape == LFOShape::Square,
+              "and so does the third, so the LFOs are not being collapsed "
+              "into one another");
+        check(std::fabs(g.env2Sustain - 0.35f) < 1e-3f,
+              "the second envelope survives");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- An unmodulated project writes nothing --------------------------------
+    {
+        Project plain;
+        const std::string path = testPath("modmatrix_absent.ctp");
+        check(saveProject(plain, path), "an unmodulated project saves");
+
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        const std::string text = ss.str();
+        check(text.find("MOD ") == std::string::npos &&
+              text.find("MROUTE ") == std::string::npos,
+              "and writes no modulation lines at all");
+        std::remove(path.c_str());
+    }
+
+    // ---- The Project has not quietly become enormous --------------------------
+    {
+        /*
+         * Every instrument config is inline in ChannelConfig and there are
+         * 32 channels, so each field is paid for 32 times whether or not any
+         * channel uses that engine. Adding the sampler at 64 zones took
+         * Project from 23 KB to 170 KB and started overflowing the stack of
+         * tests that hold two or three projects as locals.
+         *
+         * This is a tripwire, not a target. If it fails, the question is
+         * whether the new field really needs to be inline for all 32
+         * channels - not whether to raise the number.
+         */
+        check(sizeof(Project) < 160 * 1024,
+              "a Project is under 160 KB (currently " +
+              std::to_string(sizeof(Project) / 1024) + " KB) - it is a value "
+              "type held as a local in a great deal of code, and every "
+              "per-channel field is multiplied by 32");
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -12025,6 +12793,8 @@ int main(int argc, char** argv) {
     testGranular();
     testDrumModel();
     testGranularAndDrumsReachAudio();
+    testModMatrix();
+    testModulationReachesAudio();
     testLongRunStability();
 
     std::printf("\n==========================\n");

@@ -219,7 +219,7 @@ struct CaptureRequest {
 //   --fx-rack            open the Effect Rack section
 //   --audio-clip         put an audio clip on the arrangement
 //   --structure          add tempo/meter changes, markers and regions
-//   --instrument <name>  fm|wavetable|sampler|granular|drummodel
+//   --instrument <name>  fm|wavetable|sampler|granular|drummodel|modmatrix
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -343,6 +343,7 @@ inline void applyCaptureState(const CaptureRequest& request,
     if (request.showGhostNotes) ui.showGhostNotes = true;
     if (request.expandChipPanel) g_ExpandChipAccuracy = true;
     if (request.expandFxRack) g_ExpandEffectRack = true;
+    if (request.instrument == "modmatrix") g_ExpandModulation = true;
 
     if (request.tutorialStep >= 0) {
         StartTutorial();
@@ -625,6 +626,26 @@ inline void applyCaptureState(const CaptureRequest& request,
             project.channels[0].oscillator.wavetableBank = 0;
             project.channels[0].oscillator.wavetableMorph = 0.4f;
             project.channels[0].oscillator.wavetableMorphSweep = 0.5f;
+        } else if (request.instrument == "modmatrix") {
+            // FM, because FM Brightness is the destination that most
+            // obviously demonstrates what the matrix is for.
+            project.channels[0].oscillator.type = OscillatorType::FMSynth;
+            ModMatrix& m = project.channels[0].oscillator.modMatrix;
+            m.polyphonyLimit = 6;
+            m.pitchBendSemitones = 2.0f;
+            m.lfos[0].shape = LFOShape::Sine;
+            m.lfos[0].rateHz = 4.5f;
+            m.lfos[0].delaySeconds = 0.2f;
+            m.lfos[0].fadeSeconds = 0.4f;
+            m.lfos[1].shape = LFOShape::SampleHold;
+            m.lfos[1].rateHz = 8.0f;
+            m.addRoute(ModRoute{ModSource::LFO1, ModDestination::Pitch, 0.08f, true});
+            m.addRoute(ModRoute{ModSource::Envelope2,
+                                ModDestination::FMBrightness, 0.6f, true});
+            m.addRoute(ModRoute{ModSource::Velocity,
+                                ModDestination::FilterCutoff, 0.4f, true});
+            m.addRoute(ModRoute{ModSource::LFO2,
+                                ModDestination::WavetableMorph, 0.3f, false});
         } else if (request.instrument == "granular") {
             project.channels[0].oscillator.type = OscillatorType::Granular;
 

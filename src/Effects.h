@@ -271,6 +271,25 @@ public:
         updateCoefficients();
     }
 
+    void setResonance(float value) {
+        resonance = value;
+        updateCoefficients();
+    }
+
+    /*
+     * Recompute from whatever `cutoff` and `resonance` currently hold.
+     *
+     * process() reads the CACHED coefficients, so assigning the public
+     * fields directly does nothing at all - and that is exactly what
+     * applyEffectsConfig was doing. The per-channel filter cutoff and
+     * resonance controls had never moved the sound: the coefficients were
+     * whatever setSampleRate last computed, which is the 1000 Hz default.
+     *
+     * The fields stay public because a great deal of code reads them, but
+     * every writer must now either use the setters or call this.
+     */
+    void refresh() { updateCoefficients(); }
+
     float process(float input) {
         // State variable filter
         float highpass = input - m_lowpass - m_bandpass * m_q;
@@ -292,8 +311,36 @@ public:
 
 private:
     void updateCoefficients() {
-        m_f = 2.0f * std::sin(PI * cutoff / m_sampleRate);
-        m_q = 1.0f - resonance * 0.9f; // Prevent self-oscillation
+        /*
+         * A Chamberlin state-variable filter is only stable while its
+         * frequency coefficient stays under about 1; past that the feedback
+         * around the two integrators diverges and the output is NaN within a
+         * few dozen samples.
+         *
+         * 2*sin(pi*fc/fs) passes 1 at roughly fs/6 - about 7 kHz at 44.1 -
+         * so any cutoff above that blew the filter up. It never showed
+         * because the coefficients were stale: the filter was pinned at its
+         * 1000 Hz default no matter what the control said. The moment that
+         * was fixed, a 16 kHz cutoff produced NaN, and a NaN in a channel's
+         * insert rack is silence from then on.
+         *
+         * Clamping the coefficient rather than the cutoff means the control
+         * still runs to 20 kHz and simply stops opening further near the
+         * top, which is what a listener would expect from "fully open".
+         */
+        if (!std::isfinite(cutoff) || !std::isfinite(resonance)) {
+            m_f = 0.5f;
+            m_q = 1.0f;
+            return;
+        }
+
+        const float safeRate = (m_sampleRate > 1.0f) ? m_sampleRate : 44100.0f;
+        const float safeCutoff = std::max(1.0f, std::min(cutoff, safeRate * 0.49f));
+        m_f = std::min(2.0f * std::sin(PI * safeCutoff / safeRate), 1.0f);
+
+        // Also bounded below: q is the damping, and at zero the filter
+        // self-oscillates and runs away just as surely.
+        m_q = std::max(0.05f, 1.0f - std::clamp(resonance, 0.0f, 1.0f) * 0.9f);
     }
 
     float m_sampleRate = 44100.0f;

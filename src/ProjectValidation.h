@@ -221,6 +221,10 @@ inline void clampChannelToValidRanges(ChannelConfig& c, int poolSize = 0) {
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
 
+    // Modulation. A route naming a source or destination this build does
+    // not have becomes None rather than wrapping onto a different one.
+    clampModMatrix(c.oscillator.modMatrix);
+
     // Granular reads from the pool too, so the same bound applies. A
     // grain length or density of zero would divide by zero in the callback.
     clampGranularConfig(c.oscillator.granular, poolSize);

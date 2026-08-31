@@ -667,6 +667,49 @@ inline bool writeProject(std::ostream& file, const Project& project) {
             file << "\n";
         }
 
+        /*
+         * Modulation, written only when there is any.
+         *
+         * The LFOs and the second envelope go on the MOD line; each route
+         * gets its own MROUTE. Per-route lines rather than one long one so a
+         * .ctp stays readable and a diff shows which route changed, which is
+         * the whole reason this format is text.
+         */
+        {
+            const ModMatrix& m = c.oscillator.modMatrix;
+            const ModMatrix& dm = d.oscillator.modMatrix;
+            const bool interesting =
+                m.routeCount > 0 || m.polyphonyLimit != dm.polyphonyLimit ||
+                m.pitchBendSemitones != dm.pitchBendSemitones;
+
+            if (interesting) {
+                file << "MOD " << ch << ' ' << m.polyphonyLimit << ' '
+                     << ctp::floatToToken(m.pitchBendSemitones) << ' '
+                     << ctp::floatToToken(m.env2Attack) << ' '
+                     << ctp::floatToToken(m.env2Decay) << ' '
+                     << ctp::floatToToken(m.env2Sustain) << ' '
+                     << ctp::floatToToken(m.env2Release);
+                for (int i = 0; i < ModMatrix::LFO_COUNT; ++i) {
+                    const LFOConfig& lfo = m.lfos[static_cast<size_t>(i)];
+                    file << ' ' << static_cast<int>(lfo.shape)
+                         << ' ' << ctp::floatToToken(lfo.rateHz)
+                         << ' ' << ctp::floatToToken(lfo.delaySeconds)
+                         << ' ' << ctp::floatToToken(lfo.fadeSeconds)
+                         << ' ' << (lfo.retrigger ? 1 : 0);
+                }
+                file << "\n";
+
+                for (int i = 0; i < m.routeCount; ++i) {
+                    const ModRoute& route = m.routes[static_cast<size_t>(i)];
+                    file << "MROUTE " << ch << ' '
+                         << static_cast<int>(route.source) << ' '
+                         << static_cast<int>(route.destination) << ' '
+                         << ctp::floatToToken(route.amount) << ' '
+                         << (route.enabled ? 1 : 0) << "\n";
+                }
+            }
+        }
+
         // The multisample instrument: one line for its own settings, one
         // per zone. Per-zone lines rather than a single enormous one so a
         // 64-zone piano stays diffable and readable by hand, which is the
@@ -1140,6 +1183,53 @@ inline bool readProject(std::istream& file, Project& project) {
                         static_cast<uint8_t>(type);
                 }
                 target.fxSlotCount = count;
+            }
+        }
+        else if (cmd == "MOD") {
+            int ch = -1;
+            iss >> ch;
+            if (ch >= 0 && ch < Project::MAX_CHANNELS) {
+                ModMatrix& m = project.channels[static_cast<size_t>(ch)]
+                                   .oscillator.modMatrix;
+                iss >> m.polyphonyLimit >> m.pitchBendSemitones
+                    >> m.env2Attack >> m.env2Decay >> m.env2Sustain
+                    >> m.env2Release;
+                for (int i = 0; i < ModMatrix::LFO_COUNT; ++i) {
+                    LFOConfig& lfo = m.lfos[static_cast<size_t>(i)];
+                    int shape = 0;
+                    int retrigger = 1;
+                    iss >> shape >> lfo.rateHz >> lfo.delaySeconds
+                        >> lfo.fadeSeconds >> retrigger;
+                    if (shape >= 0 && shape < static_cast<int>(LFOShape::Count)) {
+                        lfo.shape = static_cast<LFOShape>(shape);
+                    }
+                    lfo.retrigger = (retrigger != 0);
+                }
+                // The routes arrive on their own lines after this one.
+                m.routeCount = 0;
+            }
+        }
+        else if (cmd == "MROUTE") {
+            int ch = -1;
+            iss >> ch;
+            if (ch >= 0 && ch < Project::MAX_CHANNELS) {
+                ModMatrix& m = project.channels[static_cast<size_t>(ch)]
+                                   .oscillator.modMatrix;
+                int source = 0, destination = 0, enabled = 1;
+                ModRoute route;
+                iss >> source >> destination >> route.amount >> enabled;
+                // A source or destination a newer build wrote becomes None
+                // rather than wrapping onto whatever sits at that index,
+                // which would silently route the file's LFO somewhere else.
+                route.source = (source >= 0 && source < static_cast<int>(ModSource::Count))
+                    ? static_cast<ModSource>(source) : ModSource::None;
+                route.destination =
+                    (destination >= 0 &&
+                     destination < static_cast<int>(ModDestination::Count))
+                        ? static_cast<ModDestination>(destination)
+                        : ModDestination::None;
+                route.enabled = (enabled != 0);
+                m.addRoute(route);
             }
         }
         else if (cmd == "SAMPLER") {

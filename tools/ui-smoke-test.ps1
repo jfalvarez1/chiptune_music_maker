@@ -182,6 +182,13 @@ foreach ($panel in $panels) {
     args = "--demo --instrument drummodel --focus `"Channel Editor`""
 })
 
+# The modulation matrix: three LFOs, a second envelope and a list of routes,
+# all inside collapsing trees that only draw when something is routed.
+[void]$cases.Add(@{
+    name = "modulation-matrix"
+    args = "--demo --instrument modmatrix --focus `"Channel Editor`""
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"

@@ -80,7 +80,21 @@ struct SampleZone {
 // The instrument
 // ============================================================================
 struct SamplerInstrument {
-    static constexpr int MAX_ZONES = 64;
+    /*
+     * Twenty-four zones, not sixty-four.
+     *
+     * This array is inline in ChannelConfig and there are thirty-two
+     * channels, so every zone is paid for 32 times whether or not any
+     * channel is a sampler. At 64 it pushed Project from 23 KB to 170 KB and
+     * started overflowing the stack of tests that hold two or three projects
+     * as locals - which is a warning about the whole shape, not just the
+     * tests.
+     *
+     * Twenty-four is eight key ranges across three velocity layers, or
+     * twelve across two, which covers the instruments anyone is realistically
+     * going to build here.
+     */
+    static constexpr int MAX_ZONES = 24;
 
     std::array<SampleZone, MAX_ZONES> zones{};
     int zoneCount = 0;

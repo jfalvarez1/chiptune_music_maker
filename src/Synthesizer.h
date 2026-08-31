@@ -12,6 +12,7 @@
 #include "Sampler.h"
 #include "GranularSynth.h"
 #include "DrumMachine.h"
+#include "ModMatrix.h"
 #include "Effects.h"
 #include "Sample.h"
 #include <cmath>
@@ -80,6 +81,13 @@ struct Voice {
     // Granular grain pool and the modelled drum voice.
     GranularVoice granularVoice;
     DrumModelVoice drumVoice;
+
+    // This voice's own LFO phases, second envelope and per-note random
+    // value. Per voice, not per channel: two notes held together must not
+    // wobble in lockstep, which is most of what makes a modulated pad sound
+    // like an instrument rather than a chorus pedal.
+    ModState modState;
+    ModValues mod;
 
     // NES-style Duty Cycle
     DutyCycle dutyCycle = DutyCycle::Duty50;  // Pulse wave duty cycle
@@ -326,8 +334,13 @@ inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain)
 
     chain.filterEnabled = config.filterEnabled;
     chain.filter.type = static_cast<FilterType>(config.filterType);
+    // Through refresh(), not by assignment. process() reads cached
+    // coefficients, so setting these fields alone left the filter running at
+    // whatever setSampleRate last computed - the 1000 Hz default - and the
+    // cutoff and resonance controls did nothing at all.
     chain.filter.cutoff = config.filterCutoff;
     chain.filter.resonance = config.filterResonance;
+    chain.filter.refresh();
 
     chain.eqEnabled = config.eqEnabled;
     chain.eq.lowGain = config.eqLow;
@@ -408,6 +421,19 @@ public:
 
     void setChannelConfig(const ChannelConfig& config) {
         m_oscConfig = config.oscillator;
+
+        // Whether any route is active at all. Checked once here rather than
+        // per sample per voice, so a project that never touches modulation
+        // pays one predicted branch instead of walking sixteen empty routes
+        // forty-four thousand times a second.
+        m_modActive = m_oscConfig.modMatrix.anyActive();
+
+        // The filter's configured values, so channel modulation can be an
+        // offset from them. Held rather than accumulated, or the offset
+        // would compound each sample and run the cutoff away in
+        // milliseconds.
+        m_baseFilterCutoff = config.filterCutoff;
+        m_baseFilterResonance = config.filterResonance;
         m_envelope = config.envelope;
         m_macros = config.macros;
         m_quantizeVolume4Bit = config.quantizeVolume4Bit;
@@ -441,20 +467,43 @@ public:
                 DutyCycle dutyCycle = DutyCycle::Duty50, bool useDutyCycle = false,
                 SweepDirection sweepDir = SweepDirection::None, float sweepSpd = 1.0f, float sweepAmt = 12.0f,
                 float tremolo = 0.0f, float tremoloSpd = 4.0f) {
-        // Find free voice or steal oldest
+        /*
+         * Find a free voice, or steal the oldest.
+         *
+         * The per-channel polyphony limit is not only about cost. A
+         * monophonic bass that steals its own voice is a different
+         * instrument from one that stacks, and a granular pad at thirty-two
+         * voices is a wall rather than a texture. 0 means the synth's own
+         * maximum, which is what every existing project implies.
+         */
+        const int configured = m_oscConfig.modMatrix.polyphonyLimit;
+        const int limit = (configured > 0)
+            ? std::min(configured, MAX_VOICES) : MAX_VOICES;
+
         int voiceIndex = -1;
         float oldestTime = time;
+        int sounding = 0;
 
-        for (int i = 0; i < MAX_VOICES; ++i) {
-            if (!m_voices[i].active) {
-                voiceIndex = i;
-                break;
-            }
-            if (m_voices[i].startTime < oldestTime) {
-                oldestTime = m_voices[i].startTime;
-                voiceIndex = i;
-            }
+        for (int i = 0; i < limit; ++i) {
+            if (m_voices[i].active) { ++sounding; continue; }
+            voiceIndex = i;
+            break;
         }
+
+        if (voiceIndex < 0) {
+            // Every allowed voice is busy: steal the oldest of them.
+            for (int i = 0; i < limit; ++i) {
+                if (m_voices[i].startTime < oldestTime) {
+                    oldestTime = m_voices[i].startTime;
+                    voiceIndex = i;
+                }
+            }
+            // Every voice started at or after `time`, which happens when
+            // several notes land on the same tick. Take the first rather
+            // than dropping the note.
+            if (voiceIndex < 0) voiceIndex = 0;
+        }
+        (void)sounding;
 
         if (voiceIndex >= 0) {
             Voice& v = m_voices[voiceIndex];
@@ -489,6 +538,13 @@ public:
 
             // Per-note oscillator type
             v.oscillatorType = oscType;
+
+            // This voice's LFO phases, second envelope and per-note random
+            // value. A distinct seed per note, so RandomPerNote is actually
+            // random per note rather than the same value on every one.
+            m_voiceSeed = m_voiceSeed * 1664525u + 1013904223u;
+            v.modState.start(m_oscConfig.modMatrix, m_voiceSeed);
+            v.mod = ModValues{};
 
             /*
              * Multisample: pick the zone and start it here, because the zone
@@ -594,6 +650,11 @@ public:
                 v.releaseTime = time;
                 v.envTime = 0.0f;
                 v.macroState.releaseAll(m_macros);
+
+                // The second envelope releases with the note. Without this
+                // an Envelope2 route holds its sustain level forever after
+                // the key is up, and a filter it was opening never closes.
+                v.modState.release();
             }
         }
     }
@@ -615,12 +676,44 @@ public:
     }
 
     // Generate one sample (called from audio thread)
+    // What the performer is doing with the wheel and the bender, shared by
+    // every voice on the channel.
+    void setPerformance(const PerformanceState& performance) {
+        m_performance = performance;
+    }
+    const PerformanceState& performance() const { return m_performance; }
+
+    // The channel-scope modulation resolved for the current sample. The
+    // filter lives in the insert rack, which runs on the summed mix, so
+    // there is no per-voice version of it to modulate.
+    const ModValues& channelModulation() const { return m_channelMod; }
+
     float process(float time) {
         float output = 0.0f;
         float dt = 1.0f / m_sampleRate;
 
+        /*
+         * The channel-scope modulation pass.
+         *
+         * Once per sample for the whole channel, not once per voice: the
+         * filter lives in the insert rack and runs on the summed mix, so
+         * there is no per-voice version of it to modulate. Evaluating it per
+         * voice would also mean the cutoff moved at a different rate
+         * depending on how many notes happened to be held.
+         */
+        if (m_modActive) {
+            m_channelMod = mod::evaluate(m_oscConfig.modMatrix, m_channelModState,
+                                         60, 1.0f, m_performance,
+                                         m_sampleRate, true);
+            applyChannelModulation();
+        }
+
         for (auto& voice : m_voices) {
             if (!voice.active) continue;
+
+            // This voice's modulation for this sample, before anything reads
+            // a modulated parameter.
+            updateVoiceModulation(voice);
 
             // Check if this is a drum sound (drums have their own internal envelope)
             bool isDrum = isDrumType(voice.oscillatorType);
@@ -731,6 +824,26 @@ public:
             // multiply the frequency, and stacking them can push a note far
             // past the sample rate - which is both musically meaningless and
             // numerically hostile to the PolyBLEP anti-aliasing below.
+            /*
+             * Modulated pitch, and the pitch bender.
+             *
+             * Last of the pitch modifiers, so it composes with slide,
+             * arpeggio, vibrato, sweep and the macros rather than replacing
+             * any of them - and it lands just before the Nyquist clamp,
+             * which is what stops a deep modulation from pushing a note past
+             * the sample rate and into the PolyBLEP's undefined territory.
+             */
+            if (!isDrum) {
+                float semitones = voice.mod.pitchSemitones;
+                if (m_performance.pitchBend != 0.0f) {
+                    semitones += m_performance.pitchBend *
+                                 m_oscConfig.modMatrix.pitchBendSemitones;
+                }
+                if (semitones != 0.0f) {
+                    effectFreq *= std::pow(2.0f, semitones / 12.0f);
+                }
+            }
+
             if (!isDrum) {
                 if (!std::isfinite(effectFreq)) effectFreq = voice.baseFrequency;
                 const float nyquist = m_sampleRate * 0.5f;
@@ -740,6 +853,13 @@ public:
 
             // Generate oscillator sample
             float sample = generateOscillator(voice);
+
+            // Modulated level. Clamped at zero rather than allowed negative:
+            // a negative gain inverts the phase, which against the other
+            // voices is cancellation rather than quietness.
+            if (voice.mod.level != 0.0f) {
+                sample *= std::max(0.0f, 1.0f + voice.mod.level);
+            }
 
             // Apply Per-Voice Filter Envelope (if enabled and not drum)
             if (m_filterEnvEnabled && !isDrum) {
@@ -911,7 +1031,7 @@ private:
             return generateTriangle(voice.phase, m_oscConfig.triangleSlope);
         }
 
-        float morph = m_oscConfig.wavetableMorph;
+        float morph = m_oscConfig.wavetableMorph + voice.mod.wavetableMorph;
         if (m_oscConfig.wavetableMorphSweep != 0.0f &&
             m_oscConfig.wavetableSweepTime > 1e-4f) {
             const float through = std::clamp(
@@ -940,9 +1060,58 @@ private:
      * insert rack still apply exactly as they do to every other oscillator.
      */
     float generateFM(Voice& voice) {
-        return fm::process(m_oscConfig.fm, voice.fmState, voice.frequency,
+        if (voice.mod.fmBrightness == 0.0f) {
+            return fm::process(m_oscConfig.fm, voice.fmState, voice.frequency,
+                               voice.velocity, m_sampleRate,
+                               voice.envStage == Voice::EnvStage::Release);
+        }
+        // A copy so the modulated index does not leak into the stored patch,
+        // which the UI is showing and the serialiser will write.
+        FMPatch modulated = m_oscConfig.fm;
+        modulated.index = std::max(0.0f, modulated.index + voice.mod.fmBrightness);
+        return fm::process(modulated, voice.fmState, voice.frequency,
                            voice.velocity, m_sampleRate,
                            voice.envStage == Voice::EnvStage::Release);
+    }
+
+    /*
+     * Resolve this voice's modulation for this sample.
+     *
+     * Skipped entirely when no route is active, which is every project that
+     * does not use the feature - so the common case costs one predicted
+     * branch rather than a walk over sixteen empty routes.
+     */
+    void updateVoiceModulation(Voice& voice) {
+        if (!m_modActive) {
+            voice.mod = ModValues{};
+            return;
+        }
+        voice.mod = mod::evaluate(m_oscConfig.modMatrix, voice.modState,
+                                  voice.note, voice.velocity, m_performance,
+                                  m_sampleRate, false);
+    }
+
+    /*
+     * Push the channel-scope modulation into the insert rack.
+     *
+     * The filter's cutoff and resonance are rack parameters, so modulating
+     * them means writing the rack's values each sample. Held against the
+     * CONFIGURED value rather than accumulated, or the offset would compound
+     * every sample and the cutoff would run away within a few milliseconds.
+     */
+    void applyChannelModulation() {
+        if (m_channelMod.filterCutoff == 0.0f &&
+            m_channelMod.filterResonance == 0.0f) {
+            return;
+        }
+        m_effects.filter.cutoff = std::clamp(
+            m_baseFilterCutoff + m_channelMod.filterCutoff, 20.0f, 20000.0f);
+        m_effects.filter.resonance = std::clamp(
+            m_baseFilterResonance + m_channelMod.filterResonance, 0.0f, 0.99f);
+        // The coefficients are cached, so they have to be recomputed or the
+        // sweep is entirely inaudible. One sine per sample per modulated
+        // channel, which is what any analogue-modelled filter costs anyway.
+        m_effects.filter.refresh();
     }
 
     float generateOscillator(Voice& voice) {
@@ -957,6 +1126,11 @@ private:
                 float pulseWidth = voice.useDutyCycle
                     ? dutyCycleToFloat(voice.dutyCycle)
                     : m_oscConfig.pulseWidth;
+                // Clamped away from 0 and 1: either end is silence, and a
+                // modulated width that reaches one of them drops the note
+                // out rather than sounding thin.
+                pulseWidth = std::clamp(pulseWidth + voice.mod.pulseWidth,
+                                        0.02f, 0.98f);
                 sample = generatePulse(t, dt, pulseWidth);
                 break;
             }
@@ -993,9 +1167,21 @@ private:
                 sample = voice.samplerVoice.process();
                 break;
 
-            case OscillatorType::Granular:
-                sample = voice.granularVoice.process(m_oscConfig.granular);
+            case OscillatorType::Granular: {
+                if (voice.mod.grainPosition == 0.0f &&
+                    voice.mod.grainDensity == 0.0f) {
+                    sample = voice.granularVoice.process(m_oscConfig.granular);
+                } else {
+                    GranularConfig modulated = m_oscConfig.granular;
+                    modulated.position = std::clamp(
+                        modulated.position + voice.mod.grainPosition, 0.0f, 1.0f);
+                    modulated.grainsPerSecond = std::clamp(
+                        modulated.grainsPerSecond + voice.mod.grainDensity,
+                        0.5f, 400.0f);
+                    sample = voice.granularVoice.process(modulated);
+                }
                 break;
+            }
 
             case OscillatorType::DrumModel:
                 sample = voice.drumVoice.process(m_oscConfig.drumModel);
@@ -2974,6 +3160,23 @@ private:
 
     OscillatorConfig m_oscConfig;
     Envelope m_envelope;
+
+    // The filter's configured values, kept so channel modulation can be an
+    // offset from them rather than accumulating on top of itself.
+    float m_baseFilterCutoff = 2000.0f;
+    float m_baseFilterResonance = 0.5f;
+
+    PerformanceState m_performance;
+
+    // Channel-scope modulation: its own state, advanced once per sample for
+    // the whole channel rather than per voice.
+    ModState m_channelModState;
+    ModValues m_channelMod;
+
+    // Whether any route is active at all, so an unmodulated project pays one
+    // predicted branch instead of walking sixteen empty routes per sample
+    // per voice.
+    bool m_modActive = false;
 
     const WavetableLibrary* m_wavetables = nullptr;
     const SamplePool* m_samplePool = nullptr;

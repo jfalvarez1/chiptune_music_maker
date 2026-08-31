@@ -22,6 +22,7 @@
 #include "Sampler.h"
 #include "GranularSynth.h"
 #include "DrumMachine.h"
+#include "ModMatrix.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -203,6 +204,13 @@ struct OscillatorConfig {
     // audio thread never dereferences anything to reach them.
     GranularConfig granular;
     DrumModelConfig drumModel;
+
+    // ---- Modulation ------------------------------------------------------
+    //
+    // Any source to any destination. This is what makes the engines above
+    // worth having: a wavetable whose morph never moves is a sampled
+    // waveform, and an FM patch whose index is fixed is one timbre.
+    ModMatrix modMatrix;
 
     // General
     float detune = 0.0f;            // Cents (-100 to +100)

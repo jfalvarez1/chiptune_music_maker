@@ -2567,6 +2567,9 @@ static bool g_ToolsScaleHighlight = true;
 static bool g_ExpandChipAccuracy = false;
 static bool g_ExpandEffectRack = false;
 
+// Same, for the modulation matrix's tree.
+static bool g_ExpandModulation = false;
+
 // The guided first-track lesson. Static here rather than on UIState
 // because it is UI-session state, not project state: it must survive a
 // project load mid-lesson and never be saved into anyone's file.
@@ -10153,6 +10156,204 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
                     seq.updateChannelConfigs();
                 }
             }
+        }
+
+        // ---- Modulation -----------------------------------------------------
+        //
+        // Any source to any destination. This is what makes the engines
+        // above worth having: a wavetable whose morph never moves is a
+        // sampled waveform, and an FM patch whose index is fixed is one
+        // timbre.
+        //
+        // Forced open for capture, so the smoke case actually renders the
+        // route rows rather than one collapsed header.
+        if (g_ExpandModulation) {
+            ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        }
+        if (ImGui::TreeNode("Modulation")) {
+            ModMatrix& m = osc.modMatrix;
+
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::DragInt("Polyphony", &m.polyphonyLimit, 0.1f, 0, 32,
+                               m.polyphonyLimit == 0 ? "Max" : "%d voices")) {
+                m.polyphonyLimit = std::clamp(m.polyphonyLimit, 0, 32);
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How many notes this channel may sound at once.\n"
+                    "Not only about cost: a mono bass that steals its own\n"
+                    "voice is a different instrument from one that stacks,\n"
+                    "and a granular pad at 32 voices is a wall, not a cloud.");
+            }
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::DragFloat("Bend", &m.pitchBendSemitones, 0.1f, 0.0f,
+                                 24.0f, "%.0f st")) {
+                seq.updateChannelConfigs();
+            }
+
+            // ---- The LFOs ----------------------------------------------------
+            for (int i = 0; i < ModMatrix::LFO_COUNT; ++i) {
+                ImGui::PushID(900 + i);
+                LFOConfig& lfo = m.lfos[static_cast<size_t>(i)];
+
+                char label[16];
+                snprintf(label, sizeof(label), "LFO %d", i + 1);
+                if (ImGui::TreeNode(label)) {
+                    ImGui::SetNextItemWidth(150);
+                    int shape = static_cast<int>(lfo.shape);
+                    if (ImGui::BeginCombo("Shape",
+                            lfoShapeName(static_cast<LFOShape>(shape)))) {
+                        for (int sIndex = 0;
+                             sIndex < static_cast<int>(LFOShape::Count); ++sIndex) {
+                            const bool selected = (sIndex == shape);
+                            if (ImGui::Selectable(
+                                    lfoShapeName(static_cast<LFOShape>(sIndex)),
+                                    selected)) {
+                                lfo.shape = static_cast<LFOShape>(sIndex);
+                                seq.updateChannelConfigs();
+                            }
+                            if (selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::SliderFloat("Rate", &lfo.rateHz, 0.01f, 40.0f,
+                                           "%.2f Hz")) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::SliderFloat("Delay", &lfo.delaySeconds, 0.0f,
+                                           4.0f, "%.2f s")) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::SliderFloat("Fade in", &lfo.fadeSeconds, 0.0f,
+                                           4.0f, "%.2f s")) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Vibrato that arrives the instant a note does\n"
+                            "sounds mechanical. Every wind and string player\n"
+                            "brings it in after the note has spoken.");
+                    }
+                    if (ImGui::Checkbox("Retrigger", &lfo.retrigger)) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Restart the phase on every note. Off, the LFO\n"
+                            "free-runs and notes played together sit at\n"
+                            "different points in the cycle - which is what a\n"
+                            "pad wants and a rhythmic sync does not.");
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+
+            // ---- The second envelope ----------------------------------------
+            if (ImGui::TreeNode("Envelope 2")) {
+                ImGui::TextDisabled(
+                    "A second envelope, free to be any shape - the amplitude "
+                    "one has to fit the note.");
+                bool changed = false;
+                changed |= ImGui::SliderFloat("Attack##e2", &m.env2Attack, 0.0f, 4.0f, "%.3f s");
+                changed |= ImGui::SliderFloat("Decay##e2", &m.env2Decay, 0.0f, 8.0f, "%.3f s");
+                changed |= ImGui::SliderFloat("Sustain##e2", &m.env2Sustain, 0.0f, 1.0f);
+                changed |= ImGui::SliderFloat("Release##e2", &m.env2Release, 0.0f, 8.0f, "%.3f s");
+                if (changed) seq.updateChannelConfigs();
+                ImGui::TreePop();
+            }
+
+            // ---- The routes ---------------------------------------------------
+            ImGui::Separator();
+            ImGui::Text("%d route%s", m.routeCount, m.routeCount == 1 ? "" : "s");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Add route") &&
+                m.routeCount < ModMatrix::MAX_ROUTES) {
+                g_UndoHistory.saveState(project, "Add Modulation Route");
+                // Something audible by default, so a new route is not a row
+                // of dashes that appears to do nothing.
+                m.addRoute(ModRoute{ModSource::LFO1, ModDestination::Pitch,
+                                    0.1f, true});
+                seq.updateChannelConfigs();
+            }
+
+            for (int r = 0; r < m.routeCount; ++r) {
+                ImGui::PushID(950 + r);
+                ModRoute& route = m.routes[static_cast<size_t>(r)];
+
+                if (ImGui::Checkbox("##on", &route.enabled)) {
+                    seq.updateChannelConfigs();
+                }
+                ImGui::SameLine();
+
+                ImGui::SetNextItemWidth(120);
+                if (ImGui::BeginCombo("##src", modSourceName(route.source))) {
+                    for (int sIndex = 0;
+                         sIndex < static_cast<int>(ModSource::Count); ++sIndex) {
+                        const auto candidate = static_cast<ModSource>(sIndex);
+                        const bool selected = (route.source == candidate);
+                        if (ImGui::Selectable(modSourceName(candidate), selected)) {
+                            route.source = candidate;
+                            seq.updateChannelConfigs();
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                ImGui::SameLine();
+                ImGui::TextUnformatted("->");
+                ImGui::SameLine();
+
+                ImGui::SetNextItemWidth(140);
+                if (ImGui::BeginCombo("##dst",
+                        modDestinationName(route.destination))) {
+                    for (int dIndex = 0;
+                         dIndex < static_cast<int>(ModDestination::Count); ++dIndex) {
+                        const auto candidate = static_cast<ModDestination>(dIndex);
+                        const bool selected = (route.destination == candidate);
+                        if (ImGui::Selectable(modDestinationName(candidate),
+                                              selected)) {
+                            route.destination = candidate;
+                            seq.updateChannelConfigs();
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90);
+                if (ImGui::DragFloat("##amt", &route.amount, 0.005f, -1.0f,
+                                     1.0f, "%.2f")) {
+                    seq.updateChannelConfigs();
+                }
+
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x")) {
+                    g_UndoHistory.saveState(project, "Remove Modulation Route");
+                    for (int k = r; k + 1 < m.routeCount; ++k) {
+                        m.routes[static_cast<size_t>(k)] =
+                            m.routes[static_cast<size_t>(k) + 1];
+                    }
+                    --m.routeCount;
+                    seq.updateChannelConfigs();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+
+            if (m.routeCount == 0) {
+                ImGui::TextDisabled(
+                    "Nothing routed. An LFO on Wavetable Morph or FM\n"
+                    "Brightness is the quickest way to hear what this does.");
+            }
+
+            ImGui::TreePop();
         }
 
         // ---- Granular -------------------------------------------------------
