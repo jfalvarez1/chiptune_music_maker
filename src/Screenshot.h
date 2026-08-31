@@ -169,6 +169,9 @@ struct CaptureRequest {
     // Open the Chip Accuracy section, which is collapsed by default.
     bool expandChipPanel = false;
 
+    // Open the Effect Rack, which is collapsed by default.
+    bool expandFxRack = false;
+
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
 
@@ -199,6 +202,7 @@ struct CaptureRequest {
 //   --snap <name>        off|bar|1/2|1/4|1/8|1/16|1/32|1/4T|1/8T|1/16T
 //   --ghosts             show cross-channel ghost notes
 //   --chip-panel         open the Chip Accuracy section
+//   --fx-rack            open the Effect Rack section
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -243,6 +247,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.showGhostNotes = true;
         } else if (arg == "--chip-panel") {
             request.expandChipPanel = true;
+        } else if (arg == "--fx-rack") {
+            request.expandFxRack = true;
         } else if (arg == "--genre") {
             next(request.genreFocus);
         } else if (arg == "--focus") {
@@ -313,6 +319,7 @@ inline void applyCaptureState(const CaptureRequest& request,
 
     if (request.showGhostNotes) ui.showGhostNotes = true;
     if (request.expandChipPanel) g_ExpandChipAccuracy = true;
+    if (request.expandFxRack) g_ExpandEffectRack = true;
 
     if (request.tutorialStep >= 0) {
         StartTutorial();

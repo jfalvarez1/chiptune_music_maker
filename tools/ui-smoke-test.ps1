@@ -140,6 +140,15 @@ foreach ($panel in $panels) {
     args = "--demo --genre reggaeton --focus Tools"
 })
 
+# The insert rack. Task A replaced a fixed 17-member chain with reorderable
+# slots, so this shot fails visibly if the list ever stops rendering.
+[void]$cases.Add(@{
+    name = "effect-rack"
+    # The window name has a space in it, so the inner quotes are escaped -
+    # the runner splices this into one argument string.
+    args = "--demo --workspace sounddesign --fx-rack --focus `"Channel Editor`""
+})
+
 # The lesson panel, parked on the draw-a-melody step.
 [void]$cases.Add(@{
     name = "tutorial-lesson"

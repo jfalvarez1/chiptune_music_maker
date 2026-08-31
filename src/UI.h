@@ -2513,6 +2513,7 @@ static bool g_ToolsScaleHighlight = true;
 // Set by the capture harness so a screenshot can show a section that is
 // collapsed by default.
 static bool g_ExpandChipAccuracy = false;
+static bool g_ExpandEffectRack = false;
 
 // The guided first-track lesson. Static here rather than on UIState
 // because it is UI-session state, not project state: it must survive a
@@ -8973,6 +8974,125 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
     }
 
     // Effects
+    if (g_ExpandEffectRack) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    if (ImGui::CollapsingHeader("Effect Rack")) {
+        auto& rackFx = seq.getSynth(ui.selectedChannel).effects();
+
+        ImGui::TextDisabled("Signal flows top to bottom. Drag to reorder.");
+
+        // Reordering has to reach the project, not just the live chain, or
+        // it is lost on save. The chain is what the audio thread reads; the
+        // ChannelConfig is what gets written to the file.
+        auto publishOrder = [&](ChannelConfig& config) {
+            const auto& current = rackFx.rack();
+            config.fxSlotCount = current.count;
+            for (int i = 0; i < current.count && i < MAX_FX_SLOTS; ++i) {
+                config.fxOrder[static_cast<size_t>(i)] =
+                    static_cast<uint8_t>(current.slots[i]);
+            }
+        };
+
+        ChannelConfig& channelConfig = project.channels[ui.selectedChannel];
+
+        const auto& order = rackFx.rack();
+        int moveFrom = -1;
+        int moveTo = -1;
+
+        for (int slot = 0; slot < order.count; ++slot) {
+            const EffectType type = order.slots[slot];
+            const bool on = rackFx.isEnabled(type);
+
+            ImGui::PushID(slot);
+
+            // The enable flag is the same one the panels below write, so the
+            // rack and the old checkboxes can never disagree.
+            bool enabled = on;
+            if (ImGui::Checkbox("##rackon", &enabled)) {
+                g_UndoHistory.saveState(project, "Toggle Effect");
+                rackFx.setEnabled(type, enabled);
+                // Mirror into the config so it survives a save.
+                switch (type) {
+                    case EffectType::EQ:             channelConfig.eqEnabled = enabled; break;
+                    case EffectType::TapeSaturation: channelConfig.tapeSaturationEnabled = enabled; break;
+                    case EffectType::Formant:        channelConfig.formantEnabled = enabled; break;
+                    case EffectType::Compressor:     channelConfig.compressorEnabled = enabled; break;
+                    case EffectType::Bitcrusher:     channelConfig.bitcrusherEnabled = enabled; break;
+                    case EffectType::Distortion:     channelConfig.distortionEnabled = enabled; break;
+                    case EffectType::Filter:         channelConfig.filterEnabled = enabled; break;
+                    case EffectType::Tremolo:        channelConfig.tremoloEnabled = enabled; break;
+                    case EffectType::Phaser:         channelConfig.phaserEnabled = enabled; break;
+                    case EffectType::Flanger:        channelConfig.flangerEnabled = enabled; break;
+                    case EffectType::Chorus:         channelConfig.chorusEnabled = enabled; break;
+                    case EffectType::Delay:          channelConfig.delayEnabled = enabled; break;
+                    case EffectType::Reverb:         channelConfig.reverbEnabled = enabled; break;
+                    default: break;   // RingMod has no config field yet
+                }
+            }
+            ImGui::SameLine();
+
+            // Theme colours only - an enabled slot uses the theme's own text
+            // colour, a bypassed one the disabled variant. No literals here,
+            // so every theme and the contrast assertions still hold.
+            const ImVec4 label = enabled
+                ? ImGui::GetStyleColorVec4(ImGuiCol_Text)
+                : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+
+            char row[64];
+            snprintf(row, sizeof(row), "%2d  %s", slot + 1, effectDisplayName(type));
+
+            ImGui::PushStyleColor(ImGuiCol_Text, label);
+            ImGui::Selectable(row, false, 0, ImVec2(190.0f, 0.0f));
+            ImGui::PopStyleColor();
+
+            if (ImGui::IsItemActive() && !ImGui::IsItemHovered()) {
+                const int target = slot + (ImGui::GetMouseDragDelta(0).y < 0.0f ? -1 : 1);
+                if (target >= 0 && target < order.count) {
+                    moveFrom = slot;
+                    moveTo = target;
+                    ImGui::ResetMouseDragDelta();
+                }
+            }
+            if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) {
+                ImGui::SetTooltip("Drag to move %s earlier or later in the chain.\n"
+                                  "Its own controls are below.",
+                                  effectDisplayName(type));
+            }
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
+            float& wet = rackFx.mix[static_cast<size_t>(type)];
+            if (ImGui::SliderFloat("##rackmix", &wet, 0.0f, 1.0f, "mix %.2f")) {
+                wet = std::clamp(wet, 0.0f, 1.0f);
+            }
+
+            ImGui::PopID();
+        }
+
+        // Applied after the loop so the list is not mutated while drawing it.
+        if (moveFrom >= 0) {
+            g_UndoHistory.saveState(project, "Reorder Effects");
+            rackFx.moveSlot(moveFrom, moveTo);
+            publishOrder(channelConfig);
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Reset to classic order")) {
+            g_UndoHistory.saveState(project, "Reset Effect Order");
+            rackFx.resetOrderToClassic();
+            channelConfig.fxSlotCount = 0;   // 0 means classic
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("The fixed order every version before the rack\n"
+                              "used: EQ, tape, formant, compressor, bitcrush,\n"
+                              "distortion, filter, ring mod, tremolo, phaser,\n"
+                              "flanger, chorus, delay, reverb.");
+        }
+        if (!rackFx.isClassicOrder()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(reordered)");
+        }
+    }
+
     if (ImGui::CollapsingHeader("Effects")) {
         auto& fx = seq.getSynth(ui.selectedChannel).effects();
 

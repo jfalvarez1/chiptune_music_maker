@@ -266,6 +266,11 @@ struct Pattern {
 // ============================================================================
 // Channel Configuration
 // ============================================================================
+// Capacity of a channel's insert rack. Lives here because ChannelConfig
+// carries the order and Types.h is below Effects.h; EffectsChain static_asserts
+// that its own MAX_SLOTS agrees with this.
+inline constexpr int MAX_FX_SLOTS = 24;
+
 struct ChannelConfig {
     std::string name = "Channel";
     OscillatorConfig oscillator;
@@ -375,6 +380,14 @@ struct ChannelConfig {
     float eqLowFreq = 200.0f;
     float eqMidFreq = 1000.0f;
     float eqHighFreq = 5000.0f;
+
+    // Insert-rack order, as EffectType indices.
+    //
+    // A count of 0 means "the classic order" - which is precisely what every
+    // project file written before v3 implies, so those migrate by doing
+    // nothing at all rather than by a translation that could be wrong.
+    std::array<uint8_t, MAX_FX_SLOTS> fxOrder{};
+    int fxSlotCount = 0;
 
     // Compressor settings
     bool compressorEnabled = false;

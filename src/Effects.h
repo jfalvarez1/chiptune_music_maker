@@ -9,7 +9,9 @@
 
 #include "Types.h"
 #include <cmath>
+#include <cstring>
 #include <array>
+#include <atomic>
 #include <vector>
 #include <algorithm>
 #include <cstdint>
@@ -1059,83 +1061,470 @@ private:
 // ============================================================================
 // Effects Chain - Combines all effects for a channel
 // ============================================================================
+// ============================================================================
+// Insert rack
+//
+// The chain used to be seventeen members, seventeen bools, and a processing
+// order hardcoded into process(). Every new effect cost another member,
+// another bool and another hand-placed line - and nobody could put the
+// reverb before the distortion.
+//
+// It is now a reorderable rack of slots over the same effect instances.
+// Three deliberate constraints:
+//
+//   - ORDER is the rack's business; ON/OFF is not. Enablement stays in the
+//     ChannelConfig *Enabled flags, because that is what every preset writes
+//     - applyGenreEffects(), the Song Starter, the Channel Editor. Moving
+//     bypass into the rack would mean a preset setting reverbEnabled = true
+//     no longer enables reverb.
+//   - Fixed capacity, no allocation. The instances are members as before and
+//     the order is a fixed array; the audio thread allocates nothing.
+//   - IEffect is shaped for Task J. A hosted VST3/CLAP plugin has to be able
+//     to be a slot, which is why processBlock() and latencySamples() are here
+//     even though no built-in overrides them.
+// ============================================================================
+
+enum class EffectType : uint8_t {
+    EQ = 0,
+    TapeSaturation,
+    Formant,
+    Compressor,
+    Bitcrusher,
+    Distortion,
+    Filter,
+    RingMod,
+    Tremolo,
+    Phaser,
+    Flanger,
+    Chorus,
+    Delay,
+    Reverb,
+    Count
+};
+
+inline constexpr int EFFECT_TYPE_COUNT = static_cast<int>(EffectType::Count);
+
+// Stable tokens. These are part of the .ctp format: renaming one silently
+// reinterprets an existing file, so they do not change.
+inline const char* effectTypeId(EffectType type) {
+    switch (type) {
+        case EffectType::EQ:             return "eq";
+        case EffectType::TapeSaturation: return "tape";
+        case EffectType::Formant:        return "formant";
+        case EffectType::Compressor:     return "comp";
+        case EffectType::Bitcrusher:     return "bitcrush";
+        case EffectType::Distortion:     return "dist";
+        case EffectType::Filter:         return "filter";
+        case EffectType::RingMod:        return "ringmod";
+        case EffectType::Tremolo:        return "tremolo";
+        case EffectType::Phaser:         return "phaser";
+        case EffectType::Flanger:        return "flanger";
+        case EffectType::Chorus:         return "chorus";
+        case EffectType::Delay:          return "delay";
+        case EffectType::Reverb:         return "reverb";
+        default:                         return "?";
+    }
+}
+
+inline const char* effectDisplayName(EffectType type) {
+    switch (type) {
+        case EffectType::EQ:             return "3-Band EQ";
+        case EffectType::TapeSaturation: return "Tape Saturation";
+        case EffectType::Formant:        return "Formant Filter";
+        case EffectType::Compressor:     return "Compressor";
+        case EffectType::Bitcrusher:     return "Bitcrusher";
+        case EffectType::Distortion:     return "Distortion";
+        case EffectType::Filter:         return "Filter";
+        case EffectType::RingMod:        return "Ring Modulator";
+        case EffectType::Tremolo:        return "Tremolo";
+        case EffectType::Phaser:         return "Phaser";
+        case EffectType::Flanger:        return "Flanger";
+        case EffectType::Chorus:         return "Chorus";
+        case EffectType::Delay:          return "Delay";
+        case EffectType::Reverb:         return "Reverb";
+        default:                         return "Unknown";
+    }
+}
+
+inline bool effectTypeFromId(const char* id, EffectType& out) {
+    if (id == nullptr) return false;
+    for (int i = 0; i < EFFECT_TYPE_COUNT; ++i) {
+        const EffectType candidate = static_cast<EffectType>(i);
+        if (std::strcmp(effectTypeId(candidate), id) == 0) {
+            out = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * One processor in a slot.
+ *
+ * process() runs on the audio thread: no allocation, no locks, no I/O.
+ *
+ * processBlock() and latencySamples() exist for Task J. A plugin is
+ * block-native and reports its own latency; a built-in is neither, so the
+ * defaults cover every effect in this file and no built-in overrides them.
+ */
+class IEffect {
+public:
+    virtual ~IEffect() = default;
+
+    virtual const char* typeId() const = 0;
+    virtual float process(float input, float time) = 0;
+    virtual void setSampleRate(float sampleRate) { (void)sampleRate; }
+    virtual void reset() {}
+
+    // Default is the per-sample loop; a hosted plugin overrides this instead.
+    virtual void processBlock(float* buffer, int frames, float startTime,
+                              float secondsPerFrame) {
+        if (buffer == nullptr) return;
+        for (int i = 0; i < frames; ++i) {
+            buffer[i] = process(buffer[i],
+                                startTime + static_cast<float>(i) * secondsPerFrame);
+        }
+    }
+
+    virtual int latencySamples() const { return 0; }
+};
+
+// ---- Adapters ---------------------------------------------------------------
+//
+// Each holds a pointer to the concrete effect rather than owning it, so that
+// every existing `fx.bitcrusher.bits` call site keeps compiling unchanged.
+// The pointers are rebound on copy; see EffectsChain::bindAdapters.
+
+#define CHIPTUNE_SIMPLE_FX(ClassName, Impl, Token, Call)                      \
+    class ClassName final : public IEffect {                                  \
+    public:                                                                   \
+        Impl* target = nullptr;                                               \
+        const char* typeId() const override { return Token; }                 \
+        float process(float input, float time) override {                     \
+            (void)time;                                                       \
+            return target ? (Call) : input;                                   \
+        }                                                                     \
+    }
+
+CHIPTUNE_SIMPLE_FX(EqFx,         ThreeBandEQ,    "eq",       target->process(input));
+CHIPTUNE_SIMPLE_FX(TapeFx,       TapeSaturation, "tape",     target->process(input));
+CHIPTUNE_SIMPLE_FX(FormantFx,    FormantFilter,  "formant",  target->process(input));
+CHIPTUNE_SIMPLE_FX(CompressorFx, Compressor,     "comp",     target->process(input));
+CHIPTUNE_SIMPLE_FX(BitcrusherFx, Bitcrusher,     "bitcrush", target->process(input));
+CHIPTUNE_SIMPLE_FX(DistortionFx, Distortion,     "dist",     target->process(input));
+CHIPTUNE_SIMPLE_FX(FilterFx,     Filter,         "filter",   target->process(input));
+CHIPTUNE_SIMPLE_FX(FlangerFx,    Flanger,        "flanger",  target->process(input));
+CHIPTUNE_SIMPLE_FX(DelayFx,      Delay,          "delay",    target->process(input));
+CHIPTUNE_SIMPLE_FX(ReverbFx,     Reverb,         "reverb",   target->process(input));
+
+#undef CHIPTUNE_SIMPLE_FX
+
+// The four that need `time`, kept explicit rather than macro'd - two of them
+// do something other than pass the sample straight through.
+
+class RingModFx final : public IEffect {
+public:
+    RingModulator* target = nullptr;
+    const char* typeId() const override { return "ringmod"; }
+    float process(float input, float time) override {
+        return target ? target->process(input, time) : input;
+    }
+};
+
+class TremoloFx final : public IEffect {
+public:
+    Tremolo* target = nullptr;
+    const char* typeId() const override { return "tremolo"; }
+    float process(float input, float time) override {
+        // Multiplies rather than replaces - the chain did `output *=` and
+        // the identity test would catch any drift from that.
+        return target ? input * target->process(time) : input;
+    }
+};
+
+class PhaserFx final : public IEffect {
+public:
+    Phaser* target = nullptr;
+    const char* typeId() const override { return "phaser"; }
+    float process(float input, float time) override {
+        return target ? target->process(input, time) : input;
+    }
+};
+
+class ChorusFx final : public IEffect {
+public:
+    Chorus* target = nullptr;
+    const char* typeId() const override { return "chorus"; }
+    float process(float input, float time) override {
+        return target ? target->process(input, time) : input;
+    }
+};
+
+// The order every version before the rack used, verbatim. It is the default
+// for a new channel and the migration target for every existing .ctp file,
+// so it must not be reordered casually.
+inline constexpr EffectType CLASSIC_EFFECT_ORDER[] = {
+    EffectType::EQ,
+    EffectType::TapeSaturation,
+    EffectType::Formant,
+    EffectType::Compressor,
+    EffectType::Bitcrusher,
+    EffectType::Distortion,
+    EffectType::Filter,
+    EffectType::RingMod,
+    EffectType::Tremolo,
+    EffectType::Phaser,
+    EffectType::Flanger,
+    EffectType::Chorus,
+    EffectType::Delay,
+    EffectType::Reverb,
+};
+inline constexpr int CLASSIC_EFFECT_COUNT =
+    static_cast<int>(sizeof(CLASSIC_EFFECT_ORDER) / sizeof(CLASSIC_EFFECT_ORDER[0]));
+
+static_assert(CLASSIC_EFFECT_COUNT == EFFECT_TYPE_COUNT,
+              "the classic order must list every effect exactly once");
+
 struct EffectsChain {
+    // Room for the rack to grow without another format change.
+    static constexpr int MAX_SLOTS = MAX_FX_SLOTS;
+
     // Effect instances
     Bitcrusher bitcrusher;
     Distortion distortion;
     Filter filter;
-    ThreeBandEQ eq;                 // NEW
-    Compressor compressor;          // NEW
-    FormantFilter formant;          // NEW: For vocoder sounds
+    ThreeBandEQ eq;
+    Compressor compressor;
+    FormantFilter formant;
     Delay delay;
     Chorus chorus;
     Tremolo tremolo;
     Phaser phaser;
-    Flanger flanger;                // NEW: Jet-plane swoosh effect for synthwave
+    Flanger flanger;
     RingModulator ringMod;
     Sidechain sidechain;
     Reverb reverb;
-    StereoWidener stereoWidener;    // NEW: For wide synthwave pads
-    TapeSaturation tapeSaturation;  // NEW: For warm analog character
-    Unison unison;                  // NEW: For thick synthwave sounds
+    StereoWidener stereoWidener;
+    TapeSaturation tapeSaturation;
+    Unison unison;
 
-    // Enable flags
+    // Enable flags. Authoritative: presets write these, the rack reads them.
     bool bitcrusherEnabled = false;
     bool distortionEnabled = false;
     bool filterEnabled = false;
-    bool eqEnabled = false;         // NEW
-    bool compressorEnabled = false; // NEW
-    bool formantEnabled = false;    // NEW
+    bool eqEnabled = false;
+    bool compressorEnabled = false;
+    bool formantEnabled = false;
     bool delayEnabled = false;
     bool chorusEnabled = false;
     bool tremoloEnabled = false;
     bool phaserEnabled = false;
-    bool flangerEnabled = false;        // NEW
+    bool flangerEnabled = false;
     bool ringModEnabled = false;
     bool sidechainEnabled = false;
     bool reverbEnabled = false;
-    bool stereoWidenerEnabled = false;   // NEW
-    bool tapeSaturationEnabled = false;  // NEW
+    bool stereoWidenerEnabled = false;
+    bool tapeSaturationEnabled = false;
     int sidechainSource = -1;  // Source channel index (-1 = none)
+
+    // ---- The rack ----------------------------------------------------------
+    //
+    // Order and count live in one struct because they must be published
+    // together: two separate members cannot be swapped atomically, and a
+    // reader that saw a new order with an old count could walk off the end.
+    struct RackOrder {
+        std::array<EffectType, MAX_SLOTS> slots{};
+        int count = 0;
+    };
+    // Per-effect wet/dry. 1.0 is bit-exact passthrough of the wet signal -
+    // the blend is skipped entirely rather than computing dry*0 + wet*1.
+    std::array<float, EFFECT_TYPE_COUNT> mix{};
+
+    EffectsChain() {
+        bindAdapters();
+        resetOrderToClassic();
+        mix.fill(1.0f);
+    }
+
+    // The permutation the audio thread should use for this sample. Acquired
+    // once per call so a reorder landing mid-chain cannot split a sample
+    // across two different orders.
+    const RackOrder& rack() const {
+        return m_orders[m_active.load(std::memory_order_acquire)];
+    }
+
+    // Copying rebinds, because the adapters hold pointers into the object
+    // being copied. Without this a copied chain would drive the original.
+    EffectsChain(const EffectsChain& other) { copyFrom(other); }
+    EffectsChain& operator=(const EffectsChain& other) {
+        if (this != &other) copyFrom(other);
+        return *this;
+    }
+
+    void resetOrderToClassic() {
+        // Both buffers, so a later publish cannot resurrect a stale order.
+        for (int buffer = 0; buffer < 2; ++buffer) {
+            m_orders[buffer].count = CLASSIC_EFFECT_COUNT;
+            for (int i = 0; i < CLASSIC_EFFECT_COUNT; ++i) {
+                m_orders[buffer].slots[i] = CLASSIC_EFFECT_ORDER[i];
+            }
+            for (int i = CLASSIC_EFFECT_COUNT; i < MAX_SLOTS; ++i) {
+                m_orders[buffer].slots[i] = EffectType::EQ;
+            }
+        }
+        m_active.store(0, std::memory_order_release);
+    }
+
+    bool isClassicOrder() const {
+        const RackOrder& current = rack();
+        if (current.count != CLASSIC_EFFECT_COUNT) return false;
+        for (int i = 0; i < current.count; ++i) {
+            if (current.slots[i] != CLASSIC_EFFECT_ORDER[i]) return false;
+        }
+        return true;
+    }
+
+    // Replace the whole order in one publish. Used by the loader and by the
+    // chain presets, neither of which wants to emit a burst of moveSlot
+    // calls the audio thread would hear one at a time.
+    void setOrder(const EffectType* slots, int count) {
+        if (slots == nullptr || count <= 0 || count > MAX_SLOTS) return;
+        const int current = m_active.load(std::memory_order_relaxed);
+        const int next = 1 - current;
+        RackOrder& target = m_orders[next];
+        target.count = count;
+        for (int i = 0; i < count; ++i) target.slots[i] = slots[i];
+        for (int i = count; i < MAX_SLOTS; ++i) target.slots[i] = EffectType::EQ;
+        m_active.store(next, std::memory_order_release);
+    }
+
+    IEffect* lookup(EffectType type) {
+        switch (type) {
+            case EffectType::EQ:             return &eqFx;
+            case EffectType::TapeSaturation: return &tapeFx;
+            case EffectType::Formant:        return &formantFx;
+            case EffectType::Compressor:     return &compressorFx;
+            case EffectType::Bitcrusher:     return &bitcrusherFx;
+            case EffectType::Distortion:     return &distortionFx;
+            case EffectType::Filter:         return &filterFx;
+            case EffectType::RingMod:        return &ringModFx;
+            case EffectType::Tremolo:        return &tremoloFx;
+            case EffectType::Phaser:         return &phaserFx;
+            case EffectType::Flanger:        return &flangerFx;
+            case EffectType::Chorus:         return &chorusFx;
+            case EffectType::Delay:          return &delayFx;
+            case EffectType::Reverb:         return &reverbFx;
+            default:                         return nullptr;
+        }
+    }
+
+    bool isEnabled(EffectType type) const {
+        switch (type) {
+            case EffectType::EQ:             return eqEnabled;
+            case EffectType::TapeSaturation: return tapeSaturationEnabled;
+            case EffectType::Formant:        return formantEnabled;
+            case EffectType::Compressor:     return compressorEnabled;
+            case EffectType::Bitcrusher:     return bitcrusherEnabled;
+            case EffectType::Distortion:     return distortionEnabled;
+            case EffectType::Filter:         return filterEnabled;
+            case EffectType::RingMod:        return ringModEnabled;
+            case EffectType::Tremolo:        return tremoloEnabled;
+            case EffectType::Phaser:         return phaserEnabled;
+            case EffectType::Flanger:        return flangerEnabled;
+            case EffectType::Chorus:         return chorusEnabled;
+            case EffectType::Delay:          return delayEnabled;
+            case EffectType::Reverb:         return reverbEnabled;
+            default:                         return false;
+        }
+    }
+
+    void setEnabled(EffectType type, bool on) {
+        switch (type) {
+            case EffectType::EQ:             eqEnabled = on; break;
+            case EffectType::TapeSaturation: tapeSaturationEnabled = on; break;
+            case EffectType::Formant:        formantEnabled = on; break;
+            case EffectType::Compressor:     compressorEnabled = on; break;
+            case EffectType::Bitcrusher:     bitcrusherEnabled = on; break;
+            case EffectType::Distortion:     distortionEnabled = on; break;
+            case EffectType::Filter:         filterEnabled = on; break;
+            case EffectType::RingMod:        ringModEnabled = on; break;
+            case EffectType::Tremolo:        tremoloEnabled = on; break;
+            case EffectType::Phaser:         phaserEnabled = on; break;
+            case EffectType::Flanger:        flangerEnabled = on; break;
+            case EffectType::Chorus:         chorusEnabled = on; break;
+            case EffectType::Delay:          delayEnabled = on; break;
+            case EffectType::Reverb:         reverbEnabled = on; break;
+            default: break;
+        }
+    }
+
+    // Move a slot, keeping every other slot's relative order. Used by the
+    // drag-to-reorder UI; bounds-checked because a drag can end anywhere.
+    void moveSlot(int from, int to) {
+        const int current = m_active.load(std::memory_order_relaxed);
+        const RackOrder& source = m_orders[current];
+
+        if (from < 0 || from >= source.count) return;
+        if (to < 0 || to >= source.count || to == from) return;
+
+        // Build the new permutation in the buffer nobody is reading, then
+        // publish it with a single store. The audio thread never sees the
+        // half-shifted state that duplicated an effect and drove the output
+        // to amplitude 50 before this existed.
+        const int next = 1 - current;
+        RackOrder& target = m_orders[next];
+        target = source;
+
+        const EffectType moved = source.slots[from];
+        if (from < to) {
+            for (int i = from; i < to; ++i) target.slots[i] = source.slots[i + 1];
+        } else {
+            for (int i = from; i > to; --i) target.slots[i] = source.slots[i - 1];
+        }
+        target.slots[to] = moved;
+
+        m_active.store(next, std::memory_order_release);
+    }
 
     void setSampleRate(float sr) {
         filter.setSampleRate(sr);
-        eq.setSampleRate(sr);           // NEW
-        compressor.setSampleRate(sr);   // NEW
-        formant.setSampleRate(sr);      // NEW
+        eq.setSampleRate(sr);
+        compressor.setSampleRate(sr);
+        formant.setSampleRate(sr);
         delay.setSampleRate(sr);
         chorus.setSampleRate(sr);
-        flanger.init((int)sr);          // NEW
+        flanger.init((int)sr);
         sidechain.setSampleRate(sr);
         reverb.setSampleRate(sr);
-        stereoWidener.setSampleRate(sr);    // NEW
-        tapeSaturation.setSampleRate(sr);   // NEW
+        stereoWidener.setSampleRate(sr);
+        tapeSaturation.setSampleRate(sr);
     }
 
     float process(float input, float time) {
         float output = input;
 
-        // Process in order: EQ -> Saturation -> Formant -> Compressor -> Filter -> Modulation -> Time-based -> Reverb
-        if (eqEnabled)         output = eq.process(output);             // NEW
-        if (tapeSaturationEnabled) output = tapeSaturation.process(output);
-        if (formantEnabled)    output = formant.process(output);        // NEW: Formant shaping early
-        if (compressorEnabled) output = compressor.process(output);     // NEW
-        if (bitcrusherEnabled) output = bitcrusher.process(output);
-        if (distortionEnabled) output = distortion.process(output);
-        if (filterEnabled)     output = filter.process(output);
-        if (ringModEnabled)    output = ringMod.process(output, time);
-        if (tremoloEnabled)    output *= tremolo.process(time);
-        if (phaserEnabled)     output = phaser.process(output, time);
-        if (flangerEnabled)    output = flanger.process(output);        // NEW
-        if (chorusEnabled)     output = chorus.process(output, time);
-        if (delayEnabled)      output = delay.process(output);
-        if (reverbEnabled)     output = reverb.process(output);
-        // Note: Stereo widener is processed in Sequencer for proper L/R handling
+        // One acquire per sample: the whole chain runs on one permutation.
+        const RackOrder& active = rack();
 
+        for (int i = 0; i < active.count; ++i) {
+            const EffectType type = active.slots[i];
+            if (!isEnabled(type)) continue;
+
+            IEffect* effect = lookup(type);
+            if (effect == nullptr) continue;
+
+            const float wet = effect->process(output, time);
+            const float amount = mix[static_cast<size_t>(type)];
+
+            // The >= 1.0f branch is not an optimisation - it is what makes
+            // the default rack bit-identical to the old fixed chain.
+            output = (amount >= 1.0f) ? wet : (output + (wet - output) * amount);
+        }
+
+        // Stereo widener is applied by the Sequencer, which owns the L/R pair.
         return output;
     }
 
-    // Process with stereo output (for stereo widener)
     std::pair<float, float> processStereo(float input, float time) {
         float mono = process(input, time);
 
@@ -1149,17 +1538,80 @@ struct EffectsChain {
     void reset() {
         bitcrusher.reset();
         filter.reset();
-        eq.reset();             // NEW
-        compressor.reset();     // NEW
-        formant.reset();        // NEW
+        eq.reset();
+        compressor.reset();
+        formant.reset();
         delay.reset();
-        stereoWidener.reset();       // NEW
-        tapeSaturation.reset();      // NEW
+        stereoWidener.reset();
+        tapeSaturation.reset();
         chorus.reset();
         phaser.reset();
-        flanger.reset();        // NEW
+        flanger.reset();
         sidechain.reset();
         reverb.reset();
+    }
+
+private:
+    RackOrder m_orders[2];
+    std::atomic<int> m_active{0};
+
+    EqFx eqFx; TapeFx tapeFx; FormantFx formantFx; CompressorFx compressorFx;
+    BitcrusherFx bitcrusherFx; DistortionFx distortionFx; FilterFx filterFx;
+    RingModFx ringModFx; TremoloFx tremoloFx; PhaserFx phaserFx;
+    FlangerFx flangerFx; ChorusFx chorusFx; DelayFx delayFx; ReverbFx reverbFx;
+
+    void bindAdapters() {
+        eqFx.target = &eq;
+        tapeFx.target = &tapeSaturation;
+        formantFx.target = &formant;
+        compressorFx.target = &compressor;
+        bitcrusherFx.target = &bitcrusher;
+        distortionFx.target = &distortion;
+        filterFx.target = &filter;
+        ringModFx.target = &ringMod;
+        tremoloFx.target = &tremolo;
+        phaserFx.target = &phaser;
+        flangerFx.target = &flanger;
+        chorusFx.target = &chorus;
+        delayFx.target = &delay;
+        reverbFx.target = &reverb;
+    }
+
+    void copyFrom(const EffectsChain& other) {
+        bitcrusher = other.bitcrusher; distortion = other.distortion;
+        filter = other.filter; eq = other.eq; compressor = other.compressor;
+        formant = other.formant; delay = other.delay; chorus = other.chorus;
+        tremolo = other.tremolo; phaser = other.phaser; flanger = other.flanger;
+        ringMod = other.ringMod; sidechain = other.sidechain; reverb = other.reverb;
+        stereoWidener = other.stereoWidener; tapeSaturation = other.tapeSaturation;
+        unison = other.unison;
+
+        bitcrusherEnabled = other.bitcrusherEnabled;
+        distortionEnabled = other.distortionEnabled;
+        filterEnabled = other.filterEnabled;
+        eqEnabled = other.eqEnabled;
+        compressorEnabled = other.compressorEnabled;
+        formantEnabled = other.formantEnabled;
+        delayEnabled = other.delayEnabled;
+        chorusEnabled = other.chorusEnabled;
+        tremoloEnabled = other.tremoloEnabled;
+        phaserEnabled = other.phaserEnabled;
+        flangerEnabled = other.flangerEnabled;
+        ringModEnabled = other.ringModEnabled;
+        sidechainEnabled = other.sidechainEnabled;
+        reverbEnabled = other.reverbEnabled;
+        stereoWidenerEnabled = other.stereoWidenerEnabled;
+        tapeSaturationEnabled = other.tapeSaturationEnabled;
+        sidechainSource = other.sidechainSource;
+
+        m_orders[0] = other.m_orders[0];
+        m_orders[1] = other.m_orders[1];
+        m_active.store(other.m_active.load(std::memory_order_acquire),
+                       std::memory_order_release);
+        mix = other.mix;
+
+        // Last, and the reason this function exists at all.
+        bindAdapters();
     }
 };
 

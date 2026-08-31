@@ -37,6 +37,8 @@
 #include "GroovePresets.h"
 #include "Version.h"
 #include "Tutorial.h"
+#include "LegacyEffectsChain.h"
+#include <thread>
 #include "UndoHistory.h"
 
 // Pulls in ApplyTheme. No window or GL context is needed: it only writes to
@@ -6595,6 +6597,523 @@ static void testPlayFromEnd() {
 }
 
 // ============================================================================
+// 47. The insert rack is sample-identical to the fixed chain
+// ============================================================================
+static void testEffectRackIdentity() {
+    beginTest("Effect rack: identical to the old fixed chain");
+
+    // Task A replaced seventeen members and a hardcoded order with a
+    // reorderable rack. The whole claim is that it changed nothing audible,
+    // so this compares against a frozen verbatim copy of the old chain -
+    // tests/LegacyEffectsChain.h - sample by sample, with exact float
+    // equality. Not an epsilon: any drift at all is a defect here.
+
+    // Deterministic and broadband, so every effect has something to chew on.
+    auto makeInput = [](int n) {
+        std::vector<float> input(static_cast<size_t>(n));
+        uint32_t rng = 0x13579BDFu;
+        for (int i = 0; i < n; ++i) {
+            const float t = static_cast<float>(i) / 44100.0f;
+            rng = rng * 1664525u + 1013904223u;
+            const float noise = (float(rng >> 8) / 8388608.0f) - 1.0f;
+            float value = 0.45f * std::sin(6.2831853f * 220.0f * t)      // tone
+                        + 0.25f * (std::fmod(t * 110.0f, 1.0f) - 0.5f)   // saw
+                        + 0.05f * noise;                                  // hiss
+            if (i % 4410 == 0) value += 0.9f;                             // impulses
+            input[static_cast<size_t>(i)] = value;
+        }
+        return input;
+    };
+
+    // Extreme but legal settings: an effect left at unity would prove nothing.
+    auto configure = [](auto& chain) {
+        chain.eq.lowGain = 1.8f; chain.eq.midGain = 0.5f; chain.eq.highGain = 1.6f;
+        chain.tapeSaturation.drive = 2.5f; chain.tapeSaturation.mix = 0.8f;
+        chain.formant.vowel = FormantFilter::Vowel::E; chain.formant.resonance = 6.0f;
+        // threshold is linear 0..1 here, not dB - the same units trap that
+        // silenced the master EQ once.
+        chain.compressor.threshold = 0.15f; chain.compressor.ratio = 8.0f;
+        chain.bitcrusher.bitDepth = 3.0f; chain.bitcrusher.sampleRateReduction = 12.0f;
+        chain.distortion.drive = 18.0f; chain.distortion.mix = 0.7f;
+        chain.filter.cutoff = 900.0f; chain.filter.resonance = 0.6f;
+        chain.ringMod.frequency = 320.0f; chain.ringMod.mix = 0.65f;
+        chain.tremolo.rate = 5.5f; chain.tremolo.depth = 0.7f;
+        chain.phaser.rate = 0.7f; chain.phaser.depth = 0.8f;
+        chain.flanger.rate = 0.35f; chain.flanger.depth = 0.7f;
+        chain.chorus.rate = 1.4f; chain.chorus.depth = 0.6f;
+        chain.delay.delayTime = 0.18f; chain.delay.feedback = 0.45f; chain.delay.mix = 0.5f;
+        chain.reverb.roomSize = 0.7f; chain.reverb.damping = 0.4f; chain.reverb.mix = 0.45f;
+    };
+
+    struct Case { const char* name; EffectType only; bool all; };
+    std::vector<Case> cases;
+    cases.push_back({"every effect at once", EffectType::EQ, true});
+    for (int i = 0; i < EFFECT_TYPE_COUNT; ++i) {
+        cases.push_back({effectDisplayName(static_cast<EffectType>(i)),
+                         static_cast<EffectType>(i), false});
+    }
+
+    const int SAMPLES = 44100 * 2;   // two seconds
+    const std::vector<float> input = makeInput(SAMPLES);
+
+    int mismatches = 0;
+    for (const Case& testCase : cases) {
+        legacy::LegacyEffectsChain oldChain;
+        EffectsChain newChain;
+
+        oldChain.setSampleRate(44100.0f);
+        newChain.setSampleRate(44100.0f);
+        configure(oldChain);
+        configure(newChain);
+
+        // Same enables on both sides.
+        for (int i = 0; i < EFFECT_TYPE_COUNT; ++i) {
+            const EffectType type = static_cast<EffectType>(i);
+            const bool on = testCase.all || (type == testCase.only);
+            newChain.setEnabled(type, on);
+            switch (type) {
+                case EffectType::EQ:             oldChain.eqEnabled = on; break;
+                case EffectType::TapeSaturation: oldChain.tapeSaturationEnabled = on; break;
+                case EffectType::Formant:        oldChain.formantEnabled = on; break;
+                case EffectType::Compressor:     oldChain.compressorEnabled = on; break;
+                case EffectType::Bitcrusher:     oldChain.bitcrusherEnabled = on; break;
+                case EffectType::Distortion:     oldChain.distortionEnabled = on; break;
+                case EffectType::Filter:         oldChain.filterEnabled = on; break;
+                case EffectType::RingMod:        oldChain.ringModEnabled = on; break;
+                case EffectType::Tremolo:        oldChain.tremoloEnabled = on; break;
+                case EffectType::Phaser:         oldChain.phaserEnabled = on; break;
+                case EffectType::Flanger:        oldChain.flangerEnabled = on; break;
+                case EffectType::Chorus:         oldChain.chorusEnabled = on; break;
+                case EffectType::Delay:          oldChain.delayEnabled = on; break;
+                case EffectType::Reverb:         oldChain.reverbEnabled = on; break;
+                default: break;
+            }
+        }
+
+        oldChain.reset();
+        newChain.reset();
+
+        int firstBad = -1;
+        for (int i = 0; i < SAMPLES; ++i) {
+            const float time = static_cast<float>(i) / 44100.0f;
+            const float a = oldChain.process(input[static_cast<size_t>(i)], time);
+            const float b = newChain.process(input[static_cast<size_t>(i)], time);
+            if (a != b) { firstBad = i; break; }
+        }
+
+        if (firstBad >= 0) {
+            check(false, std::string("rack diverged from the old chain with '") +
+                  testCase.name + "' at sample " + std::to_string(firstBad));
+            if (++mismatches >= 3) break;
+        }
+    }
+    if (mismatches == 0) {
+        check(true, "the rack in classic order is sample-identical to the old "
+                    "fixed chain, across all effects together and each alone");
+    }
+
+    // ---- The default really is the classic order --------------------------
+    {
+        EffectsChain chain;
+        check(chain.isClassicOrder(),
+              "a new chain starts in the order every previous version used");
+        check(chain.rack().count == EFFECT_TYPE_COUNT,
+              "with every effect present exactly once");
+
+        bool seen[EFFECT_TYPE_COUNT] = {};
+        bool duplicate = false;
+        for (int i = 0; i < chain.rack().count; ++i) {
+            const int index = static_cast<int>(chain.rack().slots[i]);
+            if (index < 0 || index >= EFFECT_TYPE_COUNT || seen[index]) duplicate = true;
+            else seen[index] = true;
+        }
+        check(!duplicate, "and no effect listed twice");
+    }
+
+    // ---- Reordering actually reorders -------------------------------------
+    //
+    // The point of the whole task: reverb before distortion must sound
+    // different from distortion before reverb, or the rack is decorative.
+    {
+        const std::vector<float> shortInput = makeInput(8192);
+
+        auto render = [&](bool reversed) {
+            EffectsChain chain;
+            chain.setSampleRate(44100.0f);
+            configure(chain);
+            chain.distortionEnabled = true;
+            chain.reverbEnabled = true;
+            if (reversed) {
+                // Find reverb and move it before distortion.
+                int reverbSlot = -1, distSlot = -1;
+                for (int i = 0; i < chain.rack().count; ++i) {
+                    if (chain.rack().slots[i] == EffectType::Reverb) reverbSlot = i;
+                    if (chain.rack().slots[i] == EffectType::Distortion) distSlot = i;
+                }
+                chain.moveSlot(reverbSlot, distSlot);
+            }
+            chain.reset();
+            std::vector<float> out;
+            out.reserve(shortInput.size());
+            for (size_t i = 0; i < shortInput.size(); ++i) {
+                out.push_back(chain.process(shortInput[i],
+                                            static_cast<float>(i) / 44100.0f));
+            }
+            return out;
+        };
+
+        const std::vector<float> normal = render(false);
+        const std::vector<float> swapped = render(true);
+
+        double difference = 0.0;
+        for (size_t i = 0; i < normal.size(); ++i) {
+            difference += std::fabs(normal[i] - swapped[i]);
+        }
+        check(difference > 1.0,
+              "reverb before distortion sounds different from distortion "
+              "before reverb - the reorder reaches the audio (difference " +
+              std::to_string(difference) + ")");
+    }
+
+    // ---- moveSlot is total ------------------------------------------------
+    {
+        EffectsChain chain;
+        const auto original = chain.rack().slots;
+
+        chain.moveSlot(-1, 3);
+        chain.moveSlot(3, -1);
+        chain.moveSlot(99, 0);
+        chain.moveSlot(0, 99);
+        chain.moveSlot(2, 2);
+        bool unchanged = (chain.rack().count == EFFECT_TYPE_COUNT);
+        for (int i = 0; i < chain.rack().count && unchanged; ++i) {
+            if (chain.rack().slots[i] != original[i]) unchanged = false;
+        }
+        check(unchanged, "out-of-range and no-op moves leave the rack alone");
+
+        chain.moveSlot(0, chain.rack().count - 1);
+        bool stillComplete = true;
+        bool seen[EFFECT_TYPE_COUNT] = {};
+        for (int i = 0; i < chain.rack().count; ++i) {
+            const int index = static_cast<int>(chain.rack().slots[i]);
+            if (seen[index]) stillComplete = false;
+            seen[index] = true;
+        }
+        check(stillComplete, "moving the first slot to the end loses nothing");
+        check(chain.rack().slots[chain.rack().count - 1] == EffectType::EQ,
+              "and puts it where it was asked to go");
+    }
+
+    // ---- Wet/dry --------------------------------------------------------
+    {
+        EffectsChain dryChain, wetChain;
+        dryChain.setSampleRate(44100.0f);
+        wetChain.setSampleRate(44100.0f);
+        configure(dryChain);
+        configure(wetChain);
+        dryChain.distortionEnabled = true;
+        wetChain.distortionEnabled = true;
+        dryChain.mix[static_cast<size_t>(EffectType::Distortion)] = 0.0f;
+
+        const float sample = 0.5f;
+        check(std::fabs(dryChain.process(sample, 0.0f) - sample) < 1e-6f,
+              "a slot at zero mix passes the signal through untouched");
+        check(std::fabs(wetChain.process(sample, 0.0f) - sample) > 1e-6f,
+              "and at full mix it does not");
+    }
+
+    // ---- Copying rebinds --------------------------------------------------
+    //
+    // The adapters hold pointers into their own chain. A copy that did not
+    // rebind them would silently drive the original's effects.
+    {
+        EffectsChain source;
+        source.setSampleRate(44100.0f);
+        configure(source);
+        source.distortionEnabled = true;
+
+        EffectsChain copy = source;
+        copy.distortion.drive = 40.0f;    // diverge the copy
+
+        const float a = source.process(0.4f, 0.0f);
+        const float b = copy.process(0.4f, 0.0f);
+        check(a != b,
+              "a copied chain drives its own effects, not the original's - "
+              "the adapters rebind on copy");
+    }
+}
+
+// ============================================================================
+// 48. Rack stability under reordering
+// ============================================================================
+static void testEffectRackStability() {
+    beginTest("Effect rack stability");
+
+    // Anything touching the audio thread gets a stability run. The UI
+    // reorders slots while audio is processing, so this hammers both at once.
+    //
+    // The assertions are split by whether they depend on thread timing.
+    // Peak amplitude with delay and reverb in the rack does - feedback
+    // accumulates differently per interleaving, and an early version of this
+    // test failed and passed on consecutive runs because of it. Finiteness
+    // and structural integrity do not depend on timing, so those are
+    // asserted with the feedback effects present; the amplitude bound is
+    // asserted separately with them removed, where it is deterministic.
+
+    auto stormRun = [](bool includeFeedback, int blocks) {
+        struct Result {
+            bool finite = true;
+            bool bounded = true;
+            float worst = 0.0f;
+            int reorders = 0;
+            bool intact = false;
+        } result;
+
+        EffectsChain chain;
+        chain.setSampleRate(44100.0f);
+        chain.eqEnabled = true;
+        chain.distortionEnabled = true;
+        chain.filterEnabled = true;
+        chain.bitcrusherEnabled = true;
+        if (includeFeedback) {
+            chain.delayEnabled = true;
+            chain.reverbEnabled = true;
+        }
+
+        std::atomic<bool> running{true};
+        std::atomic<int> reorders{0};
+
+        std::thread editor([&]() {
+            uint32_t rng = 0xA5A5A5A5u;
+            while (running.load(std::memory_order_relaxed)) {
+                rng = rng * 1664525u + 1013904223u;
+                const int from = static_cast<int>((rng >> 16) % 14u);
+                rng = rng * 1664525u + 1013904223u;
+                const int to = static_cast<int>((rng >> 16) % 14u);
+                chain.moveSlot(from, to);
+                reorders.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+
+        for (int block = 0; block < blocks; ++block) {
+            for (int i = 0; i < 64; ++i) {
+                const float time = static_cast<float>(block * 64 + i) / 44100.0f;
+                const float out = chain.process(0.4f * std::sin(time * 900.0f), time);
+                if (!std::isfinite(out)) { result.finite = false; break; }
+                result.worst = std::max(result.worst, std::fabs(out));
+            }
+            if (!result.finite) break;
+        }
+
+        running.store(false, std::memory_order_relaxed);
+        editor.join();
+
+        result.reorders = reorders.load();
+
+        bool seen[EFFECT_TYPE_COUNT] = {};
+        result.intact = (chain.rack().count == EFFECT_TYPE_COUNT);
+        for (int i = 0; i < chain.rack().count && result.intact; ++i) {
+            const int index = static_cast<int>(chain.rack().slots[i]);
+            if (index < 0 || index >= EFFECT_TYPE_COUNT || seen[index]) {
+                result.intact = false;
+            } else {
+                seen[index] = true;
+            }
+        }
+        return result;
+    };
+
+    // ---- With feedback: the timing-independent invariants ----------------
+    {
+        const auto result = stormRun(true, 4000);
+
+        check(result.reorders > 0,
+              "the editor thread really did reorder slots (" +
+              std::to_string(result.reorders) + " times)");
+        check(result.finite,
+              "no sample went NaN or infinite while slots moved underneath, "
+              "even with delay and reverb feedback in the rack");
+        check(result.intact,
+              "and the rack still holds every effect exactly once afterwards");
+    }
+
+    // ---- Without feedback: the amplitude bound, deterministically --------
+    //
+    // Nothing accumulates here, so the peak is set by the gains alone. If a
+    // torn read ever applies an effect twice this fails - which is exactly
+    // what it did, at amplitude 50, before the order was published
+    // atomically.
+    {
+        const auto result = stormRun(false, 2000);
+
+        check(result.finite, "no non-finite sample without feedback either");
+        check(result.worst < 5.0f,
+              "peak amplitude stays bounded under a reorder storm - a torn "
+              "read applying an effect twice would break this (worst " +
+              std::to_string(result.worst) + ")");
+        check(result.intact, "and the rack survives structurally intact");
+    }
+}
+
+// ============================================================================
+// 49. The rack survives save, load and a v2 file
+// ============================================================================
+static void testEffectRackPersistence() {
+    beginTest("Effect rack persistence and migration");
+
+    // Rule 4 exists because v1 -> v2 once discarded an entire mix in silence.
+    // These are the checks that would have caught that.
+
+    // ---- A reordered rack round-trips -------------------------------------
+    {
+        Project original;
+        // Reverb first, distortion last: nothing like the classic order.
+        original.channels[0].fxOrder[0] = static_cast<uint8_t>(EffectType::Reverb);
+        original.channels[0].fxOrder[1] = static_cast<uint8_t>(EffectType::Delay);
+        original.channels[0].fxOrder[2] = static_cast<uint8_t>(EffectType::Distortion);
+        original.channels[0].fxSlotCount = 3;
+        original.channels[0].reverbEnabled = true;
+
+        const std::string path = testPath("rack_roundtrip.ctp");
+        check(saveProjectFile(original, path), "a reordered rack saves");
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "and loads");
+        check(loaded.channels[0].fxSlotCount == 3,
+              "with its slot count intact (got " +
+              std::to_string(loaded.channels[0].fxSlotCount) + ")");
+        check(loaded.channels[0].fxOrder[0] ==
+                  static_cast<uint8_t>(EffectType::Reverb) &&
+              loaded.channels[0].fxOrder[2] ==
+                  static_cast<uint8_t>(EffectType::Distortion),
+              "and its order preserved end to end");
+        std::remove(path.c_str());
+    }
+
+    // ---- A classic rack writes no line at all -----------------------------
+    //
+    // A project nobody reordered must produce the bytes it always did.
+    {
+        Project plain;
+        const std::string path = testPath("rack_classic.ctp");
+        check(saveProjectFile(plain, path), "an untouched project saves");
+
+        const std::string text = readWholeFile(path);
+        check(text.find("FXORDER") == std::string::npos,
+              "and writes no rack line, so a file nobody reordered is "
+              "unchanged by the format bump");
+        std::remove(path.c_str());
+    }
+
+    // ---- A v2 file migrates to the classic order --------------------------
+    //
+    // This is the migration. It is a no-op by construction - count 0 means
+    // classic - and that is exactly why it cannot lose anyone's mix.
+    {
+        const std::string path = testPath("rack_v2.ctp");
+        {
+            std::ofstream file(path);
+            file << "CHIPTUNE_PROJECT v2\n";
+            file << "NAME Old Mix\n";
+            file << "BPM 128\n";
+            file << "CHANNEL 0 \"Lead\" Pulse revOn=1 dstOn=1 dlyOn=1\n";
+            file << "PATTERN \"P\" 16\n";
+            file << "NOTE 60 0.0 1.0 1.0 Pulse 0.0 0.0\n";
+            file << "END_PATTERN\n";
+            file << "END_PROJECT\n";
+        }
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "a v2 file still loads");
+        check(loaded.channels[0].fxSlotCount == 0,
+              "its rack reads as 'classic order' rather than as an empty rack");
+        check(loaded.channels[0].reverbEnabled &&
+              loaded.channels[0].distortionEnabled &&
+              loaded.channels[0].delayEnabled,
+              "and every effect it had enabled is still enabled - the mix "
+              "survives the version bump, which v1 -> v2 did not manage");
+
+        // And the chain that config produces really is the classic one.
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&loaded);
+        seq.updateChannelConfigs();
+        check(seq.channelEffects(0).isClassicOrder(),
+              "and the live chain is in the classic order it always was");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- Sanitising a corrupt rack ----------------------------------------
+    {
+        Project corrupt;
+        corrupt.channels[0].fxOrder[0] = static_cast<uint8_t>(EffectType::Delay);
+        corrupt.channels[0].fxOrder[1] = static_cast<uint8_t>(EffectType::Delay);
+        corrupt.channels[0].fxOrder[2] = 200;    // no such effect
+        corrupt.channels[0].fxOrder[3] = static_cast<uint8_t>(EffectType::Filter);
+        corrupt.channels[0].fxSlotCount = 4;
+
+        clampProjectToValidRanges(corrupt);
+
+        check(corrupt.channels[0].fxSlotCount == 2,
+              "a duplicate and an unknown effect are both dropped (got " +
+              std::to_string(corrupt.channels[0].fxSlotCount) + ")");
+        check(corrupt.channels[0].fxOrder[0] ==
+                  static_cast<uint8_t>(EffectType::Delay) &&
+              corrupt.channels[0].fxOrder[1] ==
+                  static_cast<uint8_t>(EffectType::Filter),
+              "and what survives keeps its order");
+    }
+
+    {
+        Project allJunk;
+        allJunk.channels[0].fxOrder[0] = 210;
+        allJunk.channels[0].fxOrder[1] = 220;
+        allJunk.channels[0].fxSlotCount = 2;
+
+        clampProjectToValidRanges(allJunk);
+
+        check(allJunk.channels[0].fxSlotCount == 0,
+              "a rack that sanitises to nothing falls back to the classic "
+              "order rather than leaving the channel silent");
+    }
+
+    {
+        Project overflow;
+        overflow.channels[0].fxSlotCount = 9999;
+        clampProjectToValidRanges(overflow);
+        check(overflow.channels[0].fxSlotCount <= MAX_FX_SLOTS,
+              "an absurd slot count cannot walk off the end of the array");
+    }
+
+    // ---- An unknown token in a v3 file ------------------------------------
+    {
+        const std::string path = testPath("rack_future.ctp");
+        {
+            std::ofstream file(path);
+            file << "CHIPTUNE_PROJECT v3\n";
+            file << "CHANNEL 0 \"Lead\" Pulse\n";
+            file << "FXORDER 0 reverb quantumflux delay\n";
+            file << "PATTERN \"P\" 16\n";
+            file << "END_PATTERN\n";
+            file << "END_PROJECT\n";
+        }
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "a file naming an unknown effect loads");
+        check(loaded.channels[0].fxSlotCount == 2,
+              "the unknown effect is dropped and the rest of the rack kept");
+        check(loaded.channels[0].fxOrder[0] ==
+                  static_cast<uint8_t>(EffectType::Reverb) &&
+              loaded.channels[0].fxOrder[1] ==
+                  static_cast<uint8_t>(EffectType::Delay),
+              "in the order the file gave them");
+        std::remove(path.c_str());
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -6680,6 +7199,9 @@ int main(int argc, char** argv) {
     testVersionCoherence();
     testTutorial();
     testPlayFromEnd();
+    testEffectRackIdentity();
+    testEffectRackStability();
+    testEffectRackPersistence();
     testLongRunStability();
 
     std::printf("\n==========================\n");

@@ -25,6 +25,7 @@
 #include "Types.h"
 #include "ProjectValidation.h"
 #include "OscillatorNames.h"
+#include "Effects.h"   // EffectType and its stable tokens
 
 #include <fstream>
 #include <istream>
@@ -38,7 +39,13 @@
 namespace ChiptuneTracker {
 namespace ctp {
 
-inline constexpr int FORMAT_VERSION = 2;
+// v3 added the per-channel insert-rack order (the FXORDER line).
+//
+// The bump is honest but the migration is a no-op by construction: a rack
+// count of 0 means the classic order, which is what every v1 and v2 file
+// implies, so an old project cannot be misread. The old *On flags are still
+// written too, so a v3 file also still loads in a 3.6 binary.
+inline constexpr int FORMAT_VERSION = 3;
 
 // ============================================================================
 // Field tables
@@ -491,6 +498,19 @@ inline bool writeProject(std::ostream& file, const Project& project) {
 
         file << "\n";
 
+        // The insert-rack order, written only when it is not the classic
+        // one - so a project nobody reordered produces the same bytes it
+        // did before v3.
+        if (c.fxSlotCount > 0) {
+            file << "FXORDER " << ch;
+            for (int slot = 0; slot < c.fxSlotCount && slot < MAX_FX_SLOTS; ++slot) {
+                const uint8_t raw = c.fxOrder[static_cast<size_t>(slot)];
+                if (raw >= static_cast<uint8_t>(EffectType::Count)) continue;
+                file << ' ' << effectTypeId(static_cast<EffectType>(raw));
+            }
+            file << "\n";
+        }
+
         // Instrument macros follow their channel, one line each
         ctp::writeMacro(file, ch, "vol",   c.macros.volume,   c.macros.rateHz);
         ctp::writeMacro(file, ch, "arp",   c.macros.arpeggio, c.macros.rateHz,
@@ -682,6 +702,27 @@ inline bool readProject(std::istream& file, Project& project) {
         }
         else if (cmd == "END_PATTERN") {
             currentPattern = nullptr;
+        }
+        else if (cmd == "FXORDER") {
+            // Carries its own channel index rather than relying on read
+            // order, so a hand-edited or reordered file cannot land a rack
+            // on the wrong channel.
+            int index = -1;
+            iss >> index;
+            if (index >= 0 && index < Project::MAX_CHANNELS) {
+                ChannelConfig& target = project.channels[static_cast<size_t>(index)];
+                int count = 0;
+                std::string token;
+                // Unknown tokens are dropped rather than guessed at - a
+                // newer version's effect has no sensible substitute here.
+                while ((iss >> token) && count < MAX_FX_SLOTS) {
+                    EffectType type;
+                    if (!effectTypeFromId(token.c_str(), type)) continue;
+                    target.fxOrder[static_cast<size_t>(count++)] =
+                        static_cast<uint8_t>(type);
+                }
+                target.fxSlotCount = count;
+            }
         }
         else if (cmd == "CLIP") {
             Clip clip;

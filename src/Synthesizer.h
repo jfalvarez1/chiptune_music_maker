@@ -304,6 +304,23 @@ public:
         m_filterEnvDecay = config.filterEnvDecay;
         
         // Effects
+        // The rack order. A count of 0 is the classic order, which is
+        // also what a pre-v3 project means, so both land here identically.
+        if (config.fxSlotCount <= 0) {
+            m_effects.resetOrderToClassic();
+        } else {
+            EffectType slots[MAX_FX_SLOTS];
+            int count = 0;
+            for (int i = 0; i < config.fxSlotCount && i < MAX_FX_SLOTS; ++i) {
+                const uint8_t raw = config.fxOrder[static_cast<size_t>(i)];
+                if (raw < static_cast<uint8_t>(EffectType::Count)) {
+                    slots[count++] = static_cast<EffectType>(raw);
+                }
+            }
+            if (count > 0) m_effects.setOrder(slots, count);
+            else m_effects.resetOrderToClassic();
+        }
+
         m_effects.bitcrusherEnabled = config.bitcrusherEnabled;
         m_effects.bitcrusher.bitDepth = config.bitDepth;
         m_effects.bitcrusher.sampleRateReduction = config.sampleRateDiv;
@@ -765,6 +782,7 @@ public:
 
     // Accessors
     EffectsChain& effects() { return m_effects; }
+    const EffectsChain& effects() const { return m_effects; }
     Vibrato& vibrato() { return m_vibrato; }
     Arpeggiator& arpeggiator() { return m_arpeggiator; }
 

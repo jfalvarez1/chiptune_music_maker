@@ -17,6 +17,7 @@
  */
 
 #include "Types.h"
+#include "Effects.h"
 
 #include <cmath>
 #include <algorithm>
@@ -150,6 +151,38 @@ inline void clampMacrosToValidRanges(InstrumentMacros& macros) {
 }
 
 inline void clampChannelToValidRanges(ChannelConfig& c) {
+    // ---- Insert rack ---------------------------------------------------
+    //
+    // A rack arriving from a file can name an effect this build does not
+    // have, name one twice, or claim more slots than exist. Each is dropped
+    // rather than clamped: there is no sensible substitute for an unknown
+    // effect, and a duplicate would apply it twice.
+    //
+    // If sanitising empties the rack, it falls back to the classic order.
+    // Leaving it empty would render the channel completely dry, which is a
+    // far worse outcome than ignoring a corrupt line.
+    {
+        std::array<uint8_t, MAX_FX_SLOTS> cleaned{};
+        bool seen[static_cast<size_t>(EffectType::Count)] = {};
+        int count = 0;
+
+        const int claimed = std::min(c.fxSlotCount, MAX_FX_SLOTS);
+        for (int i = 0; i < claimed; ++i) {
+            const uint8_t raw = c.fxOrder[static_cast<size_t>(i)];
+            if (raw >= static_cast<uint8_t>(EffectType::Count)) continue;
+            if (seen[raw]) continue;
+            seen[raw] = true;
+            cleaned[static_cast<size_t>(count++)] = raw;
+        }
+
+        if (c.fxSlotCount != 0 && count == 0) {
+            c.fxSlotCount = 0;          // 0 means classic
+        } else {
+            c.fxOrder = cleaned;
+            c.fxSlotCount = count;
+        }
+    }
+
     c.volume = sanitizeFloat(c.volume, 0.0f, 2.0f, 0.8f);
     c.pan = sanitizeFloat(c.pan, -1.0f, 1.0f, 0.0f);
 

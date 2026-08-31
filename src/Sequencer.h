@@ -423,6 +423,14 @@ public:
         return m_midiInput;
     }
 
+    // Read-only view of a channel's live insert rack, so a test can assert
+    // what the audio thread is actually about to run rather than what the
+    // config claims it should be.
+    const EffectsChain& channelEffects(int channel) const {
+        const int index = (channel >= 0 && channel < MAX_CHANNELS) ? channel : 0;
+        return m_synths[static_cast<size_t>(index)].effects();
+    }
+
     void updateChannelConfigs() {
         if (!m_project) return;
 
