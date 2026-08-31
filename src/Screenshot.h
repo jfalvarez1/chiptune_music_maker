@@ -219,7 +219,7 @@ struct CaptureRequest {
 //   --fx-rack            open the Effect Rack section
 //   --audio-clip         put an audio clip on the arrangement
 //   --structure          add tempo/meter changes, markers and regions
-//   --instrument <name>  fm|wavetable|sampler - channel 0's engine
+//   --instrument <name>  fm|wavetable|sampler|granular|drummodel
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -625,6 +625,43 @@ inline void applyCaptureState(const CaptureRequest& request,
             project.channels[0].oscillator.wavetableBank = 0;
             project.channels[0].oscillator.wavetableMorph = 0.4f;
             project.channels[0].oscillator.wavetableMorphSweep = 0.5f;
+        } else if (request.instrument == "granular") {
+            project.channels[0].oscillator.type = OscillatorType::Granular;
+
+            Sample source;
+            source.name = "vox_take.wav";
+            source.sampleRate = 48000;
+            source.audioData.resize(24000);
+            for (size_t i = 0; i < source.audioData.size(); ++i) {
+                const float t = float(i) / 48000.0f;
+                source.audioData[i] = 0.6f *
+                    std::sin(6.28318530718f * 330.0f * t);
+            }
+            source.lengthSeconds = 0.5f;
+            source.isLoaded = true;
+            const int id = project.samplePool.addSample(source);
+
+            GranularConfig& g = project.channels[0].oscillator.granular;
+            g.sampleId = id;
+            g.position = 0.3f;
+            g.positionRate = 0.0f;      // frozen, the interesting setting
+            g.spray = 0.04f;
+            g.grainSeconds = 0.06f;
+            g.grainsPerSecond = 60.0f;
+            g.pitchJitter = 2.0f;
+            g.reverseChance = 0.2f;
+            g.windowShape = 0.3f;
+        } else if (request.instrument == "drummodel") {
+            project.channels[0].oscillator.type = OscillatorType::DrumModel;
+            DrumModelConfig& d = project.channels[0].oscillator.drumModel;
+            // The snare, because it is the voice with the most controls -
+            // the kick and the hat each show a different subset.
+            d.voice = DrumVoiceType::Snare;
+            d.tuneHz = 190.0f;
+            d.decaySeconds = 0.18f;
+            d.snap = 0.45f;
+            d.noiseMix = 0.6f;
+            d.noiseTone = 0.55f;
         } else if (request.instrument == "sampler") {
             project.channels[0].oscillator.type = OscillatorType::Sampler;
 

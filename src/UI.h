@@ -10044,6 +10044,8 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             {"Wavetable", OscillatorType::Custom},
             {"FM",        OscillatorType::FMSynth},
             {"Sampler",   OscillatorType::Sampler},
+            {"Granular",  OscillatorType::Granular},
+            {"Drum Model", OscillatorType::DrumModel},
         };
 
         const std::string currentName = oscillatorTypeToString(osc.type);
@@ -10150,6 +10152,195 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
                                        0.01f, 5.0f, "%.2f s")) {
                     seq.updateChannelConfigs();
                 }
+            }
+        }
+
+        // ---- Granular -------------------------------------------------------
+        //
+        // Cuts a recording into very short windowed fragments and plays a
+        // stream of them. Move the read position slowly and you get a
+        // time-stretch that does not change pitch; hold it still and you get
+        // a drone made from one moment of the recording.
+        if (osc.type == OscillatorType::Granular) {
+            GranularConfig& g = osc.granular;
+
+            const Sample* source = project.samplePool.getSample(g.sampleId);
+            ImGui::Text("Source: %s",
+                        source != nullptr ? source->name.c_str() : "none");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Load##gran")) {
+                const std::string path = openFileDialog(
+                    "Audio Files (*.wav;*.mp3;*.ogg;*.flac)\0"
+                    "*.wav;*.mp3;*.ogg;*.flac\0All Files (*.*)\0*.*\0", "wav");
+                if (!path.empty()) {
+                    const int id = project.samplePool.loadSample(path);
+                    if (id >= 0) {
+                        g_UndoHistory.saveState(project, "Granular Source");
+                        g.sampleId = id;
+                        seq.updateChannelConfigs();
+                    }
+                }
+            }
+
+            if (ImGui::SliderFloat("Position", &g.position, 0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Where in the recording the grains come from.");
+            }
+
+            if (ImGui::SliderFloat("Scan", &g.positionRate, -2.0f, 2.0f, "%.2fx")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How fast the read position travels on its own.\n"
+                    "0 freezes it - a drone from one moment of the sound.\n"
+                    "Negative plays backwards. Neither changes the pitch,\n"
+                    "which is the thing granular is really for.");
+            }
+
+            if (ImGui::SliderFloat("Spray", &g.spray, 0.0f, 0.5f, "%.3f s")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How far grains scatter around the read position.\n"
+                    "At zero the grains line up and you hear a tone at the\n"
+                    "grain rate instead of a texture.");
+            }
+
+            if (ImGui::SliderFloat("Grain", &g.grainSeconds, 0.002f, 0.5f, "%.3f s")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::SliderFloat("Density", &g.grainsPerSecond, 1.0f, 200.0f,
+                                   "%.0f /s")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Grains per second. Density times grain length is how\n"
+                    "many sound at once; below one you hear gaps, and two to\n"
+                    "four is smooth. The level is compensated, so this\n"
+                    "changes texture rather than volume.");
+            }
+
+            if (ImGui::SliderFloat("Window", &g.windowShape, 0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "0 is a smooth bell - the most washed sound.\n"
+                    "1 is flat-topped with short fades, which keeps\n"
+                    "transients and sounds rhythmic rather than smeared.");
+            }
+
+            if (ImGui::SliderFloat("Pitch", &g.pitchSemitones, -24.0f, 24.0f,
+                                   "%.1f st")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::SliderFloat("Pitch scatter", &g.pitchJitter, 0.0f, 12.0f,
+                                   "%.1f st")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::SliderFloat("Reverse", &g.reverseChance, 0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "The chance each grain plays backwards. Reversed grains\n"
+                    "inside a forward stream are a granular signature.");
+            }
+            if (ImGui::Checkbox("Follow note##gran", &g.followNote)) {
+                seq.updateChannelConfigs();
+            }
+        }
+
+        // ---- Modelled drums --------------------------------------------------
+        //
+        // The 21 existing drum oscillators are good and they are fixed - you
+        // can pick Kick808 or KickHard and that is the whole of your control
+        // over a kick. This is the editable version, modelled the way the
+        // analogue machines made them.
+        if (osc.type == OscillatorType::DrumModel) {
+            DrumModelConfig& d = osc.drumModel;
+
+            int voice = static_cast<int>(d.voice);
+            const char* voices = "Kick\0Snare\0Hi-hat\0";
+            ImGui::SetNextItemWidth(140);
+            if (ImGui::Combo("Voice", &voice, voices)) {
+                d.voice = static_cast<DrumVoiceType>(
+                    std::clamp(voice, 0, static_cast<int>(DrumVoiceType::Count) - 1));
+                seq.updateChannelConfigs();
+            }
+
+            if (ImGui::SliderFloat("Tune", &d.tuneHz, 20.0f, 800.0f, "%.0f Hz")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::SliderFloat("Decay", &d.decaySeconds, 0.01f, 3.0f, "%.3f s")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::SliderFloat("Snap", &d.snap, 0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "The attack transient - the click on a kick, the stick\n"
+                    "on a snare. It is what makes a drum cut through a mix\n"
+                    "rather than merely being loud.");
+            }
+            if (ImGui::SliderFloat("Level##drum", &d.level, 0.0f, 2.0f)) {
+                seq.updateChannelConfigs();
+            }
+
+            if (d.voice == DrumVoiceType::Kick) {
+                if (ImGui::SliderFloat("Sweep", &d.pitchSweepSemitones,
+                                       0.0f, 60.0f, "%.0f st")) {
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "How far above the fundamental the pitch starts.\n"
+                        "This sweep IS the thump; turn it off and you have\n"
+                        "the static sine an 808 tail needs to work as a bass.");
+                }
+                if (ImGui::SliderFloat("Sweep time", &d.pitchSweepSeconds,
+                                       0.001f, 0.5f, "%.3f s")) {
+                    seq.updateChannelConfigs();
+                }
+            }
+
+            if (d.voice == DrumVoiceType::Snare) {
+                if (ImGui::SliderFloat("Shell / snares", &d.noiseMix, 0.0f, 1.0f)) {
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "0 is all tuned shell, 1 is all rattle. The single\n"
+                        "most useful control a snare has - it moves the\n"
+                        "sound from a rimshot to a clap.");
+                }
+                if (ImGui::SliderFloat("Rattle tone", &d.noiseTone, 0.0f, 1.0f)) {
+                    seq.updateChannelConfigs();
+                }
+            }
+
+            if (d.voice == DrumVoiceType::HiHat) {
+                if (ImGui::SliderFloat("Sizzle", &d.hatHighpass, 0.0f, 1.0f)) {
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "How much low end is filtered out. The hat is six\n"
+                        "square waves at the 808's inharmonic ratios, which\n"
+                        "is why it sounds metallic rather than like filtered\n"
+                        "noise - but it needs the low end taken off.");
+                }
+            }
+
+            if (ImGui::SliderFloat("Vel -> Level##drum", &d.velocityToLevel,
+                                   0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
             }
         }
 
@@ -12513,7 +12704,9 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         // Six-operator FM - index 65
         "FM",
         // Multisample - index 66
-        "Sampler"
+        "Sampler",
+        // Granular and the analogue drum model - indices 67-68
+        "Granular", "Drum Model"
     };
     const char* oscDesc[] = {
         // Oscillators (7) - indices 0-6
@@ -12545,7 +12738,10 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         // Six-operator FM - index 65
         "Six-operator FM: bells, e-pianos, brass, metallic basses",
         // Multisample - index 66
-        "Multisample: key zones, velocity layers, round-robin"
+        "Multisample: key zones, velocity layers, round-robin",
+        // Granular and the analogue drum model - indices 67-68
+        "Granular: clouds, freezes and time-stretch from a sample",
+        "Analogue drum model: an editable kick, snare and hat"
     };
 
     constexpr int NUM_OSCILLATORS = 7;  // Pulse, Triangle, Sawtooth, Sine, Noise, Supersaw, Custom
@@ -12555,13 +12751,13 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     // Plus FM, which lives at the end of the enum. This assert is the reason
     // the mistake of inserting FMSynth mid-enum lasted one compile instead of
     // reaching a user as every instrument past Custom playing the wrong sound.
-    static_assert(RECREATIONS_START + NUM_RECREATIONS + 2 ==
+    static_assert(RECREATIONS_START + NUM_RECREATIONS + 4 ==
                       sizeof(oscNames) / sizeof(oscNames[0]),
                   "oscNames must stay index-aligned with OscillatorType");
     // Whatever is last in the enum must be last in the table. This assert is
     // the reason inserting FMSynth mid-enum lasted one compile instead of
     // reaching a user as every instrument past Custom playing wrong.
-    static_assert(static_cast<int>(OscillatorType::Sampler) + 1 ==
+    static_assert(static_cast<int>(OscillatorType::DrumModel) + 1 ==
                       static_cast<int>(sizeof(oscNames) / sizeof(oscNames[0])),
                   "the last OscillatorType must be the last oscNames entry");
     ImDrawList* drawList = ImGui::GetWindowDrawList();

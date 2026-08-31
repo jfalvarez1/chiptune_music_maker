@@ -10,6 +10,8 @@
 #include "Types.h"
 #include "WavetableEngine.h"
 #include "Sampler.h"
+#include "GranularSynth.h"
+#include "DrumMachine.h"
 #include "Effects.h"
 #include "Sample.h"
 #include <cmath>
@@ -74,6 +76,10 @@ struct Voice {
     // Multisample playback state, and the round-robin counter that decides
     // which alternate take of a repeated note this voice got.
     SamplerVoice samplerVoice;
+
+    // Granular grain pool and the modelled drum voice.
+    GranularVoice granularVoice;
+    DrumModelVoice drumVoice;
 
     // NES-style Duty Cycle
     DutyCycle dutyCycle = DutyCycle::Duty50;  // Pulse wave duty cycle
@@ -495,6 +501,29 @@ public:
              * neighbouring sample dragged two octaves is just "the sampler
              * sounds bad".
              */
+            /*
+             * Granular and the drum model start here for the same reason the
+             * sampler does: both need the note and the velocity, which the
+             * per-sample generator never sees.
+             *
+             * Each gets a distinct RNG seed. Seeding them identically would
+             * make every note of a granular chord scatter its grains to
+             * exactly the same places, which sums coherently and sounds like
+             * one very loud voice rather than a cloud.
+             */
+            if (oscType == OscillatorType::Granular) {
+                const Sample* source = (m_samplePool != nullptr)
+                    ? m_samplePool->getSample(m_oscConfig.granular.sampleId)
+                    : nullptr;
+                m_voiceSeed = m_voiceSeed * 1664525u + 1013904223u;
+                v.granularVoice.trigger(m_oscConfig.granular, source, note,
+                                        velocity, m_sampleRate, m_voiceSeed);
+            } else if (oscType == OscillatorType::DrumModel) {
+                m_voiceSeed = m_voiceSeed * 1664525u + 1013904223u;
+                v.drumVoice.trigger(m_oscConfig.drumModel, velocity,
+                                    m_sampleRate, m_voiceSeed);
+            }
+
             if (oscType == OscillatorType::Sampler) {
                 float weight = 1.0f;
                 const int zoneIndex = m_oscConfig.sampler.findZone(
@@ -962,6 +991,14 @@ private:
 
             case OscillatorType::Sampler:
                 sample = voice.samplerVoice.process();
+                break;
+
+            case OscillatorType::Granular:
+                sample = voice.granularVoice.process(m_oscConfig.granular);
+                break;
+
+            case OscillatorType::DrumModel:
+                sample = voice.drumVoice.process(m_oscConfig.drumModel);
                 break;
 
             // Kicks
@@ -2946,6 +2983,11 @@ private:
     // samples a few milliseconds apart comb-filter against each other, which
     // is the "machine gun" sound that gives a sampled kit away.
     int m_roundRobin = 0;
+
+    // Advanced per note so two voices never scatter their grains to the same
+    // places. Identical seeds sum coherently, which sounds like one loud
+    // voice instead of a cloud.
+    uint32_t m_voiceSeed = 0x2545F491u;
     EffectsChain m_effects;
     Vibrato m_vibrato;
     Arpeggiator m_arpeggiator;

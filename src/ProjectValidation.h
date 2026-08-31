@@ -221,6 +221,11 @@ inline void clampChannelToValidRanges(ChannelConfig& c, int poolSize = 0) {
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
 
+    // Granular reads from the pool too, so the same bound applies. A
+    // grain length or density of zero would divide by zero in the callback.
+    clampGranularConfig(c.oscillator.granular, poolSize);
+    clampDrumModel(c.oscillator.drumModel);
+
     // The multisample zones. A zone naming a sample the pool does not have
     // would be an out-of-bounds read from the audio thread.
     clampSamplerInstrument(c.oscillator.sampler, poolSize);

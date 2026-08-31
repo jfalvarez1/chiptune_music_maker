@@ -42,6 +42,8 @@
 #include "WavetableEngine.h"
 #include "FMSynth.h"
 #include "Sampler.h"
+#include "GranularSynth.h"
+#include "DrumMachine.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -11261,6 +11263,657 @@ static void testSamplerReachesAudio() {
     }
 }
 
+
+// ============================================================================
+// 69. Granular synthesis
+// ============================================================================
+static void testGranular() {
+    beginTest("Granular synthesis");
+
+    const float rate = 44100.0f;
+
+    // A two-second source whose two halves are different pitches, so a test
+    // can tell WHERE in the sample the grains are being taken from.
+    SamplePool pool;
+    {
+        Sample source;
+        source.name = "source";
+        source.sampleRate = 48000;
+        source.audioData.resize(96000);
+        for (size_t i = 0; i < source.audioData.size(); ++i) {
+            const float t = float(i) / 48000.0f;
+            const float frequency = (i < 48000) ? 220.0f : 880.0f;
+            source.audioData[i] = 0.8f * std::sin(6.28318530718f * frequency * t);
+        }
+        source.lengthSeconds = 2.0f;
+        source.isLoaded = true;
+        pool.addSample(source);
+    }
+
+    auto render = [&](const GranularConfig& config, int samples) {
+        GranularVoice voice;
+        voice.trigger(config, pool.getSample(0), 60, 1.0f, rate, 0xABCDEFu);
+        std::vector<float> out(static_cast<size_t>(samples));
+        for (int i = 0; i < samples; ++i) {
+            out[static_cast<size_t>(i)] = voice.process(config);
+        }
+        return out;
+    };
+
+    auto rms = [](const std::vector<float>& signal) {
+        double sum = 0.0;
+        for (float v : signal) sum += double(v) * v;
+        return signal.empty() ? 0.0 : std::sqrt(sum / double(signal.size()));
+    };
+
+    auto dominantHz = [rate](const std::vector<float>& signal) {
+        size_t N = 1;
+        while (N * 2 <= signal.size()) N *= 2;
+        if (N < 1024) return 0.0;
+        std::vector<float> re(N), im(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                float(i) / float(N - 1)));
+            re[i] = signal[i] * w;
+        }
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(re.data(), im.data());
+        const double binHz = double(rate) / double(N);
+        size_t loudest = 0;
+        double peak = 0.0;
+        for (size_t bin = 2; bin < N / 2; ++bin) {
+            const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                               double(im[bin]) * im[bin]);
+            if (magnitude > peak) { peak = magnitude; loudest = bin; }
+        }
+        return double(loudest) * binHz;
+    };
+
+    // ---- It makes a sound ---------------------------------------------------
+    {
+        GranularConfig config;
+        config.sampleId = 0;
+        config.followNote = false;
+        const std::vector<float> audio = render(config, 44100);
+
+        check(rms(audio) > 0.01,
+              "a granular voice makes a sound (rms " +
+              std::to_string(rms(audio)) + ")");
+
+        bool finite = true;
+        for (float v : audio) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and all of it is finite");
+    }
+
+    // ---- The read position decides what you hear ---------------------------
+    {
+        GranularConfig low;
+        low.sampleId = 0;
+        low.followNote = false;
+        low.positionRate = 0.0f;      // frozen
+        low.position = 0.1f;          // inside the 220 Hz half
+        low.spray = 0.001f;
+        low.grainSeconds = 0.08f;
+
+        GranularConfig high = low;
+        high.position = 0.75f;        // inside the 880 Hz half
+
+        const double lowHz = dominantHz(render(low, 32768));
+        const double highHz = dominantHz(render(high, 32768));
+
+        check(std::fabs(lowHz - 220.0) < 40.0,
+              "grains taken from the first half play its pitch (" +
+              std::to_string(lowHz) + " Hz, want 220)");
+        check(std::fabs(highHz - 880.0) < 90.0,
+              "and grains from the second half play its pitch (" +
+              std::to_string(highHz) + " Hz, want 880) - which is the whole "
+              "point: the read position is an instrument control");
+    }
+
+    // ---- Freezing does not change pitch ------------------------------------
+    //
+    // This is granular's headline trick: hold the position still and the
+    // sound continues without the pitch drifting, which no resampling
+    // time-stretch can do.
+    {
+        GranularConfig frozen;
+        frozen.sampleId = 0;
+        frozen.followNote = false;
+        frozen.positionRate = 0.0f;
+        frozen.position = 0.1f;
+        frozen.spray = 0.002f;
+
+        const std::vector<float> early = render(frozen, 8192);
+        GranularVoice voice;
+        voice.trigger(frozen, pool.getSample(0), 60, 1.0f, rate, 0xABCDEFu);
+        std::vector<float> late(8192);
+        for (int i = 0; i < 40000; ++i) voice.process(frozen);
+        for (size_t i = 0; i < late.size(); ++i) late[i] = voice.process(frozen);
+
+        const double earlyHz = dominantHz(early);
+        const double lateHz = dominantHz(late);
+        check(rms(late) > 0.01,
+              "a frozen voice is still sounding a second later");
+        check(std::fabs(earlyHz - lateHz) < 40.0,
+              "at the same pitch it started at (" + std::to_string(earlyHz) +
+              " -> " + std::to_string(lateHz) + ") - freezing time without "
+              "moving the pitch is the thing granular is for");
+    }
+
+    // ---- Density changes texture, not loudness ------------------------------
+    //
+    // Without normalising by the expected overlap, turning density up is
+    // just a volume control with extra steps.
+    {
+        GranularConfig sparse;
+        sparse.sampleId = 0;
+        sparse.followNote = false;
+        sparse.positionRate = 0.0f;
+        sparse.position = 0.1f;
+        sparse.grainsPerSecond = 20.0f;
+        sparse.grainSeconds = 0.05f;
+
+        GranularConfig dense = sparse;
+        dense.grainsPerSecond = 160.0f;
+
+        const double sparseRms = rms(render(sparse, 32768));
+        const double denseRms = rms(render(dense, 32768));
+
+        check(sparseRms > 0.005 && denseRms > 0.005, "both densities sound");
+        const double ratio = denseRms / sparseRms;
+        check(ratio > 0.4 && ratio < 2.5,
+              "eight times the density is not eight times the level (ratio " +
+              std::to_string(ratio) + ") - the output is scaled by the "
+              "expected overlap, or density would just be a volume control");
+    }
+
+    // ---- The grain window stops the clicks ---------------------------------
+    //
+    // Without a window every grain starts and ends at whatever the waveform
+    // was doing, and the result is a buzz at the grain rate rather than a
+    // texture. The signature of that is strong energy at the grain rate.
+    {
+        GranularConfig config;
+        config.sampleId = 0;
+        config.followNote = false;
+        config.positionRate = 0.0f;
+        config.position = 0.1f;
+        config.grainsPerSecond = 30.0f;
+        config.grainSeconds = 0.06f;
+        config.spray = 0.004f;
+
+        const std::vector<float> audio = render(config, 32768);
+
+        // Measure energy near 30 Hz, the grain rate. A windowed stream has
+        // very little; an unwindowed one has a great deal.
+        const size_t N = 16384;
+        std::vector<float> re(N), im(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                float(i) / float(N - 1)));
+            re[i] = audio[i] * w;
+        }
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(re.data(), im.data());
+
+        const double binHz = double(rate) / double(N);
+        double atGrainRate = 0.0;
+        double total = 0.0;
+        for (size_t bin = 1; bin < N / 2; ++bin) {
+            const double hz = double(bin) * binHz;
+            const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                               double(im[bin]) * im[bin]);
+            total += magnitude;
+            if (hz < 60.0) atGrainRate += magnitude;
+        }
+
+        check(total > 0.0 && atGrainRate / total < 0.25,
+              "little of the energy sits at the grain rate (" +
+              std::to_string(total > 0.0 ? atGrainRate / total : 0.0) +
+              ") - grains that start and end at zero are a texture; grains "
+              "that do not are a buzz at the grain frequency");
+    }
+
+    // ---- The window shapes differ ------------------------------------------
+    {
+        GranularConfig smooth;
+        smooth.sampleId = 0;
+        smooth.followNote = false;
+        smooth.positionRate = 0.0f;
+        smooth.position = 0.1f;
+        smooth.windowShape = 0.0f;
+
+        GranularConfig sharp = smooth;
+        sharp.windowShape = 1.0f;
+
+        const double smoothRms = rms(render(smooth, 16384));
+        const double sharpRms = rms(render(sharp, 16384));
+        check(sharpRms > smoothRms,
+              "a flat-topped window passes more of the grain than a Hann "
+              "does, which is what makes it the transient-preserving one");
+    }
+
+    // ---- Two voices do not scatter identically ------------------------------
+    {
+        GranularConfig config;
+        config.sampleId = 0;
+        config.followNote = false;
+        config.spray = 0.05f;
+
+        GranularVoice a, b;
+        a.trigger(config, pool.getSample(0), 60, 1.0f, rate, 111u);
+        b.trigger(config, pool.getSample(0), 60, 1.0f, rate, 222u);
+
+        double difference = 0.0;
+        for (int i = 0; i < 16384; ++i) {
+            difference += std::fabs(double(a.process(config)) -
+                                    double(b.process(config)));
+        }
+        check(difference > 1.0,
+              "two voices with different seeds scatter differently - "
+              "identical seeds would sum coherently and sound like one very "
+              "loud voice rather than a cloud");
+    }
+
+    // ---- A zero seed does not freeze the generator -------------------------
+    {
+        GranularConfig config;
+        config.sampleId = 0;
+        config.followNote = false;
+        config.spray = 0.05f;
+
+        GranularVoice voice;
+        voice.trigger(config, pool.getSample(0), 60, 1.0f, rate, 0u);
+        double energy = 0.0;
+        for (int i = 0; i < 16384; ++i) energy += std::fabs(double(voice.process(config)));
+        check(energy > 0.5,
+              "a seed of zero still produces sound - xorshift is stuck at "
+              "zero forever, so every grain would land in the same place");
+    }
+
+    // ---- No sample is silence, not a crash ---------------------------------
+    {
+        GranularConfig config;
+        config.sampleId = -1;
+        GranularVoice voice;
+        voice.trigger(config, nullptr, 60, 1.0f, rate, 5u);
+        check(!voice.isPlaying(), "a granular voice with no sample does not start");
+        check(voice.process(config) == 0.0f, "and renders silence");
+    }
+
+    // ---- Validation ---------------------------------------------------------
+    {
+        GranularConfig hostile;
+        hostile.sampleId = 400;
+        hostile.grainSeconds = 0.0f;
+        hostile.grainsPerSecond = 0.0f;
+        hostile.spray = std::numeric_limits<float>::quiet_NaN();
+        hostile.positionRate = 1e9f;
+
+        clampGranularConfig(hostile, 2);
+
+        check(hostile.sampleId == -1,
+              "a sample id past the end of the pool becomes none");
+        check(hostile.grainsPerSecond > 0.0f,
+              "a density of zero is raised - the interval is 1/density, and "
+              "that division happens in the audio thread");
+        check(hostile.grainSeconds >= 0.002f,
+              "and a grain shorter than about 2 ms is raised, since it is a "
+              "click however it is windowed");
+        check(std::isfinite(hostile.spray), "a NaN spray is replaced");
+        check(std::isfinite(hostile.positionRate) &&
+              std::fabs(hostile.positionRate) <= 4.0f,
+              "and an absurd scan rate is bounded");
+    }
+}
+
+// ============================================================================
+// 70. The analogue drum model
+// ============================================================================
+static void testDrumModel() {
+    beginTest("Analogue drum model");
+
+    const float rate = 44100.0f;
+
+    auto render = [rate](const DrumModelConfig& config, int samples) {
+        DrumModelVoice voice;
+        voice.trigger(config, 1.0f, rate, 999u);
+        std::vector<float> out(static_cast<size_t>(samples));
+        for (int i = 0; i < samples; ++i) {
+            out[static_cast<size_t>(i)] = voice.process(config);
+        }
+        return out;
+    };
+
+    auto rms = [](const std::vector<float>& signal) {
+        double sum = 0.0;
+        for (float v : signal) sum += double(v) * v;
+        return signal.empty() ? 0.0 : std::sqrt(sum / double(signal.size()));
+    };
+
+    auto centroid = [rate](const std::vector<float>& signal) {
+        size_t N = 1;
+        while (N * 2 <= signal.size()) N *= 2;
+        if (N < 512) return 0.0;
+        std::vector<float> re(N), im(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                float(i) / float(N - 1)));
+            re[i] = signal[i] * w;
+        }
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(re.data(), im.data());
+        double weighted = 0.0, total = 0.0;
+        const double binHz = double(rate) / double(N);
+        for (size_t bin = 1; bin < N / 2; ++bin) {
+            const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                               double(im[bin]) * im[bin]);
+            weighted += double(bin) * binHz * magnitude;
+            total += magnitude;
+        }
+        return (total > 0.0) ? weighted / total : 0.0;
+    };
+
+    // ---- The three voices are actually different ---------------------------
+    {
+        DrumModelConfig kick;
+        kick.voice = DrumVoiceType::Kick;
+
+        DrumModelConfig snare = kick;
+        snare.voice = DrumVoiceType::Snare;
+        snare.tuneHz = 180.0f;
+
+        DrumModelConfig hat = kick;
+        hat.voice = DrumVoiceType::HiHat;
+        hat.decaySeconds = 0.05f;
+
+        const double kickCentroid = centroid(render(kick, 16384));
+        const double snareCentroid = centroid(render(snare, 16384));
+        const double hatCentroid = centroid(render(hat, 16384));
+
+        check(kickCentroid > 0.0, "the kick has a spectrum");
+        check(snareCentroid > kickCentroid,
+              "a snare is brighter than a kick (" +
+              std::to_string(kickCentroid) + " -> " +
+              std::to_string(snareCentroid) + ")");
+        check(hatCentroid > snareCentroid,
+              "and a hat is brighter than a snare (" +
+              std::to_string(hatCentroid) + ")");
+    }
+
+    // ---- The kick's pitch sweep is the thump --------------------------------
+    {
+        DrumModelConfig config;
+        config.voice = DrumVoiceType::Kick;
+        config.tuneHz = 50.0f;
+        config.pitchSweepSemitones = 36.0f;
+        config.pitchSweepSeconds = 0.06f;
+        config.decaySeconds = 0.5f;
+
+        const std::vector<float> audio = render(config, 22050);
+        const std::vector<float> head(audio.begin(), audio.begin() + 2048);
+        const std::vector<float> tail(audio.begin() + 8192, audio.begin() + 10240);
+
+        check(centroid(head) > centroid(tail) * 1.5,
+              "the kick starts high and falls (" +
+              std::to_string(centroid(head)) + " -> " +
+              std::to_string(centroid(tail)) + ") - that sweep IS the thump, "
+              "and a kick without it is just a low sine");
+
+        // The sweep must be optional, or it cannot make an 808 tail.
+        DrumModelConfig flat = config;
+        flat.pitchSweepSemitones = 0.0f;
+        const std::vector<float> flatAudio = render(flat, 22050);
+        const std::vector<float> flatHead(flatAudio.begin(), flatAudio.begin() + 2048);
+        check(centroid(flatHead) < centroid(head),
+              "and turning the sweep off gives the static sine an 808 tail "
+              "needs to work as a bass note");
+    }
+
+    // ---- The snare's mix control reaches the sound --------------------------
+    {
+        DrumModelConfig shell;
+        shell.voice = DrumVoiceType::Snare;
+        shell.tuneHz = 180.0f;
+        shell.noiseMix = 0.0f;
+
+        DrumModelConfig snares = shell;
+        snares.noiseMix = 1.0f;
+
+        check(centroid(render(snares, 16384)) > centroid(render(shell, 16384)) * 1.3,
+              "an all-snares snare is much brighter than an all-shell one - "
+              "that mix is the single most useful control a snare has");
+    }
+
+    // ---- Decay actually decays, and ends -----------------------------------
+    {
+        DrumModelConfig config;
+        config.voice = DrumVoiceType::Kick;
+        config.decaySeconds = 0.1f;
+
+        DrumModelVoice voice;
+        voice.trigger(config, 1.0f, rate, 7u);
+
+        std::vector<float> head(2048), tail(2048);
+        for (float& v : head) v = voice.process(config);
+        for (int i = 0; i < 8000; ++i) voice.process(config);
+        for (float& v : tail) v = voice.process(config);
+
+        check(rms(head) > rms(tail) * 4.0,
+              "the voice decays (" + std::to_string(rms(head)) + " -> " +
+              std::to_string(rms(tail)) + ")");
+
+        for (int i = 0; i < 44100; ++i) voice.process(config);
+        check(!voice.isPlaying(),
+              "and stops rather than holding a voice slot at -60 dB forever");
+    }
+
+    // ---- Velocity ------------------------------------------------------------
+    {
+        DrumModelConfig config;
+        config.voice = DrumVoiceType::Snare;
+        config.velocityToLevel = 1.0f;
+
+        DrumModelVoice soft, hard;
+        soft.trigger(config, 0.2f, rate, 3u);
+        hard.trigger(config, 1.0f, rate, 3u);
+
+        double softEnergy = 0.0, hardEnergy = 0.0;
+        for (int i = 0; i < 8192; ++i) {
+            softEnergy += std::fabs(double(soft.process(config)));
+            hardEnergy += std::fabs(double(hard.process(config)));
+        }
+        check(hardEnergy > softEnergy * 2.0,
+              "playing harder is louder when velocity is mapped");
+
+        config.velocityToLevel = 0.0f;
+        DrumModelVoice flatSoft, flatHard;
+        flatSoft.trigger(config, 0.2f, rate, 3u);
+        flatHard.trigger(config, 1.0f, rate, 3u);
+        double a = 0.0, b = 0.0;
+        for (int i = 0; i < 8192; ++i) {
+            a += std::fabs(double(flatSoft.process(config)));
+            b += std::fabs(double(flatHard.process(config)));
+        }
+        check(std::fabs(a - b) < 1e-3,
+              "and identical when it is not - which is what a kit whose "
+              "layers already encode the dynamics wants");
+    }
+
+    // ---- Validation ---------------------------------------------------------
+    {
+        DrumModelConfig hostile;
+        hostile.voice = static_cast<DrumVoiceType>(99);
+        hostile.tuneHz = 0.0f;
+        hostile.decaySeconds = std::numeric_limits<float>::quiet_NaN();
+        hostile.pitchSweepSeconds = 0.0f;
+        hostile.level = 500.0f;
+
+        clampDrumModel(hostile);
+
+        check(hostile.voice < DrumVoiceType::Count,
+              "an impossible voice type falls back to a real one");
+        check(hostile.tuneHz >= 20.0f,
+              "a tune of zero is raised - it would put the hat's six "
+              "oscillators all at DC, which is silence that looks like a bug");
+        check(std::isfinite(hostile.decaySeconds), "a NaN decay is replaced");
+        check(hostile.pitchSweepSeconds > 0.0f, "and a zero sweep time cannot divide by zero");
+        check(hostile.level <= 2.0f, "an absurd level is bounded");
+
+        const std::vector<float> audio = render(hostile, 4096);
+        bool finite = true;
+        for (float v : audio) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and the repaired config renders finite audio");
+    }
+}
+
+// ============================================================================
+// 71. Both reach the audio and the file
+// ============================================================================
+static void testGranularAndDrumsReachAudio() {
+    beginTest("Granular and drum model reach audio and files");
+
+    auto renderChannel = [](OscillatorType type,
+                            void (*setup)(Project&)) {
+        Project p;
+        p.bpm = 120.0f;
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+        p.masterVolume = 0.7f;
+        setup(p);
+
+        p.channels[0].oscillator.type = type;
+        p.channels[0].volume = 0.8f;
+        p.channels[0].pan = 0.0f;
+
+        p.patterns.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = 60;
+        note.startTime = 0.0f;
+        note.duration = 2.0f;
+        note.oscillatorType = type;
+        pattern.notes.push_back(note);
+        p.patterns.push_back(pattern);
+
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&p);
+        seqPtr->updateChannelConfigs();
+        seqPtr->updateMasterEffects();
+        seqPtr->play();
+
+        std::vector<float> l(512), r(512);
+        double energy = 0.0;
+        for (int b = 0; b < 30; ++b) {
+            seqPtr->process(l.data(), r.data(), 512);
+            if (b >= 4) for (float v : l) energy += double(v) * v;
+        }
+        return energy;
+    };
+
+    {
+        const double energy = renderChannel(OscillatorType::Granular, [](Project& p) {
+            Sample source;
+            source.name = "grain source";
+            source.sampleRate = 48000;
+            source.audioData.resize(48000);
+            for (size_t i = 0; i < source.audioData.size(); ++i) {
+                source.audioData[i] = 0.8f * std::sin(
+                    6.28318530718f * 330.0f * float(i) / 48000.0f);
+            }
+            source.lengthSeconds = 1.0f;
+            source.isLoaded = true;
+            p.samplePool.addSample(source);
+            p.channels[0].oscillator.granular.sampleId = 0;
+            p.channels[0].oscillator.granular.followNote = false;
+        });
+        check(energy > 1e-4, "a granular channel sounds through the engine");
+    }
+
+    {
+        const double energy = renderChannel(OscillatorType::DrumModel, [](Project& p) {
+            p.channels[0].oscillator.drumModel.voice = DrumVoiceType::Kick;
+            p.channels[0].oscillator.drumModel.decaySeconds = 0.4f;
+        });
+        check(energy > 1e-4, "and a modelled drum channel does too");
+    }
+
+    // ---- Name round trips ---------------------------------------------------
+    {
+        check(stringToOscillatorType(oscillatorTypeToString(OscillatorType::Granular)) ==
+              OscillatorType::Granular, "Granular survives a name round trip");
+        check(stringToOscillatorType(oscillatorTypeToString(OscillatorType::DrumModel)) ==
+              OscillatorType::DrumModel, "and so does DrumModel");
+    }
+
+    // ---- Settings survive a save and load ----------------------------------
+    {
+        Project p;
+        p.channels[4].oscillator.type = OscillatorType::Granular;
+        p.channels[4].oscillator.granular.position = 0.375f;
+        p.channels[4].oscillator.granular.positionRate = -0.5f;
+        p.channels[4].oscillator.granular.spray = 0.125f;
+        p.channels[4].oscillator.granular.grainSeconds = 0.0625f;
+        p.channels[4].oscillator.granular.grainsPerSecond = 75.0f;
+        p.channels[4].oscillator.granular.pitchJitter = 3.5f;
+        p.channels[4].oscillator.granular.reverseChance = 0.25f;
+        p.channels[4].oscillator.granular.windowShape = 0.8f;
+        p.channels[4].oscillator.granular.followNote = false;
+
+        p.channels[5].oscillator.type = OscillatorType::DrumModel;
+        p.channels[5].oscillator.drumModel.voice = DrumVoiceType::HiHat;
+        p.channels[5].oscillator.drumModel.tuneHz = 320.0f;
+        p.channels[5].oscillator.drumModel.decaySeconds = 0.075f;
+        p.channels[5].oscillator.drumModel.snap = 0.65f;
+        p.channels[5].oscillator.drumModel.hatHighpass = 0.85f;
+
+        p.arrangement.push_back(Clip{0, 4, 0.0f, 4.0f, 0});
+        p.arrangement.push_back(Clip{0, 5, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("gran_drum_roundtrip.ctp");
+        check(saveProject(p, path), "the project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+
+        const GranularConfig& g = loaded.channels[4].oscillator.granular;
+        check(loaded.channels[4].oscillator.type == OscillatorType::Granular,
+              "the granular type survives");
+        check(std::fabs(g.position - 0.375f) < 1e-4f &&
+              std::fabs(g.positionRate + 0.5f) < 1e-4f &&
+              std::fabs(g.spray - 0.125f) < 1e-4f,
+              "its position, scan rate and spray survive");
+        check(std::fabs(g.grainSeconds - 0.0625f) < 1e-4f &&
+              std::fabs(g.grainsPerSecond - 75.0f) < 1e-3f,
+              "its grain size and density survive");
+        check(std::fabs(g.pitchJitter - 3.5f) < 1e-3f &&
+              std::fabs(g.reverseChance - 0.25f) < 1e-4f &&
+              std::fabs(g.windowShape - 0.8f) < 1e-4f,
+              "its jitter, reverse chance and window shape survive");
+        check(!g.followNote, "and its follow-note flag survives");
+
+        const DrumModelConfig& d = loaded.channels[5].oscillator.drumModel;
+        check(d.voice == DrumVoiceType::HiHat,
+              "the drum voice survives - it is an enum, so it rides as a "
+              "plain int rather than through the typed field tables");
+        check(std::fabs(d.tuneHz - 320.0f) < 1e-2f &&
+              std::fabs(d.decaySeconds - 0.075f) < 1e-4f &&
+              std::fabs(d.snap - 0.65f) < 1e-4f &&
+              std::fabs(d.hatHighpass - 0.85f) < 1e-4f,
+              "and so do its tuning, decay, snap and filter");
+
+        std::remove(path.c_str());
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -11369,6 +12022,9 @@ int main(int argc, char** argv) {
     testFMReachesAudio();
     testSampler();
     testSamplerReachesAudio();
+    testGranular();
+    testDrumModel();
+    testGranularAndDrumsReachAudio();
     testLongRunStability();
 
     std::printf("\n==========================\n");

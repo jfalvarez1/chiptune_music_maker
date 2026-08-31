@@ -171,6 +171,18 @@ foreach ($panel in $panels) {
 })
 
 [void]$cases.Add(@{
+    name = "instrument-granular"
+    args = "--demo --instrument granular --focus `"Channel Editor`""
+})
+
+# The snare specifically: each drum voice shows a different subset of
+# controls, and the snare's is the largest.
+[void]$cases.Add(@{
+    name = "instrument-drummodel"
+    args = "--demo --instrument drummodel --focus `"Channel Editor`""
+})
+
+[void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"
 })

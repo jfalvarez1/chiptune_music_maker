@@ -31,6 +31,8 @@ inline std::string oscillatorTypeToString(OscillatorType type) {
         case OscillatorType::Custom: return "Custom";
         case OscillatorType::FMSynth: return "FM";
         case OscillatorType::Sampler: return "Sampler";
+        case OscillatorType::Granular: return "Granular";
+        case OscillatorType::DrumModel: return "DrumModel";
         // Synths
         case OscillatorType::SynthLead: return "SynthLead";
         case OscillatorType::SynthPad: return "SynthPad";
@@ -115,6 +117,8 @@ inline OscillatorType stringToOscillatorType(const std::string& str) {
     if (str == "Custom") return OscillatorType::Custom;
     if (str == "FM") return OscillatorType::FMSynth;
     if (str == "Sampler") return OscillatorType::Sampler;
+    if (str == "Granular") return OscillatorType::Granular;
+    if (str == "DrumModel") return OscillatorType::DrumModel;
     // Synths
     if (str == "SynthLead") return OscillatorType::SynthLead;
     if (str == "SynthPad") return OscillatorType::SynthPad;

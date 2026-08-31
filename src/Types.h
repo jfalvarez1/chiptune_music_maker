@@ -20,6 +20,8 @@
 #include "TempoMap.h"
 #include "FMSynth.h"
 #include "Sampler.h"
+#include "GranularSynth.h"
+#include "DrumMachine.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -135,7 +137,12 @@ enum class OscillatorType : uint8_t {
     FMSynth,
 
     // Multisample instrument. Same rule: appended, never inserted.
-    Sampler
+    Sampler,
+
+    // Granular, and the editable analogue drum model. Appended, never
+    // inserted - the pad banks and the palette's name table index this enum.
+    Granular,
+    DrumModel
 };
 
 // ============================================================================
@@ -189,6 +196,13 @@ struct OscillatorConfig {
     // FM patch is: a ChannelConfig stays copyable and the audio thread never
     // dereferences anything to reach it.
     SamplerInstrument sampler;
+
+    // ---- Granular and the drum model -------------------------------------
+    //
+    // Inline like the others, so a ChannelConfig stays copyable and the
+    // audio thread never dereferences anything to reach them.
+    GranularConfig granular;
+    DrumModelConfig drumModel;
 
     // General
     float detune = 0.0f;            // Cents (-100 to +100)

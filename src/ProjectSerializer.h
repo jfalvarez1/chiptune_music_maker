@@ -213,6 +213,42 @@ inline constexpr BoolField<OscillatorConfig> OSC_BOOLS[] = {
     {"shortNoise", &OscillatorConfig::noiseShortMode},
 };
 
+// --- Granular ----------------------------------------------------------
+inline constexpr FloatField<GranularConfig> GRAIN_FLOATS[] = {
+    {"pos",     &GranularConfig::position},
+    {"rate",    &GranularConfig::positionRate},
+    {"spray",   &GranularConfig::spray},
+    {"size",    &GranularConfig::grainSeconds},
+    {"density", &GranularConfig::grainsPerSecond},
+    {"pitch",   &GranularConfig::pitchSemitones},
+    {"jitter",  &GranularConfig::pitchJitter},
+    {"reverse", &GranularConfig::reverseChance},
+    {"window",  &GranularConfig::windowShape},
+};
+
+inline constexpr IntField<GranularConfig> GRAIN_INTS[] = {
+    {"sample", &GranularConfig::sampleId},
+    {"root",   &GranularConfig::rootKey},
+};
+
+inline constexpr BoolField<GranularConfig> GRAIN_BOOLS[] = {
+    {"follow", &GranularConfig::followNote},
+};
+
+// --- Modelled drums ------------------------------------------------------
+inline constexpr FloatField<DrumModelConfig> DRUM_FLOATS[] = {
+    {"tune",      &DrumModelConfig::tuneHz},
+    {"decay",     &DrumModelConfig::decaySeconds},
+    {"level",     &DrumModelConfig::level},
+    {"snap",      &DrumModelConfig::snap},
+    {"sweep",     &DrumModelConfig::pitchSweepSemitones},
+    {"sweepTime", &DrumModelConfig::pitchSweepSeconds},
+    {"noiseMix",  &DrumModelConfig::noiseMix},
+    {"noiseTone", &DrumModelConfig::noiseTone},
+    {"hpf",       &DrumModelConfig::hatHighpass},
+    {"vel",       &DrumModelConfig::velocityToLevel},
+};
+
 inline constexpr FloatField<Envelope> ENV_FLOATS[] = {
     {"a", &Envelope::attack},
     {"d", &Envelope::decay},
@@ -569,6 +605,21 @@ inline bool writeProject(std::ostream& file, const Project& project) {
         ctp::writeFloats(file, c.oscillator, d.oscillator, ctp::OSC_FLOATS, "osc.");
         ctp::writeInts(file, c.oscillator, d.oscillator, ctp::OSC_INTS, "osc.");
         ctp::writeBools(file, c.oscillator, d.oscillator, ctp::OSC_BOOLS, "osc.");
+        ctp::writeFloats(file, c.oscillator.granular, d.oscillator.granular,
+                         ctp::GRAIN_FLOATS, "gr.");
+        ctp::writeInts(file, c.oscillator.granular, d.oscillator.granular,
+                       ctp::GRAIN_INTS, "gr.");
+        ctp::writeBools(file, c.oscillator.granular, d.oscillator.granular,
+                        ctp::GRAIN_BOOLS, "gr.");
+        ctp::writeFloats(file, c.oscillator.drumModel, d.oscillator.drumModel,
+                         ctp::DRUM_FLOATS, "dm.");
+        // The drum voice is an enum, so it rides as a plain int rather than
+        // going through the typed tables.
+        if (c.oscillator.drumModel.voice != d.oscillator.drumModel.voice) {
+            file << " dm.voice="
+                 << static_cast<int>(c.oscillator.drumModel.voice);
+        }
+
         ctp::writeFloats(file, c.envelope, d.envelope, ctp::ENV_FLOATS, "env.");
 
         file << "\n";
@@ -919,6 +970,29 @@ inline bool readProject(std::istream& file, Project& project) {
                     ctp::applyFloat(c.oscillator, sub, value, ctp::OSC_FLOATS) ||
                     ctp::applyInt(c.oscillator, sub, value, ctp::OSC_INTS) ||
                     ctp::applyBool(c.oscillator, sub, value, ctp::OSC_BOOLS);
+                } else if (key.rfind("gr.", 0) == 0) {
+                    const std::string sub = key.substr(3);
+                    ctp::applyFloat(c.oscillator.granular, sub, value,
+                                    ctp::GRAIN_FLOATS) ||
+                    ctp::applyInt(c.oscillator.granular, sub, value,
+                                  ctp::GRAIN_INTS) ||
+                    ctp::applyBool(c.oscillator.granular, sub, value,
+                                   ctp::GRAIN_BOOLS);
+                } else if (key.rfind("dm.", 0) == 0) {
+                    const std::string sub = key.substr(3);
+                    if (sub == "voice") {
+                        // The drum voice is an enum; the typed tables only
+                        // know float, int and bool members.
+                        const int raw = std::atoi(value.c_str());
+                        if (raw >= 0 &&
+                            raw < static_cast<int>(DrumVoiceType::Count)) {
+                            c.oscillator.drumModel.voice =
+                                static_cast<DrumVoiceType>(raw);
+                        }
+                    } else {
+                        ctp::applyFloat(c.oscillator.drumModel, sub, value,
+                                        ctp::DRUM_FLOATS);
+                    }
                 } else if (key.rfind("env.", 0) == 0) {
                     const std::string sub = key.substr(4);
                     ctp::applyFloat(c.envelope, sub, value, ctp::ENV_FLOATS);
