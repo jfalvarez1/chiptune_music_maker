@@ -14,6 +14,7 @@
 #include "imgui.h"
 #include "Types.h"
 #include "UndoHistory.h"
+#include "VoicePanel.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -8094,6 +8095,413 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
 // start rounded to the step and printed it into all eight columns, ignoring
 // channel. It was read-only, and its own comment called itself a
 // simplification.
+
+// ============================================================================
+// Voice to Notes
+//
+// Sing a line or beatbox a groove and get notes in the pattern.
+//
+// The detection is AudioAnalyzer's, which has been in the tree for a long
+// time and was reachable only from a separate executable that worked on a
+// WAV on disk. Using it meant recording in one program, exporting a .ctp and
+// opening it in the other - enough friction that the feature effectively did
+// not exist.
+//
+// The audio callback fills a lock-free ring and does nothing else; every
+// FFT, autocorrelation and classification happens right here on the UI
+// thread. That split is the whole design, and it is the bug that was fixed
+// in 3.3 when the spectrum analyzer ran its FFT inside the callback.
+// ============================================================================
+static VoicePanelState g_Voice;
+static VoiceCaptureDevice g_VoiceDevice;
+
+inline VoicePanelState& voicePanelState() { return g_Voice; }
+
+// Drain whatever the microphone has produced since the last frame.
+//
+// Called once per frame whether or not the panel is visible, because a ring
+// nobody drains fills up and starts dropping audio - and a take that was
+// silently truncated while the panel was behind another tab is worse than
+// one that never recorded.
+inline void PollVoiceCapture() {
+    if (!g_VoiceDevice.running()) return;
+
+    static std::vector<float> scratch;
+    if (scratch.size() < 4096) scratch.resize(4096);
+
+    g_Voice.tracker.setSampleRate(g_VoiceDevice.sampleRate());
+    g_Voice.takeSampleRate = g_VoiceDevice.sampleRate();
+
+    size_t got = 0;
+    while ((got = g_VoiceDevice.ring().read(scratch.data(), scratch.size())) > 0) {
+        if (g_Voice.liveMode) {
+            g_Voice.tracker.process(scratch.data(), got);
+        }
+        if (g_Voice.capturingTake) {
+            // Ten minutes at 48 kHz. A cap rather than unbounded growth: a
+            // panel left armed overnight should not eat the machine.
+            constexpr size_t MAX_TAKE = 48000u * 60u * 10u;
+            if (g_Voice.take.size() + got <= MAX_TAKE) {
+                g_Voice.take.insert(g_Voice.take.end(), scratch.data(),
+                                    scratch.data() + got);
+            } else {
+                g_Voice.capturingTake = false;
+            }
+        }
+        if (got < scratch.size()) break;
+    }
+
+    g_Voice.levelHistory[static_cast<size_t>(g_Voice.levelCursor)] =
+        g_VoiceDevice.peak();
+    g_Voice.levelCursor = (g_Voice.levelCursor + 1) %
+                          static_cast<int>(g_Voice.levelHistory.size());
+    g_VoiceDevice.decayMeter();
+}
+
+inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
+    ImGui::SetNextWindowPos(ImVec2(320, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(430, 460), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Voice to Notes");
+
+    // ---- Input device ------------------------------------------------------
+    if (!g_Voice.devicesEnumerated) {
+        g_Voice.devices = g_VoiceDevice.enumerate();
+        g_Voice.devicesEnumerated = true;
+        if (!g_Voice.devices.empty() && g_Voice.selectedDevice < 0) {
+            g_Voice.selectedDevice = 0;
+        }
+    }
+
+    ImGui::TextUnformatted("Input");
+    ImGui::SetNextItemWidth(-70);
+    const char* deviceLabel =
+        (g_Voice.selectedDevice >= 0 &&
+         g_Voice.selectedDevice < static_cast<int>(g_Voice.devices.size()))
+            ? g_Voice.devices[static_cast<size_t>(g_Voice.selectedDevice)].name.c_str()
+            : "No microphone found";
+
+    if (ImGui::BeginCombo("##voicedev", deviceLabel)) {
+        for (size_t i = 0; i < g_Voice.devices.size(); ++i) {
+            const bool selected = (static_cast<int>(i) == g_Voice.selectedDevice);
+            if (ImGui::Selectable(g_Voice.devices[i].name.c_str(), selected)) {
+                g_Voice.selectedDevice = static_cast<int>(i);
+                if (g_VoiceDevice.running()) {
+                    g_VoiceDevice.shutdown();
+                    g_Voice.armed = false;
+                }
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Rescan")) {
+        g_Voice.devicesEnumerated = false;
+    }
+
+    ImGui::Separator();
+
+    // ---- Arm ---------------------------------------------------------------
+    const bool running = g_VoiceDevice.running();
+    if (!running) {
+        if (ImGui::Button("Start Listening", ImVec2(150, 28))) {
+            const VoiceCaptureDevice::DeviceInfo* device = nullptr;
+            if (g_Voice.selectedDevice >= 0 &&
+                g_Voice.selectedDevice < static_cast<int>(g_Voice.devices.size())) {
+                device = &g_Voice.devices[static_cast<size_t>(g_Voice.selectedDevice)];
+            }
+            if (g_VoiceDevice.start(device)) {
+                g_Voice.armed = true;
+                g_Voice.lastError.clear();
+                g_Voice.tracker.setSampleRate(g_VoiceDevice.sampleRate());
+                g_Voice.tracker.reset();
+            } else {
+                g_Voice.lastError = "Could not open that microphone";
+            }
+        }
+    } else {
+        if (ImGui::Button("Stop Listening", ImVec2(150, 28))) {
+            g_VoiceDevice.shutdown();
+            g_Voice.armed = false;
+            g_Voice.capturingTake = false;
+        }
+    }
+
+    ImGui::SameLine();
+    ImGui::Checkbox("Live", &g_Voice.liveMode);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Live shows the note as you sing it, which is how you tell\n"
+            "immediately whether the thing is following you.\n\n"
+            "Off records the whole take first and analyses it afterwards.\n"
+            "That is more accurate, because it can look at what comes next\n"
+            "before deciding where a note ended.");
+    }
+
+    if (!g_Voice.lastError.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+                           g_Voice.lastError.c_str());
+    }
+
+    // ---- Level -------------------------------------------------------------
+    {
+        const float peak = running ? g_VoiceDevice.peak() : 0.0f;
+        ImGui::ProgressBar(std::min(1.0f, peak), ImVec2(-1, 12), "");
+        if (running && peak < 0.005f) {
+            ImGui::TextDisabled("nothing coming in - check the input above");
+        }
+
+        // Audio the UI failed to collect. Said plainly rather than left to
+        // look like inaccuracy.
+        const uint64_t dropped = g_VoiceDevice.dropped();
+        if (dropped > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
+                               "%llu samples dropped",
+                               static_cast<unsigned long long>(dropped));
+        }
+    }
+
+    ImGui::Separator();
+
+    // ---- What to detect ----------------------------------------------------
+    ImGui::SetNextItemWidth(150);
+    const char* modes = "Melody\0Drums / beatbox\0Rhythm\0Polyphonic\0";
+    if (ImGui::Combo("Detect", &g_Voice.analysisMode, modes)) {
+        g_Voice.tracker.setMode(g_Voice.analysisMode == 1 ? LiveVoiceMode::Drums
+                                                          : LiveVoiceMode::Melodic);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Melody     one note at a time - sing a line\n"
+            "Drums      kick, snare and hat from a beatbox pattern\n"
+            "Rhythm     onsets only, keeping one pitch\n"
+            "Polyphonic more than one note at once (offline only)");
+    }
+
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::SliderFloat("Sensitivity", &g_Voice.sensitivity, 0.0f, 1.0f, "%.2f")) {
+        g_Voice.tracker.setSensitivity(g_Voice.sensitivity);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "How far above the recent average a moment has to be to count\n"
+            "as a hit. Turn it up if quiet taps are being missed, down if\n"
+            "one hit is arriving as two.");
+    }
+
+    // ---- Live readout ------------------------------------------------------
+    if (g_Voice.liveMode && running) {
+        ImGui::Separator();
+        ImGui::TextUnformatted("Hearing");
+
+        if (g_Voice.analysisMode == 1) {
+            const char* lastHit = "-";
+            if (!g_Voice.tracker.hits().empty()) {
+                switch (g_Voice.tracker.hits().back().drumType) {
+                    case 0: lastHit = "KICK"; break;
+                    case 2: lastHit = "HAT"; break;
+                    default: lastHit = "SNARE"; break;
+                }
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.95f, 0.7f, 1.0f));
+            ImGui::Text("%s", lastHit);
+            ImGui::PopStyleColor();
+        } else {
+            const int note = g_Voice.tracker.currentNote();
+            if (note < 0) {
+                ImGui::TextDisabled("-");
+            } else {
+                static const char* names[12] = {"C", "C#", "D", "D#", "E", "F",
+                                                "F#", "G", "G#", "A", "A#", "B"};
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.95f, 0.7f, 1.0f));
+                ImGui::Text("%s%d   %.1f Hz", names[note % 12], (note / 12) - 1,
+                            g_Voice.tracker.currentFrequency());
+                ImGui::PopStyleColor();
+            }
+        }
+
+        ImGui::Text("%d hit%s captured",
+                    static_cast<int>(g_Voice.tracker.hits().size()),
+                    g_Voice.tracker.hits().size() == 1 ? "" : "s");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear##livehits")) g_Voice.tracker.clearHits();
+    }
+
+    // ---- Offline take ------------------------------------------------------
+    if (!g_Voice.liveMode) {
+        ImGui::Separator();
+        if (!g_Voice.capturingTake) {
+            if (ImGui::Button("Record Take", ImVec2(120, 24)) && running) {
+                g_Voice.take.clear();
+                g_Voice.capturingTake = true;
+                g_Voice.detected.clear();
+            }
+            if (!running && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Start listening first.");
+            }
+        } else {
+            if (ImGui::Button("Stop Take", ImVec2(120, 24))) {
+                g_Voice.capturingTake = false;
+            }
+        }
+        ImGui::SameLine();
+        ImGui::Text("%.1f s", static_cast<float>(g_Voice.take.size()) /
+                              static_cast<float>(std::max(1, g_Voice.takeSampleRate)));
+
+        ImGui::SameLine();
+        if (ImGui::Button("Import WAV")) {
+            const std::string path = openFileDialog(
+                "Audio Files (*.wav)\0*.wav\0All Files (*.*)\0*.*\0", "wav");
+            if (!path.empty()) {
+                SamplePool pool;
+                const int id = pool.loadSample(path);
+                const Sample* sample = pool.getSample(id);
+                if (sample != nullptr) {
+                    g_Voice.take = sample->audioData;
+                    g_Voice.takeSampleRate = sample->sampleRate;
+                    g_Voice.detected.clear();
+                } else {
+                    g_Voice.lastError = "Could not read that file";
+                }
+            }
+        }
+
+        ImGui::BeginDisabled(g_Voice.take.empty());
+        if (ImGui::Button("Analyse", ImVec2(120, 24))) {
+            const float threshold = 0.12f - 0.10f * g_Voice.sensitivity;
+            switch (g_Voice.analysisMode) {
+                case 1:
+                    g_Voice.detected = AudioAnalyzer::analyzeDrums(
+                        g_Voice.take, g_Voice.takeSampleRate, threshold);
+                    break;
+                case 2:
+                    g_Voice.detected = AudioAnalyzer::analyzeRhythm(
+                        g_Voice.take, g_Voice.takeSampleRate, threshold);
+                    break;
+                case 3:
+                    g_Voice.detected = AudioAnalyzer::analyzePolyphonic(
+                        g_Voice.take, g_Voice.takeSampleRate, threshold);
+                    break;
+                default:
+                    g_Voice.detected = AudioAnalyzer::analyzeMelody(
+                        g_Voice.take, g_Voice.takeSampleRate, threshold);
+                    break;
+            }
+            g_Voice.detectedKey = AudioAnalyzer::detectKey(g_Voice.take,
+                                                           g_Voice.takeSampleRate);
+            g_Voice.keyDetected = true;
+        }
+        ImGui::EndDisabled();
+
+        if (!g_Voice.detected.empty()) {
+            ImGui::SameLine();
+            ImGui::Text("%d found", static_cast<int>(g_Voice.detected.size()));
+        }
+        if (g_Voice.keyDetected) {
+            static const char* names[12] = {"C", "C#", "D", "D#", "E", "F",
+                                            "F#", "G", "G#", "A", "A#", "B"};
+            ImGui::TextDisabled("key: %s %s",
+                                names[g_Voice.detectedKey.root % 12],
+                                g_Voice.detectedKey.isMinor ? "minor" : "major");
+        }
+    }
+
+    // ---- Insert ------------------------------------------------------------
+    ImGui::Separator();
+
+    ImGui::SetNextItemWidth(110);
+    int snapIndex = static_cast<int>(g_Voice.options.snap);
+    if (ImGui::BeginCombo("Quantise", snapLabel(g_Voice.options.snap))) {
+        for (int i = 0; i < static_cast<int>(SnapDivision::Count); ++i) {
+            const bool selected = (i == snapIndex);
+            if (ImGui::Selectable(snapLabel(static_cast<SnapDivision>(i)), selected)) {
+                g_Voice.options.snap = static_cast<SnapDivision>(i);
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Off keeps the timing exactly as you sang it. A line that lands\n"
+            "30 ms early is played, not wrong - putting it on the grid is a\n"
+            "choice, and not always the one you want.");
+    }
+
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::DragInt("Shift", &g_Voice.options.transpose, 0.1f, -48, 48, "%+d st");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Move what you sang by semitones on the way in - which is how a\n"
+            "bassline gets written by someone who cannot sing that low.");
+    }
+
+    ImGui::Checkbox("Use my dynamics", &g_Voice.options.useVelocity);
+    ImGui::SameLine();
+    ImGui::Checkbox("Replace pattern", &g_Voice.replacePattern);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("On, the take replaces what is in the pattern.\n"
+                          "Off, it is added alongside.");
+    }
+
+    const size_t pending = g_Voice.liveMode ? g_Voice.tracker.hits().size()
+                                            : g_Voice.detected.size();
+
+    ImGui::BeginDisabled(pending == 0);
+    if (ImGui::Button("Add to Pattern", ImVec2(-1, 30))) {
+        std::vector<Note> notes;
+        if (g_Voice.liveMode) {
+            notes = hitsToNotes(g_Voice.tracker.hits(), project.tempoMap,
+                                project.bpm, project.beatsPerMeasure,
+                                g_Voice.options);
+        } else {
+            notes = detectedToNotes(g_Voice.detected, project.tempoMap,
+                                    project.bpm, project.beatsPerMeasure,
+                                    g_Voice.options);
+        }
+
+        if (!notes.empty() && ui.selectedPattern >= 0 &&
+            ui.selectedPattern < static_cast<int>(project.patterns.size())) {
+            // Through the same undo history as every other edit, so a take
+            // that came out wrong is one Ctrl+Z away.
+            g_UndoHistory.saveState(project, "Voice to Notes");
+
+            Pattern& pattern = project.patterns[static_cast<size_t>(ui.selectedPattern)];
+            if (g_Voice.replacePattern) pattern.notes.clear();
+            for (Note& note : notes) {
+                clampNoteToValidRanges(note);
+                pattern.notes.push_back(note);
+            }
+
+            // The pattern has to be long enough to hold what was just sung,
+            // or the end of the take is written and never plays.
+            float furthest = 0.0f;
+            for (const Note& note : pattern.notes) {
+                furthest = std::max(furthest, note.startTime + note.duration);
+            }
+            pattern.length = std::max(pattern.length,
+                                      static_cast<int>(std::ceil(furthest)));
+
+            if (g_Voice.liveMode) g_Voice.tracker.clearHits();
+            else g_Voice.detected.clear();
+
+            seq.updateChannelConfigs();
+        }
+    }
+    ImGui::EndDisabled();
+
+    if (pending == 0) {
+        ImGui::TextDisabled(g_Voice.liveMode ? "sing or beatbox something first"
+                                             : "record or import a take, then analyse");
+    } else {
+        ImGui::Text("%d note%s ready", static_cast<int>(pending),
+                    pending == 1 ? "" : "s");
+    }
+
+    ImGui::End();
+}
+
 inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SetNextWindowPos(ImVec2(930, 645), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(700, 400), ImGuiCond_FirstUseEver);

@@ -95,6 +95,10 @@ target_link_libraries(imgui PUBLIC OpenGL::GL)
 # ============================================================================
 add_executable(${PROJECT_NAME} WIN32
     src/main.cpp
+    # The pitch and drum detection. It used to be compiled only into the
+    # standalone VoiceToNote.exe, which is why the tracker could not use any
+    # of it and none of it was covered by a test.
+    src/AudioAnalyzer.cpp
 )
 
 # Header files (for IDE visibility)
@@ -106,6 +110,11 @@ target_sources(${PROJECT_NAME} PRIVATE
     src/FileIO.h
     src/MIDIExport.h
     src/UI.h
+    src/TempoMap.h
+    src/VoiceCapture.h
+    src/LiveVoice.h
+    src/VoicePanel.h
+    src/AudioAnalyzer.h
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -243,6 +252,7 @@ install(TARGETS DebugAnalyzer
 add_executable(ChiptuneTests
     tests/ChiptuneTests.cpp
     tests/TestMiniaudioImpl.cpp
+    src/AudioAnalyzer.cpp
 )
 
 target_include_directories(ChiptuneTests PRIVATE

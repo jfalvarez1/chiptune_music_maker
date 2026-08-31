@@ -36,6 +36,9 @@
 #include "NextStep.h"
 #include "GroovePresets.h"
 #include "Version.h"
+#include "VoiceCapture.h"
+#include "LiveVoice.h"
+#include "VoicePanel.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -9135,6 +9138,678 @@ static void testTempoMapReachesEverything() {
     }
 }
 
+
+// ============================================================================
+// 59. The capture ring
+// ============================================================================
+static void testVoiceRing() {
+    beginTest("Voice capture ring");
+
+    // ---- Round trip --------------------------------------------------------
+    {
+        AudioRing<16> ring;
+        const float in[5] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+        ring.write(in, 5);
+        check(ring.available() == 5, "five samples in, five available");
+
+        float out[8] = {};
+        check(ring.read(out, 8) == 5, "and five come back out");
+        check(out[0] == 1.0f && out[4] == 5.0f, "in the order they went in");
+        check(ring.available() == 0, "leaving it empty");
+        check(ring.read(out, 8) == 0, "and an empty ring reads nothing");
+    }
+
+    // ---- The wrap ----------------------------------------------------------
+    {
+        AudioRing<16> ring;
+        float scratch[16] = {};
+
+        // Walk the write cursor most of the way round, then straddle the end.
+        for (int pass = 0; pass < 3; ++pass) {
+            float block[5];
+            for (int i = 0; i < 5; ++i) block[i] = float(pass * 5 + i);
+            ring.write(block, 5);
+            check(ring.read(scratch, 5) == 5, "a block survives the wrap");
+            bool ok = true;
+            for (int i = 0; i < 5; ++i) {
+                if (scratch[i] != float(pass * 5 + i)) { ok = false; break; }
+            }
+            if (!ok) { check(false, "values corrupted across the wrap"); break; }
+        }
+        check(true, "values are intact after the write cursor wraps");
+    }
+
+    // ---- Overflow drops the OLDEST -----------------------------------------
+    //
+    // A live monitor that has fallen behind should show what is being sung
+    // now. Keeping a stale backlog and discarding the present is the wrong
+    // way round.
+    {
+        AudioRing<16> ring;
+        float block[10];
+        for (int i = 0; i < 10; ++i) block[i] = float(i);
+        ring.write(block, 10);
+
+        float second[10];
+        for (int i = 0; i < 10; ++i) second[i] = float(100 + i);
+        ring.write(second, 10);
+
+        check(ring.droppedSamples() > 0, "the overflow is counted, not silent");
+
+        float out[16] = {};
+        const size_t got = ring.read(out, 16);
+        check(got == 15, "the ring holds capacity - 1 (got " +
+              std::to_string(got) + ")");
+        check(got > 0 && out[got - 1] == 109.0f,
+              "and the NEWEST sample survived - a monitor that has fallen "
+              "behind must show the present, not a stale backlog");
+    }
+
+    // ---- A block larger than the ring --------------------------------------
+    {
+        AudioRing<16> ring;
+        float huge[64];
+        for (int i = 0; i < 64; ++i) huge[i] = float(i);
+        ring.write(huge, 64);
+
+        float out[16] = {};
+        const size_t got = ring.read(out, 16);
+        check(got == 15, "an oversized block leaves the ring full, not broken");
+        check(got > 0 && out[got - 1] == 63.0f,
+              "keeping the tail of it - the newest audio is the audio the "
+              "user just made");
+    }
+
+    // ---- clear -------------------------------------------------------------
+    {
+        AudioRing<16> ring;
+        const float in[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+        ring.write(in, 4);
+        ring.clear();
+        check(ring.available() == 0, "clear empties it");
+        ring.write(in, 4);
+        float out[4] = {};
+        check(ring.read(out, 4) == 4 && out[0] == 1.0f,
+              "and it still works afterwards");
+    }
+
+    // ---- The meter ---------------------------------------------------------
+    {
+        const float block[4] = {0.1f, -0.7f, 0.3f, 0.2f};
+        check(std::fabs(blockPeak(block, 4) - 0.7f) < 1e-6f,
+              "the block peak is the largest magnitude, sign ignored");
+
+        PeakMeter meter;
+        meter.push(0.9f);
+        check(std::fabs(meter.value() - 0.9f) < 1e-6f, "the meter rises instantly");
+        meter.push(0.0f);
+        check(meter.value() > 0.0f && meter.value() < 0.9f,
+              "and falls gradually, so a transient stays visible for longer "
+              "than the one frame it occupied");
+        for (int i = 0; i < 100; ++i) meter.push(0.0f);
+        check(meter.value() == 0.0f, "reaching zero eventually");
+    }
+}
+
+// ============================================================================
+// 60. The FFT plan
+// ============================================================================
+static void testFFTPlan() {
+    beginTest("FFT plan");
+
+    // ---- It refuses what it cannot do --------------------------------------
+    {
+        DSP::FFTPlan plan;
+        check(!plan.resize(100), "a non-power-of-two size is refused outright "
+              "rather than half-transformed into a spectrum that looks "
+              "plausible and is wrong");
+        check(!plan.resize(1), "and so is a size of one");
+        check(plan.resize(256), "a power of two is accepted");
+        check(plan.size() == 256, "and reports its size");
+    }
+
+    // ---- It agrees with the reference implementation ------------------------
+    {
+        const size_t N = 256;
+        std::vector<float> real(N), imag(N, 0.0f);
+        std::vector<DSP::Complex> reference(N);
+
+        for (size_t i = 0; i < N; ++i) {
+            const float t = float(i) / float(N);
+            const float v = std::sin(6.28318530718f * 5.0f * t) +
+                            0.5f * std::sin(6.28318530718f * 17.0f * t + 0.7f);
+            real[i] = v;
+            reference[i] = DSP::Complex(v, 0.0f);
+        }
+
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(real.data(), imag.data());
+        DSP::fft(reference);
+
+        float worst = 0.0f;
+        for (size_t i = 0; i < N; ++i) {
+            worst = std::max(worst, std::fabs(real[i] - reference[i].real()));
+            worst = std::max(worst, std::fabs(imag[i] - reference[i].imag()));
+        }
+        check(worst < 1e-3f,
+              "the iterative plan matches the recursive reference to within "
+              "float error (worst " + std::to_string(worst) + ") - it exists "
+              "for speed, not for a different answer");
+    }
+
+    // ---- A tone lands in its own bin ---------------------------------------
+    {
+        const size_t N = 1024;
+        const int sampleRate = 48000;
+        const float frequency = 1500.0f;
+
+        std::vector<float> real(N), imag(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            real[i] = std::sin(6.28318530718f * frequency * float(i) / float(sampleRate));
+        }
+
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(real.data(), imag.data());
+
+        size_t loudest = 0;
+        float peak = 0.0f;
+        for (size_t bin = 1; bin < N / 2; ++bin) {
+            const float magnitude = std::sqrt(real[bin] * real[bin] +
+                                              imag[bin] * imag[bin]);
+            if (magnitude > peak) { peak = magnitude; loudest = bin; }
+        }
+
+        const float binHz = float(sampleRate) / float(N);
+        const float found = float(loudest) * binHz;
+        check(std::fabs(found - frequency) < binHz,
+              "a 1500 Hz tone lands within one bin of 1500 Hz (got " +
+              std::to_string(found) + ")");
+    }
+
+    // ---- Resizing keeps working ---------------------------------------------
+    {
+        DSP::FFTPlan plan;
+        plan.resize(64);
+        plan.resize(512);
+        check(plan.size() == 512, "a plan can be resized");
+
+        std::vector<float> real(512, 0.0f), imag(512, 0.0f);
+        real[0] = 1.0f;                      // an impulse
+        plan.transform(real.data(), imag.data());
+
+        bool flat = true;
+        for (size_t i = 0; i < 512; ++i) {
+            if (std::fabs(real[i] - 1.0f) > 1e-4f || std::fabs(imag[i]) > 1e-4f) {
+                flat = false;
+                break;
+            }
+        }
+        check(flat, "and an impulse still transforms to a flat spectrum after "
+              "the resize, so the twiddle tables were actually rebuilt");
+    }
+}
+
+// ============================================================================
+// 61. Live voice tracking
+// ============================================================================
+static void testLiveVoice() {
+    beginTest("Live voice tracking");
+
+    const int rate = 48000;
+
+    auto tone = [rate](float frequency, float seconds, float amplitude) {
+        std::vector<float> out(static_cast<size_t>(seconds * float(rate)));
+        for (size_t i = 0; i < out.size(); ++i) {
+            const float t = float(i) / float(rate);
+            // A couple of harmonics, because a pure sine is not what a voice
+            // gives a pitch detector and YIN behaves differently on one.
+            out[i] = amplitude * (std::sin(6.28318530718f * frequency * t) +
+                                  0.35f * std::sin(6.28318530718f * frequency * 2.0f * t) +
+                                  0.15f * std::sin(6.28318530718f * frequency * 3.0f * t));
+        }
+        return out;
+    };
+
+    // ---- Silence is silence -------------------------------------------------
+    {
+        LiveVoiceTracker tracker;
+        tracker.setSampleRate(rate);
+        std::vector<float> quiet(rate / 2, 0.0f);
+        tracker.process(quiet.data(), quiet.size());
+
+        check(tracker.currentNote() == -1,
+              "silence reports no note rather than the last one it saw");
+        check(tracker.hits().empty(), "and produces no hits");
+    }
+
+    // ---- A sung note is identified -----------------------------------------
+    {
+        // A440 is MIDI 69. Half a second is about 90 analysis hops, so this
+        // is not a lucky single frame.
+        LiveVoiceTracker tracker;
+        tracker.setSampleRate(rate);
+        tracker.setMode(LiveVoiceMode::Melodic);
+
+        const std::vector<float> a4 = tone(440.0f, 0.5f, 0.3f);
+        tracker.process(a4.data(), a4.size());
+
+        check(tracker.currentNote() == 69,
+              "a 440 Hz tone reads as MIDI 69 (got " +
+              std::to_string(tracker.currentNote()) + ") - an octave error "
+              "would give 57 or 81, which is exactly what plain "
+              "autocorrelation does to a voice");
+        check(std::fabs(tracker.currentFrequency() - 440.0f) < 10.0f,
+              "and the frequency is close to 440");
+        check(!tracker.hits().empty(), "and it produced a hit");
+    }
+
+    // ---- Several notes in a row --------------------------------------------
+    {
+        LiveVoiceTracker tracker;
+        tracker.setSampleRate(rate);
+        tracker.setMode(LiveVoiceMode::Melodic);
+
+        // C4, E4, G4 - 261.6, 329.6, 392.0 Hz, MIDI 60, 64, 67.
+        const float pitches[3] = {261.63f, 329.63f, 392.00f};
+        const int expected[3] = {60, 64, 67};
+        std::vector<int> seen;
+
+        for (int i = 0; i < 3; ++i) {
+            const std::vector<float> note = tone(pitches[i], 0.4f, 0.3f);
+            tracker.process(note.data(), note.size());
+            seen.push_back(tracker.currentNote());
+        }
+
+        bool allRight = true;
+        for (int i = 0; i < 3; ++i) {
+            if (seen[static_cast<size_t>(i)] != expected[i]) { allRight = false; break; }
+        }
+        check(allRight,
+              "a C-E-G line tracks as 60, 64, 67 (got " +
+              std::to_string(seen[0]) + ", " + std::to_string(seen[1]) + ", " +
+              std::to_string(seen[2]) + ")");
+
+        // Every distinct note should have produced at least one hit.
+        int distinct = 0;
+        int previous = -999;
+        for (const LiveHit& hit : tracker.hits()) {
+            if (hit.midiNote != previous) { ++distinct; previous = hit.midiNote; }
+        }
+        check(distinct >= 3,
+              "and each change produced a hit (" + std::to_string(distinct) + ")");
+    }
+
+    // ---- Beatbox classification --------------------------------------------
+    {
+        // A kick: a low tone with a fast decay, almost all energy under
+        // 250 Hz. A hat: a short burst of noise. A snare: a mid tone with
+        // noise on top, which is what a snare is.
+        // The noise is band-limited, because real drums are. Flat noise all
+        // the way to Nyquist is not what either a snare or a hi-hat sounds
+        // like, and classifying THAT would be testing the fixture rather
+        // than the classifier: a snare's rattle sits between about 200 Hz
+        // and 3 kHz, a hi-hat's is almost entirely above 6.
+        auto drumHit = [rate](int kind, float seconds) {
+            std::vector<float> out(static_cast<size_t>(seconds * float(rate)), 0.0f);
+            unsigned int seed = 22222u;
+            float lowpass = 0.0f;
+            float highpassPrevIn = 0.0f;
+            float highpass = 0.0f;
+
+            for (size_t i = 0; i < out.size(); ++i) {
+                const float t = float(i) / float(rate);
+                seed = seed * 1103515245u + 12345u;
+                const float noise = (float((seed >> 16) & 0x7FFF) / 16383.5f) - 1.0f;
+
+                // One-pole pair, enough to put the energy in the right half
+                // of the spectrum without pretending to be a drum synth.
+                lowpass += (noise - lowpass) * 0.28f;            // ~3 kHz
+                highpass = 0.86f * (highpass + noise - highpassPrevIn);
+                highpassPrevIn = noise;
+
+                if (kind == 0) {
+                    out[i] = 0.9f * std::exp(-t * 26.0f) *
+                             std::sin(6.28318530718f * 62.0f * t);
+                } else if (kind == 2) {
+                    out[i] = 0.6f * std::exp(-t * 130.0f) * highpass;
+                } else {
+                    out[i] = std::exp(-t * 42.0f) *
+                             (0.5f * std::sin(6.28318530718f * 210.0f * t) +
+                              0.7f * lowpass);
+                }
+            }
+            return out;
+        };
+
+        auto classify = [&](int kind) {
+            LiveVoiceTracker tracker;
+            tracker.setSampleRate(rate);
+            tracker.setMode(LiveVoiceMode::Drums);
+            tracker.setSensitivity(0.7f);
+
+            // Lead in with silence so the flux history has a floor to
+            // measure against - without it the very first window IS the
+            // onset and there is nothing to compare it to.
+            const std::vector<float> lead(static_cast<size_t>(0.15f * float(rate)), 0.0f);
+            tracker.process(lead.data(), lead.size());
+
+            const std::vector<float> hit = drumHit(kind, 0.25f);
+            tracker.process(hit.data(), hit.size());
+
+            const std::vector<float> tail(static_cast<size_t>(0.1f * float(rate)), 0.0f);
+            tracker.process(tail.data(), tail.size());
+
+            if (tracker.hits().empty()) return -1;
+            return tracker.hits().front().drumType;
+        };
+
+        check(classify(0) == 0,
+              "a low decaying thump classifies as a kick (got " +
+              std::to_string(classify(0)) + ")");
+        check(classify(2) == 2,
+              "a short noise burst classifies as a hat (got " +
+              std::to_string(classify(2)) + ")");
+        check(classify(1) == 1,
+              "and a mid tone with noise on it classifies as a snare (got " +
+              std::to_string(classify(1)) + ")");
+    }
+
+    // ---- Onsets are not double-triggered ------------------------------------
+    {
+        LiveVoiceTracker tracker;
+        tracker.setSampleRate(rate);
+        tracker.setMode(LiveVoiceMode::Drums);
+        tracker.setSensitivity(0.9f);
+
+        // One kick with a long decay. Below the retrigger gap its own decay
+        // fires a second onset and a beatboxed kick becomes two.
+        std::vector<float> buffer(static_cast<size_t>(0.6f * float(rate)), 0.0f);
+        const size_t onsetAt = static_cast<size_t>(0.15f * float(rate));
+        for (size_t i = onsetAt; i < buffer.size(); ++i) {
+            const float t = float(i - onsetAt) / float(rate);
+            buffer[i] = 0.9f * std::exp(-t * 12.0f) *
+                        std::sin(6.28318530718f * 60.0f * t);
+        }
+        tracker.process(buffer.data(), buffer.size());
+
+        check(tracker.hits().size() <= 2,
+              "one hit with a long decay produces at most two onsets, not a "
+              "stream of them (got " +
+              std::to_string(tracker.hits().size()) + ")");
+        check(!tracker.hits().empty(), "and at least one");
+    }
+
+    // ---- Sensitivity does something ----------------------------------------
+    {
+        auto countHits = [&](float sensitivity) {
+            LiveVoiceTracker tracker;
+            tracker.setSampleRate(rate);
+            tracker.setMode(LiveVoiceMode::Drums);
+            tracker.setSensitivity(sensitivity);
+
+            // A run of quiet taps over a noise floor.
+            std::vector<float> buffer(static_cast<size_t>(1.5f * float(rate)), 0.0f);
+            unsigned int seed = 7u;
+            for (size_t i = 0; i < buffer.size(); ++i) {
+                seed = seed * 1103515245u + 12345u;
+                buffer[i] = 0.004f * ((float((seed >> 16) & 0x7FFF) / 16383.5f) - 1.0f);
+            }
+            for (int tap = 0; tap < 8; ++tap) {
+                const size_t at = static_cast<size_t>((0.15f + float(tap) * 0.15f) *
+                                                      float(rate));
+                for (size_t i = at; i < at + 1200 && i < buffer.size(); ++i) {
+                    const float t = float(i - at) / float(rate);
+                    buffer[i] += 0.25f * std::exp(-t * 60.0f) *
+                                 std::sin(6.28318530718f * 90.0f * t);
+                }
+            }
+            tracker.process(buffer.data(), buffer.size());
+            return tracker.hits().size();
+        };
+
+        const size_t shy = countHits(0.0f);
+        const size_t eager = countHits(1.0f);
+        check(eager >= shy,
+              "turning sensitivity up never finds fewer onsets (" +
+              std::to_string(shy) + " -> " + std::to_string(eager) + ")");
+    }
+
+    // ---- Reset really resets ------------------------------------------------
+    {
+        LiveVoiceTracker tracker;
+        tracker.setSampleRate(rate);
+        const std::vector<float> a4 = tone(440.0f, 0.3f, 0.3f);
+        tracker.process(a4.data(), a4.size());
+        check(!tracker.hits().empty(), "something was tracked");
+
+        tracker.reset();
+        check(tracker.hits().empty() && tracker.currentNote() == -1 &&
+              tracker.elapsedSeconds() == 0.0f,
+              "and reset clears the notes, the hits and the clock - a second "
+              "take must not land after the first one's timestamps");
+    }
+
+    // ---- Changing the sample rate resets, because the clock changed --------
+    {
+        LiveVoiceTracker tracker;
+        tracker.setSampleRate(48000);
+        const std::vector<float> a4 = tone(440.0f, 0.3f, 0.3f);
+        tracker.process(a4.data(), a4.size());
+        const float before = tracker.elapsedSeconds();
+        check(before > 0.0f, "the clock advanced");
+
+        tracker.setSampleRate(44100);
+        check(tracker.elapsedSeconds() == 0.0f,
+              "switching to a device at another rate resets the clock rather "
+              "than reinterpreting the elapsed samples at the new rate");
+    }
+}
+
+// ============================================================================
+// 62. Detected notes reach the pattern
+// ============================================================================
+static void testVoiceToNotes() {
+    beginTest("Voice to notes");
+
+    TempoMap flat;
+    const float bpm = 120.0f;          // one beat = 0.5 s
+
+    // ---- Quantisation -------------------------------------------------------
+    {
+        std::vector<LiveHit> hits;
+        // Sung 30 ms early of beats 0, 1 and 2.
+        hits.push_back(LiveHit{0.0f,  60, 261.6f, 0.8f, false, 0, 1.0f});
+        hits.push_back(LiveHit{0.47f, 62, 293.7f, 0.8f, false, 0, 1.0f});
+        hits.push_back(LiveHit{0.97f, 64, 329.6f, 0.8f, false, 0, 1.0f});
+
+        VoiceToNotesOptions options;
+        options.snap = SnapDivision::Quarter;
+        const std::vector<Note> snapped = hitsToNotes(hits, flat, bpm, 4, options);
+
+        check(snapped.size() == 3, "three hits become three notes");
+        check(snapped.size() == 3 &&
+              std::fabs(snapped[1].startTime - 1.0f) < 1e-3f &&
+              std::fabs(snapped[2].startTime - 2.0f) < 1e-3f,
+              "and land on the beat they were aimed at");
+
+        options.snap = SnapDivision::Off;
+        const std::vector<Note> asPlayed = hitsToNotes(hits, flat, bpm, 4, options);
+        check(asPlayed.size() == 3 &&
+              std::fabs(asPlayed[1].startTime - 0.94f) < 1e-2f,
+              "with snap off the timing is left exactly as sung - a line that "
+              "lands 30 ms early is played, not wrong, and forcing it onto "
+              "the grid is a choice the performer may not want");
+    }
+
+    // ---- Notes run until the next one --------------------------------------
+    {
+        std::vector<LiveHit> hits;
+        hits.push_back(LiveHit{0.0f, 60, 261.6f, 0.8f, false, 0, 1.0f});
+        hits.push_back(LiveHit{1.0f, 62, 293.7f, 0.8f, false, 0, 1.0f});
+
+        VoiceToNotesOptions options;
+        options.snap = SnapDivision::Quarter;
+        const std::vector<Note> notes = hitsToNotes(hits, flat, bpm, 4, options);
+
+        check(notes.size() == 2, "two notes");
+        check(notes.size() == 2 && std::fabs(notes[0].duration - 2.0f) < 1e-3f,
+              "the first runs until the second, so a sung line comes back as "
+              "a line rather than a row of clicks");
+        check(notes.size() == 2 && notes[1].duration > 0.0f,
+              "and the last one still has a length");
+    }
+
+    // ---- Drums are short and land on their own instruments -----------------
+    {
+        std::vector<LiveHit> hits;
+        hits.push_back(LiveHit{0.0f, 0, 0.0f, 0.9f, true, 0, 1.0f});   // kick
+        hits.push_back(LiveHit{0.5f, 0, 0.0f, 0.6f, true, 1, 1.0f});   // snare
+        hits.push_back(LiveHit{0.75f, 0, 0.0f, 0.4f, true, 2, 1.0f});  // hat
+
+        VoiceToNotesOptions options;
+        options.snap = SnapDivision::Sixteenth;
+        const std::vector<Note> notes = hitsToNotes(hits, flat, bpm, 4, options);
+
+        check(notes.size() == 3, "three drum hits become three notes");
+        if (notes.size() == 3) {
+            check(notes[0].oscillatorType == OscillatorType::Kick &&
+                  notes[1].oscillatorType == OscillatorType::Snare &&
+                  notes[2].oscillatorType == OscillatorType::HiHat,
+                  "each class becomes the instrument it names");
+            check(notes[0].pitch != notes[1].pitch &&
+                  notes[1].pitch != notes[2].pitch,
+                  "on three different keys - a drum oscillator ignores pitch, "
+                  "but stacking all three on one key makes the piano roll "
+                  "unreadable");
+            check(notes[0].duration <= 0.25f,
+                  "and a drum hit is short: holding it to the next hit would "
+                  "make every kick a whole note and choke the oscillator on "
+                  "its own retrigger");
+        }
+
+        // The mapping is configurable, because a genre kit may want 808s.
+        options.kick = OscillatorType::Kick808;
+        const std::vector<Note> eightOhEight = hitsToNotes(hits, flat, bpm, 4, options);
+        check(!eightOhEight.empty() &&
+              eightOhEight[0].oscillatorType == OscillatorType::Kick808,
+              "and which instrument each class becomes is a setting");
+    }
+
+    // ---- Velocity ----------------------------------------------------------
+    {
+        std::vector<LiveHit> hits;
+        hits.push_back(LiveHit{0.0f, 60, 261.6f, 0.25f, false, 0, 1.0f});
+        hits.push_back(LiveHit{1.0f, 62, 293.7f, 0.95f, false, 0, 1.0f});
+
+        VoiceToNotesOptions options;
+        std::vector<Note> notes = hitsToNotes(hits, flat, bpm, 4, options);
+        check(notes.size() == 2 && notes[1].velocity > notes[0].velocity,
+              "how hard it was sung reaches the note's velocity");
+
+        options.useVelocity = false;
+        notes = hitsToNotes(hits, flat, bpm, 4, options);
+        check(notes.size() == 2 &&
+              std::fabs(notes[0].velocity - notes[1].velocity) < 1e-4f,
+              "and can be turned off for a take that should be even");
+    }
+
+    // ---- Two hits on one beat are one note ---------------------------------
+    {
+        std::vector<LiveHit> hits;
+        hits.push_back(LiveHit{0.50f, 60, 261.6f, 0.8f, false, 0, 1.0f});
+        hits.push_back(LiveHit{0.52f, 60, 261.6f, 0.8f, false, 0, 1.0f});
+
+        VoiceToNotesOptions options;
+        options.snap = SnapDivision::Quarter;
+        const std::vector<Note> notes = hitsToNotes(hits, flat, bpm, 4, options);
+        check(notes.size() == 1,
+              "two hits that quantise onto the same beat with the same pitch "
+              "are one note played unevenly, not two voices on one key");
+    }
+
+    // ---- A take over a tempo change ----------------------------------------
+    {
+        TempoMap map;
+        map.setTempo(8.0f, 240.0f);   // beat 8 is 4 s in; after it, 4 beats/s
+
+        std::vector<LiveHit> hits;
+        hits.push_back(LiveHit{4.0f, 60, 261.6f, 0.8f, false, 0, 1.0f});  // beat 8
+        hits.push_back(LiveHit{5.0f, 62, 293.7f, 0.8f, false, 0, 1.0f});  // beat 12
+
+        VoiceToNotesOptions options;
+        options.snap = SnapDivision::Quarter;
+        const std::vector<Note> notes = hitsToNotes(hits, map, 120.0f, 4, options);
+
+        check(notes.size() == 2, "both hits convert");
+        check(notes.size() == 2 && std::fabs(notes[0].startTime - 8.0f) < 1e-2f,
+              "a hit four seconds in lands on beat 8");
+        check(notes.size() == 2 && std::fabs(notes[1].startTime - 12.0f) < 1e-2f,
+              "and one at five seconds on beat 12, not beat 10 - the "
+              "conversion runs through the tempo map rather than one bpm "
+              "(got " + std::to_string(notes.size() == 2 ? notes[1].startTime : 0.0f) + ")");
+    }
+
+    // ---- Transpose ---------------------------------------------------------
+    {
+        std::vector<LiveHit> hits;
+        hits.push_back(LiveHit{0.0f, 60, 261.6f, 0.8f, false, 0, 1.0f});
+
+        VoiceToNotesOptions options;
+        options.transpose = -12;
+        const std::vector<Note> notes = hitsToNotes(hits, flat, bpm, 4, options);
+        check(notes.size() == 1 && notes[0].pitch == 48,
+              "a sung line can be dropped an octave on the way in, which is "
+              "how a bassline gets written by someone who cannot sing that low");
+
+        options.transpose = 200;      // nonsense
+        const std::vector<Note> clamped = hitsToNotes(hits, flat, bpm, 4, options);
+        check(clamped.size() == 1 && clamped[0].pitch <= 127,
+              "and an absurd transpose is clamped into MIDI range");
+    }
+
+    // ---- The offline detector's measured durations are preferred -----------
+    {
+        std::vector<DetectedNote> detected;
+        DetectedNote a{};
+        a.noteNumber = 60;
+        a.startTime = 0.0f;
+        a.duration = 0.25f;      // half a beat at 120 bpm
+        a.velocity = 0.8f;
+        a.isDrum = false;
+        detected.push_back(a);
+
+        DetectedNote b{};
+        b.noteNumber = 62;
+        b.startTime = 2.0f;      // four beats later
+        b.duration = 0.25f;
+        b.velocity = 0.8f;
+        b.isDrum = false;
+        detected.push_back(b);
+
+        VoiceToNotesOptions options;
+        options.snap = SnapDivision::Eighth;
+        const std::vector<Note> notes = detectedToNotes(detected, flat, bpm, 4, options);
+
+        check(notes.size() == 2, "both detected notes convert");
+        check(notes.size() == 2 && notes[0].duration < 1.0f,
+              "the first keeps its own measured length rather than being "
+              "stretched to the next note four beats away - the offline "
+              "detector knows how long it lasted and the live path can only "
+              "guess (got " +
+              std::to_string(notes.size() == 2 ? notes[0].duration : 0.0f) + ")");
+    }
+
+    // ---- Nothing in, nothing out -------------------------------------------
+    {
+        const std::vector<LiveHit> none;
+        VoiceToNotesOptions options;
+        check(hitsToNotes(none, flat, bpm, 4, options).empty(),
+              "no hits produce no notes rather than one at beat zero");
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -9233,6 +9908,10 @@ int main(int argc, char** argv) {
     testAudioClipPersistence();
     testTempoMap();
     testTempoMapReachesEverything();
+    testVoiceRing();
+    testFFTPlan();
+    testLiveVoice();
+    testVoiceToNotes();
     testLongRunStability();
 
     std::printf("\n==========================\n");

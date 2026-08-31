@@ -144,6 +144,14 @@ foreach ($panel in $panels) {
     w = 2560; h = 800
 })
 
+# The voice panel. It enumerates capture devices on first draw, which is the
+# one thing in it that touches hardware - and on a machine with no microphone
+# at all that path has to render an empty combo rather than crash.
+[void]$cases.Add(@{
+    name = "voice-to-notes"
+    args = "--demo --focus `"Voice to Notes`""
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"

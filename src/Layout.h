@@ -196,6 +196,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Automation", centre);
             ImGui::DockBuilderDockWindow("Wavetable Editor", centre);
             ImGui::DockBuilderDockWindow("MIDI Input", rightLower);
+            ImGui::DockBuilderDockWindow("Voice to Notes", leftLower);
             break;
         }
 
@@ -233,6 +234,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Automation", lowerMid);
             ImGui::DockBuilderDockWindow("Master Bus", lowerMid);
             ImGui::DockBuilderDockWindow("MIDI Input", upperLeft);
+            ImGui::DockBuilderDockWindow("Voice to Notes", upperLeft);
             break;
         }
 
@@ -264,6 +266,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Tools", lowerLeft);
             ImGui::DockBuilderDockWindow("Wavetable Editor", lowerLeft);
             ImGui::DockBuilderDockWindow("MIDI Input", upperRight);
+            ImGui::DockBuilderDockWindow("Voice to Notes", upperRight);
             break;
         }
     }
@@ -302,6 +305,7 @@ inline int AdoptOrphanedWindows() {
         {"Spectrum Analyzer", "Piano Roll"},
         {"Automation",        "Piano Roll"},
         {"MIDI Input",        "Channel Editor"},
+        {"Voice to Notes",    "Tools"},
     };
 
     int adopted = 0;

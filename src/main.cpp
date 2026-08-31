@@ -999,6 +999,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // Tools panel (always visible)
         ChiptuneTracker::DrawToolsPanel(project, uiState, sequencer);
 
+        // Voice to notes.
+        //
+        // The ring is drained every frame whether or not the panel is
+        // visible: a ring nobody reads fills up and starts dropping audio,
+        // and a take silently truncated because the panel was behind
+        // another tab is worse than one that never recorded at all.
+        ChiptuneTracker::PollVoiceCapture();
+        ChiptuneTracker::DrawVoicePanel(project, uiState, sequencer);
+
         // A docked window sits behind whatever shares its tab group, so a
         // capture of one needs it brought to the front. Repeated for the
         // first few frames because the dock layout is still settling.
