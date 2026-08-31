@@ -47,6 +47,7 @@ enum class Genre : uint8_t {
 inline constexpr int GENRE_MAX_CHORDS = 8;
 inline constexpr int GENRE_MAX_DRUMS = 8;
 inline constexpr int GENRE_MAX_TOOLS = 12;
+inline constexpr int GENRE_MAX_ENGINES = 6;
 
 struct GenreProfile {
     const char* name;
@@ -63,6 +64,13 @@ struct GenreProfile {
     const char* chords[GENRE_MAX_CHORDS];
     const char* drums[GENRE_MAX_DRUMS];
     const char* tools[GENRE_MAX_TOOLS];
+
+    // Which of the configurable engines to put in front of you. Chiptune
+    // wants wavetables and FM - both are what the hardware of the era
+    // actually did - and has no use for a multisample sampler. Hip hop is
+    // the reverse. Same filter-on-attention rule as everything else here:
+    // the Channel Editor's Type menu still lists all of them.
+    const char* engines[GENRE_MAX_ENGINES];
 
     // Panels to open when this genre is chosen. The user can still toggle
     // any of them afterwards; this only decides the starting point.
@@ -93,13 +101,21 @@ inline constexpr const char* ALL_TOOL_SECTIONS[] = {
 };
 inline constexpr int ALL_TOOL_SECTION_COUNT = 10;
 
+// The configurable engines, by the names the palette shows. A profile naming
+// something not in this list is a typo that would silently hide an engine
+// forever, so the tests check every profile against it.
+inline constexpr const char* ALL_ENGINES[] = {
+    "Wavetable", "FM", "Sampler", "Granular", "Drum Model"
+};
+inline constexpr int ALL_ENGINE_COUNT = 5;
+
 inline const GenreProfile& genreProfile(Genre genre) {
     static const GenreProfile PROFILES[] = {
         {   // Everything
             "Everything",
             "Every tool on screen. This is how the program has always behaved.",
             120.0f, 0.0f, 0, 0,
-            {nullptr}, {nullptr}, {nullptr},
+            {nullptr}, {nullptr}, {nullptr}, {nullptr},
             false, false, false, false
         },
         {   // Chiptune
@@ -111,6 +127,10 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Kicks", "Snares & Claps", "Hi-Hats", nullptr},
             {"Arpeggiator", "Euclidean Rhythms", "Drum Pattern Generator",
              "Bass Generator", "Scale Lock", "Pattern Variation", nullptr},
+            // Wavetable and FM are what the chips of the era actually did -
+            // the Game Boy's wave channel and the Mega Drive's YM2612. A
+            // multisample sampler is the one thing that era could not do.
+            {"Wavetable", "FM", nullptr},
             true, true, false, false
         },
         {   // Synthwave
@@ -121,6 +141,9 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Kicks", "Snares & Claps", "Hi-Hats", "Toms", "Cymbals", nullptr},
             {"Arpeggiator", "Bass Generator", "Scale Lock", "Quick Layer",
              "Velocity Curve", "Drum Pattern Generator", nullptr},
+            // The DX7 defined this sound, and the drum model covers the
+            // gated-reverb kit it is always paired with.
+            {"Wavetable", "FM", "Drum Model", nullptr},
             false, true, true, true
         },
         {   // Hip Hop
@@ -131,6 +154,10 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Kicks", "Snares & Claps", "Hi-Hats", "Percussion", nullptr},
             {"Humanize", "Drum Pattern Generator", "Velocity Curve",
              "Fill Generator", "Scale Lock", nullptr},
+            // Chopping samples is the genre. Granular is here because a
+            // vocal chop is a granular operation whether or not it is
+            // called one.
+            {"Sampler", "Granular", "Drum Model", nullptr},
             false, false, true, true
         },
         {   // Reggaeton
@@ -142,6 +169,9 @@ inline const GenreProfile& genreProfile(Genre genre) {
              "Percussion", nullptr},
             {"Drum Pattern Generator", "Euclidean Rhythms", "Fill Generator",
              "Velocity Curve", "Scale Lock", nullptr},
+            // The percussion is the genre, so the editable kit and the
+            // sampler for one-shots.
+            {"Drum Model", "Sampler", nullptr},
             false, false, true, true
         },
         {   // EDM
@@ -152,6 +182,9 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Kicks", "Snares & Claps", "Hi-Hats", "Cymbals", "Percussion", nullptr},
             {"Arpeggiator", "Euclidean Rhythms", "Drum Pattern Generator",
              "Fill Generator", "Quick Layer", "Velocity Curve", nullptr},
+            // Everything. EDM borrows from all of it, and the wavetable
+            // morph is the sound of the last fifteen years of it.
+            {"Wavetable", "FM", "Sampler", "Granular", "Drum Model", nullptr},
             false, true, true, true
         },
         {   // Rock
@@ -162,6 +195,8 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Kicks", "Snares & Claps", "Hi-Hats", "Toms", "Cymbals", nullptr},
             {"Drum Pattern Generator", "Fill Generator", "Humanize",
              "Bass Generator", "Scale Lock", nullptr},
+            // Recorded instruments, so the sampler and a real kit.
+            {"Sampler", "Drum Model", nullptr},
             false, false, false, false
         },
         {   // Lofi
@@ -172,6 +207,9 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Kicks", "Snares & Claps", "Hi-Hats", "Percussion", nullptr},
             {"Humanize", "Velocity Curve", "Drum Pattern Generator",
              "Pattern Variation", "Scale Lock", nullptr},
+            // Chopped samples and granular smear, which is most of what
+            // gives the genre its texture.
+            {"Sampler", "Granular", "Drum Model", nullptr},
             false, false, false, true
         },
     };
@@ -256,6 +294,13 @@ inline bool genreShowsTool(Genre genre, const char* key) {
     return listContains(genreProfile(genre).tools, GENRE_MAX_TOOLS, key);
 }
 
+// Which engines a genre puts in front of you. As everywhere else here this
+// is a filter on attention: the Channel Editor's Type menu still lists all
+// of them, and the palette's "show everything" switch brings them back.
+inline bool genreShowsEngine(Genre genre, const char* key) {
+    return listContains(genreProfile(genre).engines, GENRE_MAX_ENGINES, key);
+}
+
 // How many palette sections a genre is holding back, so the UI can say so
 // rather than leaving the user to wonder where everything went.
 inline int genreHiddenToolCount(Genre genre, const char* const* allTools,
@@ -276,6 +321,9 @@ inline int genreHiddenSectionCount(Genre genre,
     }
     for (int i = 0; i < drumCount; ++i) {
         if (!genreShowsDrumCategory(genre, allDrums[i])) ++hidden;
+    }
+    for (int i = 0; i < ALL_ENGINE_COUNT; ++i) {
+        if (!genreShowsEngine(genre, ALL_ENGINES[i])) ++hidden;
     }
     return hidden;
 }

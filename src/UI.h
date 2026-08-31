@@ -10140,12 +10140,47 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             }
         }
 
+        if (osc.type == OscillatorType::Noise) {
+            if (ImGui::Checkbox("Short Mode (metallic)", &osc.noiseShortMode)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("The 2A03's periodic noise mode: the shift register\n"
+                                  "repeats every 93 steps, so it reads as a metallic\n"
+                                  "tone rather than as hiss.");
+            }
+
+            // Real hardware offers sixteen fixed rates rather than a sweep,
+            // and that stepping is most of what makes NES noise recognisable.
+            const char* periodNames[] = {
+                "Track note",
+                "0 - highest", "1", "2", "3", "4", "5", "6", "7",
+                "8", "9", "10", "11", "12", "13", "14", "15 - lowest"
+            };
+            int periodIndex = osc.noisePeriod + 1;   // -1 becomes 0
+            ImGui::SetNextItemWidth(150.0f);
+            if (ImGui::Combo("Noise Period", &periodIndex, periodNames,
+                             IM_ARRAYSIZE(periodNames))) {
+                osc.noisePeriod = periodIndex - 1;
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("One of the sixteen noise rates the NES actually had.\n"
+                                  "Track note follows the keyboard instead, which no\n"
+                                  "hardware did but is useful for tuned percussion.");
+            }
+        }
+
+        ImGui::SliderFloat("Detune (cents)", &osc.detune, -100.0f, 100.0f);
+    }
+
         // ---- Wavetable ------------------------------------------------------
         //
         // Custom used to be a triangle wearing a different name: the whole
         // wavetable editor wrote into banks that nothing played. These are
         // the controls that connect the two.
-        if (osc.type == OscillatorType::Custom) {
+        if (osc.type == OscillatorType::Custom &&
+            ImGui::CollapsingHeader("Wavetable", ImGuiTreeNodeFlags_DefaultOpen)) {
             const int bankCount = std::max(1, std::min(
                 static_cast<int>(project.wavetableBanks.size()),
                 WavetableLibrary::MAX_BANKS));
@@ -10218,7 +10253,7 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         if (g_ExpandModulation) {
             ImGui::SetNextItemOpen(true, ImGuiCond_Always);
         }
-        if (ImGui::TreeNode("Modulation")) {
+        if (ImGui::CollapsingHeader("Modulation")) {
             ModMatrix& m = osc.modMatrix;
 
             /*
@@ -10420,8 +10455,6 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
                     "Nothing routed. An LFO on Wavetable Morph or FM\n"
                     "Brightness is the quickest way to hear what this does.");
             }
-
-            ImGui::TreePop();
         }
 
         // ---- Granular -------------------------------------------------------
@@ -10430,7 +10463,8 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         // stream of them. Move the read position slowly and you get a
         // time-stretch that does not change pitch; hold it still and you get
         // a drone made from one moment of the recording.
-        if (osc.type == OscillatorType::Granular) {
+        if (osc.type == OscillatorType::Granular &&
+            ImGui::CollapsingHeader("Granular", ImGuiTreeNodeFlags_DefaultOpen)) {
             GranularConfig& g = osc.granular;
 
             const Sample* source = project.samplePool.getSample(g.sampleId);
@@ -10549,7 +10583,8 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         // can pick Kick808 or KickHard and that is the whole of your control
         // over a kick. This is the editable version, modelled the way the
         // analogue machines made them.
-        if (osc.type == OscillatorType::DrumModel) {
+        if (osc.type == OscillatorType::DrumModel &&
+            ImGui::CollapsingHeader("Drum Model", ImGuiTreeNodeFlags_DefaultOpen)) {
             DrumModelConfig& d = osc.drumModel;
 
             ImGui::TextDisabled("Start from:");
@@ -10651,7 +10686,8 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         // tape played at the wrong speed, because the formants move with the
         // pitch. Several recordings, each used near where it was made, is
         // what every sampler since the Mirage has done.
-        if (osc.type == OscillatorType::Sampler) {
+        if (osc.type == OscillatorType::Sampler &&
+            ImGui::CollapsingHeader("Sampler", ImGuiTreeNodeFlags_DefaultOpen)) {
             SamplerInstrument& sampler = osc.sampler;
 
             ImGui::Text("%d zone%s", sampler.zoneCount,
@@ -10778,7 +10814,8 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         // nothing editable. FM is more on-brand for a chip tracker than most
         // of a modern DAW's toolbox: the YM2612 in the Mega Drive is
         // six-operator FM, and the DX7 that defined the eighties is too.
-        if (osc.type == OscillatorType::FMSynth) {
+        if (osc.type == OscillatorType::FMSynth &&
+            ImGui::CollapsingHeader("FM", ImGuiTreeNodeFlags_DefaultOpen)) {
             /*
              * Starting points.
              *
@@ -10917,39 +10954,6 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             }
         }
 
-        if (osc.type == OscillatorType::Noise) {
-            if (ImGui::Checkbox("Short Mode (metallic)", &osc.noiseShortMode)) {
-                seq.updateChannelConfigs();
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("The 2A03's periodic noise mode: the shift register\n"
-                                  "repeats every 93 steps, so it reads as a metallic\n"
-                                  "tone rather than as hiss.");
-            }
-
-            // Real hardware offers sixteen fixed rates rather than a sweep,
-            // and that stepping is most of what makes NES noise recognisable.
-            const char* periodNames[] = {
-                "Track note",
-                "0 - highest", "1", "2", "3", "4", "5", "6", "7",
-                "8", "9", "10", "11", "12", "13", "14", "15 - lowest"
-            };
-            int periodIndex = osc.noisePeriod + 1;   // -1 becomes 0
-            ImGui::SetNextItemWidth(150.0f);
-            if (ImGui::Combo("Noise Period", &periodIndex, periodNames,
-                             IM_ARRAYSIZE(periodNames))) {
-                osc.noisePeriod = periodIndex - 1;
-                seq.updateChannelConfigs();
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("One of the sixteen noise rates the NES actually had.\n"
-                                  "Track note follows the keyboard instead, which no\n"
-                                  "hardware did but is useful for tuned percussion.");
-            }
-        }
-
-        ImGui::SliderFloat("Detune (cents)", &osc.detune, -100.0f, 100.0f);
-    }
 
     // Envelope
     if (ImGui::CollapsingHeader("Envelope (ADSR)", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -13413,18 +13417,33 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         // Wavetable is OscillatorType::Custom, which lives back at index 6
         // with the plain oscillators - so it is listed here as well. It
         // belongs with the engines far more than it belongs beside Sine.
-        const OscillatorType engines[] = {
-            OscillatorType::Custom,
-            OscillatorType::FMSynth,
-            OscillatorType::Sampler,
-            OscillatorType::Granular,
-            OscillatorType::DrumModel,
+        //
+        // The names must match ALL_ENGINES in Genres.h, which is what the
+        // genre focus filters on; a mismatch would hide an engine forever,
+        // so there is a test comparing the two lists.
+        struct EngineEntry { OscillatorType type; const char* focusKey; };
+        static const EngineEntry ENGINE_ENTRIES[] = {
+            {OscillatorType::Custom,    "Wavetable"},
+            {OscillatorType::FMSynth,   "FM"},
+            {OscillatorType::Sampler,   "Sampler"},
+            {OscillatorType::Granular,  "Granular"},
+            {OscillatorType::DrumModel, "Drum Model"},
         };
-        const int engineCount = static_cast<int>(sizeof(engines) / sizeof(engines[0]));
+        const int engineCount =
+            static_cast<int>(sizeof(ENGINE_ENTRIES) / sizeof(ENGINE_ENTRIES[0]));
 
         ImVec2 iconSize(50, 32);
+        int drawn = 0;
         for (int e = 0; e < engineCount; ++e) {
-            const int i = static_cast<int>(engines[e]);
+            // Same filter-on-attention rule as the chord and drum sections:
+            // a genre decides what is put in front of you, and the palette's
+            // "show everything" switch brings the rest back.
+            if (!ui.paletteShowEverything &&
+                !genreShowsEngine(ui.genre, ENGINE_ENTRIES[e].focusKey)) {
+                continue;
+            }
+
+            const int i = static_cast<int>(ENGINE_ENTRIES[e].type);
             ImGui::PushID(20000 + i);
             ImVec2 pos = ImGui::GetCursorScreenPos();
             const bool isPaletteSelected = (g_SelectedPaletteItem == i);
@@ -13440,7 +13459,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
                                     bgColor, 4.0f);
             drawList->AddRect(pos, ImVec2(pos.x + iconSize.x, pos.y + iconSize.y),
                               borderColor, 4.0f, 0, isPaletteSelected ? 2.0f : 1.0f);
-            DrawWaveformIcon(drawList, pos, iconSize, engines[e], waveColor);
+            DrawWaveformIcon(drawList, pos, iconSize, ENGINE_ENTRIES[e].type, waveColor);
 
             ImGui::InvisibleButton("##engine", iconSize);
             if (ImGui::IsItemClicked()) {
@@ -13451,7 +13470,8 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
                     g_SelectedDurationMult = 1.0f;
                     g_SelectedChordIndex = -1;
                     ui.pianoRollMode = PianoRollMode::Draw;
-                    project.channels[ui.selectedChannel].oscillator.type = engines[e];
+                    project.channels[ui.selectedChannel].oscillator.type =
+                        ENGINE_ENTRIES[e].type;
                     seq.updateChannelConfigs();
                 }
             }
@@ -13461,8 +13481,20 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
                 ImGui::TextDisabled("%s", oscDesc[i]);
                 ImGui::EndTooltip();
             }
-            if (e < engineCount - 1 && (e + 1) % 4 != 0) ImGui::SameLine();
+            // Wrapped on the count DRAWN, not the loop index: with a genre
+            // filtering some out, using the index leaves ragged gaps where
+            // the hidden ones would have been.
+            ++drawn;
+            if (drawn % 4 != 0) ImGui::SameLine();
             ImGui::PopID();
+        }
+
+        // ImGui::SameLine() after the last icon would pull whatever comes
+        // next up beside it.
+        if (drawn % 4 != 0) ImGui::NewLine();
+
+        if (drawn == 0) {
+            ImGui::TextDisabled("None for this genre. Use Show Everything.");
         }
     } else {
         g_PaletteExpanded_Engines = false;

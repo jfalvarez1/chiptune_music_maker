@@ -5069,12 +5069,100 @@ static void testGenreFocus() {
         check(true, "every genre keeps some sections and sets others aside");
     }
 
+    // ---- The engine focus ---------------------------------------------------
+    {
+        // Everything shows every engine, as it does every other section.
+        for (int i = 0; i < ALL_ENGINE_COUNT; ++i) {
+            if (!genreShowsEngine(Genre::Everything, ALL_ENGINES[i])) {
+                check(false, std::string("Everything hides the ") +
+                      ALL_ENGINES[i] + " engine");
+                break;
+            }
+        }
+        check(true, "Everything shows every engine");
+
+        /*
+         * Every engine a profile names must be a real one.
+         *
+         * A profile naming something not in ALL_ENGINES is a typo that hides
+         * that engine forever with no error anywhere - the same failure the
+         * chord and drum lists are already checked for, and the reason those
+         * catalogues exist at all.
+         */
+        bool allNamesReal = true;
+        std::string bad;
+        for (int g = 0; g < static_cast<int>(Genre::Count) && allNamesReal; ++g) {
+            const GenreProfile& profile = genreProfile(static_cast<Genre>(g));
+            for (int e = 0; e < GENRE_MAX_ENGINES; ++e) {
+                const char* named = profile.engines[e];
+                if (named == nullptr) break;
+
+                bool found = false;
+                for (int k = 0; k < ALL_ENGINE_COUNT; ++k) {
+                    if (std::strcmp(named, ALL_ENGINES[k]) == 0) { found = true; break; }
+                }
+                if (!found) {
+                    allNamesReal = false;
+                    bad = std::string(profile.name) + " names '" + named + "'";
+                    break;
+                }
+            }
+        }
+        check(allNamesReal,
+              "every engine a profile names exists" +
+              (allNamesReal ? std::string() : " (" + bad + ")"));
+
+        // And the genres actually differ, or the filter is decoration.
+        check(genreShowsEngine(Genre::Chiptune, "Wavetable") &&
+              genreShowsEngine(Genre::Chiptune, "FM"),
+              "chiptune keeps wavetable and FM - the Game Boy's wave channel "
+              "and the Mega Drive's YM2612 are what that era actually had");
+        check(!genreShowsEngine(Genre::Chiptune, "Sampler"),
+              "and sets the multisample sampler aside, which is the one "
+              "thing those machines could not do");
+
+        check(genreShowsEngine(Genre::HipHop, "Sampler"),
+              "hip hop keeps the sampler, since chopping samples is the genre");
+        check(!genreShowsEngine(Genre::HipHop, "FM"),
+              "and sets FM aside");
+
+        int differences = 0;
+        for (int i = 0; i < ALL_ENGINE_COUNT; ++i) {
+            if (genreShowsEngine(Genre::Chiptune, ALL_ENGINES[i]) !=
+                genreShowsEngine(Genre::HipHop, ALL_ENGINES[i])) {
+                ++differences;
+            }
+        }
+        check(differences >= 3,
+              "chiptune and hip hop show genuinely different engines (" +
+              std::to_string(differences) + " differ)");
+
+        // No genre may hide all of them, or the palette section is an empty
+        // header with a line of apology in it.
+        bool everyGenreHasOne = true;
+        std::string empty;
+        for (int g = 0; g < static_cast<int>(Genre::Count); ++g) {
+            const Genre genre = static_cast<Genre>(g);
+            int shown = 0;
+            for (int i = 0; i < ALL_ENGINE_COUNT; ++i) {
+                if (genreShowsEngine(genre, ALL_ENGINES[i])) ++shown;
+            }
+            if (shown == 0) { everyGenreHasOne = false; empty = genreName(genre); }
+        }
+        check(everyGenreHasOne,
+              "no genre hides every engine" +
+              (everyGenreHasOne ? std::string() : " (" + empty + " does)"));
+    }
+
     // ---- The hidden count the UI reports is right -------------------------
     {
         const int chiptuneHidden = genreHiddenSectionCount(
             Genre::Chiptune, ALL_CHORD_SETS, CHORD_COUNT, ALL_DRUM_SETS, DRUM_COUNT);
-        // Chiptune keeps 3 chord sets and 3 drum categories out of 8 and 7.
-        check(chiptuneHidden == (CHORD_COUNT - 3) + (DRUM_COUNT - 3),
+        // Chiptune keeps 3 chord sets of 8, 3 drum categories of 7, and 2
+        // engines of 5 - wavetable and FM, which is what the chips of that
+        // era actually did.
+        check(chiptuneHidden ==
+                  (CHORD_COUNT - 3) + (DRUM_COUNT - 3) + (ALL_ENGINE_COUNT - 2),
               "the count of hidden sections matches the profile (got " +
               std::to_string(chiptuneHidden) + ")");
     }
