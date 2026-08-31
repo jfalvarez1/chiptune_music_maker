@@ -1,0 +1,130 @@
+# Architecture
+
+How ChiptuneTracker is put together, for anyone reading or changing the
+source. Nothing here is needed to *use* the program - see the
+[README](../README.md) for that.
+
+## Design philosophy
+
+- **Zero allocations in the audio thread.** Lock-free ring buffers carry
+  everything from the UI to the audio callback. A `malloc` on that thread is
+  a dropout waiting for a busy moment.
+- **PolyBLEP antialiased oscillators.** Alias-free square, sawtooth and
+  triangle.
+- **LFSR noise.** The NES shift register, with its real tap positions and its
+  sixteen hardware periods.
+- **Minimal dependencies.** miniaudio and Dear ImGui, and nothing else.
+
+## Audio thread safety
+
+The audio engine uses a **lock-free ring buffer** for UI-to-audio communication:
+
+```
+┌─────────────┐     Lock-Free Queue     ┌─────────────┐
+│   UI Thread │ ──────────────────────▶ │ Audio Thread│
+│  (Commands) │                          │  (Render)   │
+└─────────────┘                          └─────────────┘
+```
+
+- UI thread pushes `AudioCommand` structs (frequency, volume, waveform changes)
+- Audio thread consumes commands at the start of each render callback
+- No mutex, no blocking, no allocations in the hot path
+
+## PolyBLEP antialiasing
+
+Square and sawtooth waves use **Polynomial Bandlimited Step (PolyBLEP)** correction to eliminate aliasing artifacts at discontinuities:
+
+```cpp
+float polyBlep(float t, float dt) {
+    if (t < dt) {
+        t /= dt;
+        return t + t - t*t - 1.0f;
+    } else if (t > 1.0f - dt) {
+        t = (t - 1.0f) / dt;
+        return t*t + t + t + 1.0f;
+    }
+    return 0.0f;
+}
+```
+
+## LFSR noise
+
+15-bit Linear Feedback Shift Register with taps at bits 0 and 6 (NES long-mode):
+
+```cpp
+uint16_t feedback = ((lfsr >> 0) ^ (lfsr >> 6)) & 1;
+lfsr = (lfsr >> 1) | (feedback << 14);
+```
+
+## Source layout
+
+Header-only throughout, apart from `main.cpp` and the audio analysis.
+
+```
+src/
+  main.cpp              entry point, window, ImGui and audio device setup
+  Types.h               Project, ChannelConfig, Note, Pattern, Clip
+  UI.h                  every panel
+  Layout.h              docking, workspaces, orphaned-window adoption
+
+  audio engine
+    Synthesizer.h       voices, oscillators, per-channel effect sync
+    Sequencer.h         playback, the arrangement, aux buses, the mix
+    Effects.h           the insert rack and every built-in effect
+    MasterEffects.h     the mastering bus
+    ChipMix.h           the 2A03's non-linear DAC
+
+  instruments
+    WavetableEngine.h   band-limited wavetable playback
+    FMSynth.h           six-operator FM
+    Sampler.h           key zones, velocity layers, round-robin
+    GranularSynth.h     grain scheduling and playback
+    DrumMachine.h       modelled kick, snare and hat
+    ModMatrix.h         modulation routing, LFOs, second envelope
+    InstrumentPresets.h starting points for each engine
+
+  signal processing
+    PitchShift.h        phase vocoder, formants, autotune, time stretch
+    FFT.h               iterative FFT plan, allocation-free per transform
+    AudioAnalyzer.cpp   pitch and drum detection (the voice tool)
+
+  song structure
+    TempoMap.h          tempo and meter changes, markers, regions
+    Snap.h              where a beat lands on the grid
+    LoopRange.h         the loop window
+
+  input and capture
+    VoiceCapture.h      lock-free ring for microphone audio
+    LiveVoice.h         real-time pitch and beatbox tracking
+    VoicePanel.h        the panel, and take handling
+    MIDIInput.h         MIDI note input
+
+  files and safety
+    ProjectSerializer.h the .ctp format
+    ProjectValidation.h what a loaded project is allowed to contain
+    SettingsAudit.h     conflicting and dead settings
+    Autosave.h          periodic snapshots
+    CrashHandler.h      crash reporting
+
+tests/    the headless suite, including the headless GUI harness
+tools/    smoke test, gallery generation, theme audit
+vendor/   miniaudio, Dear ImGui, libremidi, midifile
+```
+
+## Where the rules live
+
+A few headers are deliberately the single place a decision is made, and are
+worth knowing about before changing behaviour elsewhere:
+
+| File | Owns |
+|---|---|
+| `src/ProjectValidation.h` | What every field of a loaded project is allowed to be. A `.ctp` is untrusted input. |
+| `src/ProjectSerializer.h` | The file format. Save and load walk the *same* field tables, so a setting cannot be written but not read. |
+| `src/SettingsAudit.h` | What counts as a conflicting or dead setting, for the Project Check panel. |
+| `src/Snap.h` | Where a beat lands on the grid. Was once duplicated across fourteen call sites. |
+| `src/Genres.h` | Which palette sections, tools and engines each genre focus puts in front of you. |
+| `src/Version.h` | The version, once. It was written twice and the two disagreed for two releases. |
+
+## Testing
+
+See [TEST_PLAN.md](TEST_PLAN.md).
