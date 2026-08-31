@@ -206,6 +206,7 @@ inline constexpr FloatField<OscillatorConfig> OSC_FLOATS[] = {
 inline constexpr IntField<OscillatorConfig> OSC_INTS[] = {
     {"noisePeriod", &OscillatorConfig::noisePeriod},
     {"wtBank",      &OscillatorConfig::wavetableBank},
+    {"fmAlgo",      &OscillatorConfig::fmAlgorithmPreset},
 };
 
 inline constexpr BoolField<OscillatorConfig> OSC_BOOLS[] = {
@@ -571,6 +572,49 @@ inline bool writeProject(std::ostream& file, const Project& project) {
         ctp::writeFloats(file, c.envelope, d.envelope, ctp::ENV_FLOATS, "env.");
 
         file << "\n";
+
+        /*
+         * The FM patch, on its own line after the channel's.
+         *
+         * Not rows in the OSC_FLOATS table: it is six operators of ten
+         * fields plus a 36-entry matrix, a hundred-odd values that would be
+         * a hundred table rows used by one oscillator type. Written only
+         * when the channel actually is an FM channel, so a project that
+         * never touches it gains nothing.
+         *
+         * After the channel's newline, beside SEND and FXORDER. Emitting it
+         * before that newline appended every token to the CHANNEL line, and
+         * the reader then saw one malformed CHANNEL line and no FM line at
+         * all - which failed every field of the round trip at once,
+         * including the oscillator type that has nothing to do with FM.
+         */
+        if (c.oscillator.type == OscillatorType::FMSynth) {
+            const FMPatch& fm = c.oscillator.fm;
+            file << "FM " << ch << ' ' << ctp::floatToToken(fm.index) << ' '
+                 << ctp::floatToToken(fm.algorithm.feedback);
+            for (int op = 0; op < FM_OPERATORS; ++op) {
+                const FMOperator& o = fm.operators[static_cast<size_t>(op)];
+                file << ' ' << ctp::floatToToken(o.ratio)
+                     << ' ' << ctp::floatToToken(o.fixedHz)
+                     << ' ' << ctp::floatToToken(o.level)
+                     << ' ' << ctp::floatToToken(o.detuneCents)
+                     << ' ' << ctp::floatToToken(o.phaseOffset)
+                     << ' ' << ctp::floatToToken(o.attack)
+                     << ' ' << ctp::floatToToken(o.decay)
+                     << ' ' << ctp::floatToToken(o.sustain)
+                     << ' ' << ctp::floatToToken(o.release)
+                     << ' ' << ctp::floatToToken(o.velocitySensitivity)
+                     << ' ' << (o.enabled ? 1 : 0);
+            }
+            for (int m = 0; m < FM_OPERATORS; ++m) {
+                file << ' ' << ctp::floatToToken(fm.algorithm.carrier[static_cast<size_t>(m)]);
+                for (int cc = 0; cc < FM_OPERATORS; ++cc) {
+                    file << ' ' << ctp::floatToToken(
+                        fm.algorithm.modulation[static_cast<size_t>(m)][static_cast<size_t>(cc)]);
+                }
+            }
+            file << "\n";
+        }
 
         // Sends, written only when they go somewhere.
         for (int slot = 0; slot < MAX_SENDS_PER_CHANNEL; ++slot) {
@@ -991,6 +1035,29 @@ inline bool readProject(std::istream& file, Project& project) {
                         static_cast<uint8_t>(type);
                 }
                 target.fxSlotCount = count;
+            }
+        }
+        else if (cmd == "FM") {
+            int ch = -1;
+            iss >> ch;
+            if (ch >= 0 && ch < Project::MAX_CHANNELS) {
+                FMPatch& fm = project.channels[static_cast<size_t>(ch)].oscillator.fm;
+                iss >> fm.index >> fm.algorithm.feedback;
+                for (int op = 0; op < FM_OPERATORS; ++op) {
+                    FMOperator& o = fm.operators[static_cast<size_t>(op)];
+                    int enabled = 1;
+                    iss >> o.ratio >> o.fixedHz >> o.level >> o.detuneCents
+                        >> o.phaseOffset >> o.attack >> o.decay >> o.sustain
+                        >> o.release >> o.velocitySensitivity >> enabled;
+                    o.enabled = (enabled != 0);
+                }
+                for (int m = 0; m < FM_OPERATORS; ++m) {
+                    iss >> fm.algorithm.carrier[static_cast<size_t>(m)];
+                    for (int cc = 0; cc < FM_OPERATORS; ++cc) {
+                        iss >> fm.algorithm.modulation[static_cast<size_t>(m)]
+                                                      [static_cast<size_t>(cc)];
+                    }
+                }
             }
         }
         else if (cmd == "TEMPO") {

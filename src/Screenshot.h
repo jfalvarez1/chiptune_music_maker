@@ -181,6 +181,11 @@ struct CaptureRequest {
     // structure strip and the meter-aware bar lines both draw.
     bool addStructure = false;
 
+    // Put the selected channel on an instrument engine, so its editor
+    // block draws. Both new engines show controls only for their own
+    // oscillator type and are otherwise unreachable in a capture.
+    std::string instrument;
+
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
 
@@ -214,6 +219,7 @@ struct CaptureRequest {
 //   --fx-rack            open the Effect Rack section
 //   --audio-clip         put an audio clip on the arrangement
 //   --structure          add tempo/meter changes, markers and regions
+//   --instrument <name>  fm|wavetable - put channel 0 on that engine
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -264,6 +270,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.addAudioClip = true;
         } else if (arg == "--structure") {
             request.addStructure = true;
+        } else if (arg == "--instrument") {
+            next(request.instrument);
         } else if (arg == "--genre") {
             next(request.genreFocus);
         } else if (arg == "--focus") {
@@ -599,6 +607,25 @@ inline void applyCaptureState(const CaptureRequest& request,
         project.regions.push_back(Region{0.0f, 16.0f, "A", 0xFF4488FFu});
         project.regions.push_back(Region{16.0f, 48.0f, "B", 0xFF44CC88u});
         sortRegions(project.regions);
+    }
+
+    // --- Instrument engines ---
+    if (!request.instrument.empty()) {
+        ui.selectedChannel = 0;
+        if (request.instrument == "fm") {
+            project.channels[0].oscillator.type = OscillatorType::FMSynth;
+            project.channels[0].oscillator.fmAlgorithmPreset =
+                static_cast<int>(FMAlgorithmPreset::ThreePairs);
+            project.channels[0].oscillator.fm.algorithm =
+                FMAlgorithm::threePairs();
+            project.channels[0].oscillator.fm.index = 4.5f;
+            project.channels[0].oscillator.fm.algorithm.feedback = 0.35f;
+        } else if (request.instrument == "wavetable") {
+            project.channels[0].oscillator.type = OscillatorType::Custom;
+            project.channels[0].oscillator.wavetableBank = 0;
+            project.channels[0].oscillator.wavetableMorph = 0.4f;
+            project.channels[0].oscillator.wavetableMorphSweep = 0.5f;
+        }
     }
 
     // Selecting a few notes makes the Note Editor populate and the selected

@@ -10022,11 +10022,47 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
 
     // Oscillator settings
     if (ImGui::CollapsingHeader("Oscillator", ImGuiTreeNodeFlags_DefaultOpen)) {
-        const char* oscTypes[] = {"Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Custom"};
-        int oscType = static_cast<int>(osc.type);
-        if (ImGui::Combo("Type##osc", &oscType, oscTypes, IM_ARRAYSIZE(oscTypes))) {
-            osc.type = static_cast<OscillatorType>(oscType);
-            seq.updateChannelConfigs();
+        /*
+         * The basic engines, mapped by VALUE rather than by list position.
+         *
+         * This used to be six names indexed straight into OscillatorType.
+         * The enum's sixth entry is Supersaw, not Custom - so choosing
+         * "Custom" set the channel to Supersaw, and the wavetable controls
+         * never appeared no matter what you picked. Any type not in this
+         * short list (a drum, a genre instrument, one chosen from the Sound
+         * Palette) shows its own name and is left alone rather than being
+         * silently rewritten to whatever sits at index zero.
+         */
+        struct OscChoice { const char* label; OscillatorType type; };
+        static const OscChoice OSC_CHOICES[] = {
+            {"Pulse",     OscillatorType::Pulse},
+            {"Triangle",  OscillatorType::Triangle},
+            {"Sawtooth",  OscillatorType::Sawtooth},
+            {"Sine",      OscillatorType::Sine},
+            {"Noise",     OscillatorType::Noise},
+            {"Supersaw",  OscillatorType::Supersaw},
+            {"Wavetable", OscillatorType::Custom},
+            {"FM",        OscillatorType::FMSynth},
+        };
+
+        const std::string currentName = oscillatorTypeToString(osc.type);
+        if (ImGui::BeginCombo("Type##osc", currentName.c_str())) {
+            for (const OscChoice& choice : OSC_CHOICES) {
+                const bool selected = (osc.type == choice.type);
+                if (ImGui::Selectable(choice.label, selected)) {
+                    osc.type = choice.type;
+                    seq.updateChannelConfigs();
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "The basic engines. The Sound Palette has the full list of\n"
+                "instruments, drums and recreations; picking one there sets\n"
+                "this to a type that is not in this short menu, and it stays\n"
+                "set rather than being reset to Pulse.");
         }
 
         if (osc.type == OscillatorType::Pulse) {
@@ -10113,6 +10149,129 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
                                        0.01f, 5.0f, "%.2f s")) {
                     seq.updateChannelConfigs();
                 }
+            }
+        }
+
+        // ---- Six-operator FM ------------------------------------------------
+        //
+        // The tracker faked FM with two fixed presets, SynthBell and
+        // SynthwaveFM, which were hardcoded two-operator arrangements with
+        // nothing editable. FM is more on-brand for a chip tracker than most
+        // of a modern DAW's toolbox: the YM2612 in the Mega Drive is
+        // six-operator FM, and the DX7 that defined the eighties is too.
+        if (osc.type == OscillatorType::FMSynth) {
+            ImGui::SetNextItemWidth(230);
+            int preset = std::clamp(osc.fmAlgorithmPreset, 0,
+                                    static_cast<int>(FMAlgorithmPreset::Count) - 1);
+            if (ImGui::BeginCombo("Algorithm",
+                    fmAlgorithmName(static_cast<FMAlgorithmPreset>(preset)))) {
+                for (int i = 0; i < static_cast<int>(FMAlgorithmPreset::Count); ++i) {
+                    const bool selected = (i == preset);
+                    if (ImGui::Selectable(
+                            fmAlgorithmName(static_cast<FMAlgorithmPreset>(i)),
+                            selected)) {
+                        osc.fmAlgorithmPreset = i;
+                        // Selecting a preset replaces the routing. The
+                        // feedback is deliberately kept: it is a dial the
+                        // user set, not part of the shape they picked.
+                        const float feedback = osc.fm.algorithm.feedback;
+                        osc.fm.algorithm =
+                            fmAlgorithmFromPreset(static_cast<FMAlgorithmPreset>(i));
+                        osc.fm.algorithm.feedback = feedback;
+                        seq.updateChannelConfigs();
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Which operators modulate which. This is the single\n"
+                    "biggest decision in an FM patch - it decides whether\n"
+                    "you get a bell, a brass section or a metallic bass.");
+            }
+
+            if (ImGui::SliderFloat("Brightness", &osc.fm.index, 0.0f, 12.0f, "%.2f")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "The modulation index: how far the modulators push the\n"
+                    "carriers' phase. This is what 'brighter' means in FM,\n"
+                    "and unlike a filter the harmonics do not fade in - they\n"
+                    "swap places, which is why FM sounds like nothing else.");
+            }
+
+            if (ImGui::SliderFloat("Feedback", &osc.fm.algorithm.feedback,
+                                   0.0f, 1.0f, "%.2f")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "The top operator modulating itself. Past about 0.7 it\n"
+                    "turns into a sawtooth, which is the classic way to get\n"
+                    "a bright bass out of FM.");
+            }
+
+            if (ImGui::TreeNode("Operators")) {
+                ImGui::TextDisabled(
+                    "Operator 6 is the top modulator, 1 is usually the "
+                    "carrier.");
+                for (int i = FM_OPERATORS - 1; i >= 0; --i) {
+                    ImGui::PushID(700 + i);
+                    FMOperator& op = osc.fm.operators[static_cast<size_t>(i)];
+
+                    char label[24];
+                    snprintf(label, sizeof(label), "Op %d", i + 1);
+                    if (ImGui::TreeNode(label)) {
+                        if (ImGui::Checkbox("Enabled", &op.enabled)) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::SliderFloat("Ratio", &op.ratio, 0.0f, 16.0f, "%.3f")) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "This operator's frequency as a multiple of\n"
+                                "the note. Whole numbers give harmonic,\n"
+                                "musical spectra; everything else gives the\n"
+                                "inharmonic metallic timbres FM is known for.");
+                        }
+                        if (ImGui::SliderFloat("Level", &op.level, 0.0f, 1.0f)) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::SliderFloat("Detune", &op.detuneCents,
+                                               -100.0f, 100.0f, "%.0f c")) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::SliderFloat("Attack", &op.attack, 0.0f, 2.0f, "%.3f s")) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::SliderFloat("Decay", &op.decay, 0.0f, 5.0f, "%.3f s")) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::SliderFloat("Sustain", &op.sustain, 0.0f, 1.0f)) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::SliderFloat("Release", &op.release, 0.0f, 5.0f, "%.3f s")) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::SliderFloat("Velocity", &op.velocitySensitivity,
+                                               0.0f, 1.0f)) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "How much playing harder opens this operator\n"
+                                "up. On a MODULATOR this makes hard playing\n"
+                                "brighter rather than merely louder, which is\n"
+                                "what made FM keyboards feel expressive.");
+                        }
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
             }
         }
 
@@ -12223,7 +12382,9 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         // Reggaeton Instruments (7) - indices 56-62
         "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow808", "DembowSnare",
         // High-Accuracy Recreations (2) - indices 63-64
-        "Vocoder", "Kavinsky Bass"
+        "Vocoder", "Kavinsky Bass",
+        // Six-operator FM - index 65
+        "FM"
     };
     const char* oscDesc[] = {
         // Oscillators (7) - indices 0-6
@@ -12251,15 +12412,24 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         // Reggaeton Instruments (7) - indices 56-62
         "Punchy reggaeton bass", "Latin brass stab", "Scraped dembow", "Latin bongo", "Metallic timbale", "Reggaeton kick", "Tight clap snare",
         // High-Accuracy Recreations (2) - indices 63-64
-        "Formant-filtered talkbox lead", "Resonant filtered saw bass"
+        "Formant-filtered talkbox lead", "Resonant filtered saw bass",
+        // Six-operator FM - index 65
+        "Six-operator FM: bells, e-pianos, brass, metallic basses"
     };
 
     constexpr int NUM_OSCILLATORS = 7;  // Pulse, Triangle, Sawtooth, Sine, Noise, Supersaw, Custom
     constexpr int NUM_SYNTHS = 28;  // 10 original + 6 synthwave + 5 techno + 4 hip-hop + 3 additional (reggaeton synths are in Reggaeton section)
     constexpr int NUM_RECREATIONS = 2;      // Vocoder, KavinskyBass
     constexpr int RECREATIONS_START = static_cast<int>(OscillatorType::Vocoder);
-    static_assert(RECREATIONS_START + NUM_RECREATIONS == sizeof(oscNames) / sizeof(oscNames[0]),
+    // Plus FM, which lives at the end of the enum. This assert is the reason
+    // the mistake of inserting FMSynth mid-enum lasted one compile instead of
+    // reaching a user as every instrument past Custom playing the wrong sound.
+    static_assert(RECREATIONS_START + NUM_RECREATIONS + 1 ==
+                      sizeof(oscNames) / sizeof(oscNames[0]),
                   "oscNames must stay index-aligned with OscillatorType");
+    static_assert(static_cast<int>(OscillatorType::FMSynth) + 1 ==
+                      static_cast<int>(sizeof(oscNames) / sizeof(oscNames[0])),
+                  "FMSynth must be the last OscillatorType");
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // ========== OSCILLATORS (Collapsible) ==========

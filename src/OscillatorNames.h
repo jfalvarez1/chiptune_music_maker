@@ -29,6 +29,7 @@ inline std::string oscillatorTypeToString(OscillatorType type) {
         case OscillatorType::Noise: return "Noise";
         case OscillatorType::Supersaw: return "Supersaw";
         case OscillatorType::Custom: return "Custom";
+        case OscillatorType::FMSynth: return "FM";
         // Synths
         case OscillatorType::SynthLead: return "SynthLead";
         case OscillatorType::SynthPad: return "SynthPad";
@@ -111,6 +112,7 @@ inline OscillatorType stringToOscillatorType(const std::string& str) {
     if (str == "Noise") return OscillatorType::Noise;
     if (str == "Supersaw") return OscillatorType::Supersaw;
     if (str == "Custom") return OscillatorType::Custom;
+    if (str == "FM") return OscillatorType::FMSynth;
     // Synths
     if (str == "SynthLead") return OscillatorType::SynthLead;
     if (str == "SynthPad") return OscillatorType::SynthPad;

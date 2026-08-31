@@ -40,6 +40,7 @@
 #include "LiveVoice.h"
 #include "VoicePanel.h"
 #include "WavetableEngine.h"
+#include "FMSynth.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -10221,6 +10222,509 @@ static void testWavetableReachesAudio() {
     }
 }
 
+
+// ============================================================================
+// 65. Six-operator FM
+// ============================================================================
+static void testFMSynth() {
+    beginTest("FM synthesis");
+
+    const float rate = 44100.0f;
+
+    // Render one note of a patch and hand back the samples.
+    auto render = [rate](const FMPatch& patch, float frequency, float velocity,
+                         int samples) {
+        FMVoiceState state;
+        state.reset(patch);
+        std::vector<float> out(static_cast<size_t>(samples));
+        for (int i = 0; i < samples; ++i) {
+            out[static_cast<size_t>(i)] =
+                fm::process(patch, state, frequency, velocity, rate, false);
+        }
+        return out;
+    };
+
+    auto rms = [](const std::vector<float>& signal) {
+        double sum = 0.0;
+        for (float v : signal) sum += double(v) * v;
+        return signal.empty() ? 0.0 : std::sqrt(sum / double(signal.size()));
+    };
+
+    // Brightness, measured as the spectral centroid. This is the number FM's
+    // modulation index is FOR, so it is the number to assert on.
+    auto centroid = [rate](const std::vector<float>& signal) {
+        size_t N = 1;
+        while (N * 2 <= signal.size()) N *= 2;
+        if (N < 256) return 0.0;
+
+        std::vector<float> re(N), im(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                float(i) / float(N - 1)));
+            re[i] = signal[i] * w;
+        }
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(re.data(), im.data());
+
+        double weighted = 0.0, total = 0.0;
+        const double binHz = double(rate) / double(N);
+        for (size_t bin = 1; bin < N / 2; ++bin) {
+            const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                               double(im[bin]) * im[bin]);
+            weighted += double(bin) * binHz * magnitude;
+            total += magnitude;
+        }
+        return (total > 0.0) ? weighted / total : 0.0;
+    };
+
+    // ---- It makes a sound at all -------------------------------------------
+    {
+        FMPatch patch;
+        const std::vector<float> audio = render(patch, 220.0f, 1.0f, 8192);
+        check(rms(audio) > 0.01,
+              "the default patch makes a sound (rms " +
+              std::to_string(rms(audio)) + ")");
+
+        bool finite = true;
+        for (float v : audio) {
+            if (!std::isfinite(v)) { finite = false; break; }
+        }
+        check(finite, "and every sample of it is finite");
+    }
+
+    // ---- The modulation index controls brightness ---------------------------
+    //
+    // This is the whole instrument. If the index did nothing, FM would be a
+    // clumsy additive synth.
+    {
+        FMPatch dull;
+        dull.algorithm = FMAlgorithm::stack();
+        dull.index = 0.0f;
+
+        FMPatch bright = dull;
+        bright.index = 8.0f;
+
+        // Sustain the modulators so the measurement is not of the envelope.
+        for (FMOperator& op : dull.operators) { op.attack = 0.0f; op.sustain = 1.0f; op.decay = 0.0f; }
+        for (FMOperator& op : bright.operators) { op.attack = 0.0f; op.sustain = 1.0f; op.decay = 0.0f; }
+
+        const double dullCentroid = centroid(render(dull, 220.0f, 1.0f, 8192));
+        const double brightCentroid = centroid(render(bright, 220.0f, 1.0f, 8192));
+
+        check(dullCentroid > 0.0, "the index-zero patch has a spectrum");
+        check(brightCentroid > dullCentroid * 2.0,
+              "raising the modulation index makes the sound brighter (" +
+              std::to_string(dullCentroid) + " Hz -> " +
+              std::to_string(brightCentroid) + " Hz) - which is what the "
+              "index is for, and the one thing FM must get right");
+    }
+
+    // ---- Modulation is PHASE, not frequency ---------------------------------
+    //
+    // Adding a modulator to the carrier's FREQUENCY and integrating makes
+    // the perceived pitch drift with the modulator's DC content. Adding to
+    // the phase does not. The test: with a modulator running, the
+    // fundamental must still be at the played note.
+    {
+        FMPatch patch;
+        patch.algorithm = FMAlgorithm::stack();
+        patch.index = 6.0f;
+        for (FMOperator& op : patch.operators) {
+            op.attack = 0.0f;
+            op.decay = 0.0f;
+            op.sustain = 1.0f;
+        }
+
+        const float played = 440.0f;
+        const std::vector<float> audio = render(patch, played, 1.0f, 16384);
+
+        // Find the strongest bin below 1 kHz - the fundamental.
+        const size_t N = 8192;
+        std::vector<float> re(N), im(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                float(i) / float(N - 1)));
+            re[i] = audio[i + 4096] * w;      // past the attack
+        }
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(re.data(), im.data());
+
+        const double binHz = double(rate) / double(N);
+        size_t loudest = 0;
+        double peak = 0.0;
+        for (size_t bin = 1; bin < size_t(1000.0 / binHz); ++bin) {
+            const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                               double(im[bin]) * im[bin]);
+            if (magnitude > peak) { peak = magnitude; loudest = bin; }
+        }
+        const double found = double(loudest) * binHz;
+
+        check(std::fabs(found - double(played)) < 15.0,
+              "with a modulator running hard the fundamental is still at the "
+              "note played (" + std::to_string(found) + " Hz vs 440) - "
+              "modulating the frequency rather than the phase would have "
+              "pulled it off pitch, and every digital FM synth ever shipped "
+              "is a phase modulator despite the name");
+    }
+
+    // ---- Feedback is bounded ------------------------------------------------
+    //
+    // Self-modulation from a single previous sample oscillates violently at
+    // high feedback. Averaging the last two is a one-pole lowpass in the
+    // feedback path, and the difference between a saw and a screech.
+    {
+        FMPatch patch;
+        patch.algorithm = FMAlgorithm::brass();
+        patch.algorithm.feedback = 1.0f;
+        patch.index = 12.0f;
+        for (FMOperator& op : patch.operators) {
+            op.attack = 0.0f;
+            op.decay = 0.0f;
+            op.sustain = 1.0f;
+        }
+
+        const std::vector<float> audio = render(patch, 110.0f, 1.0f, 32768);
+
+        float peak = 0.0f;
+        bool finite = true;
+        for (float v : audio) {
+            if (!std::isfinite(v)) { finite = false; break; }
+            peak = std::max(peak, std::fabs(v));
+        }
+        check(finite, "maximum feedback stays finite");
+        check(peak < 4.0f,
+              "and bounded (peak " + std::to_string(peak) + ") - an operator "
+              "modulating itself from one previous sample runs away; the "
+              "average of two does not");
+    }
+
+    // ---- Each algorithm sounds different ------------------------------------
+    {
+        auto renderAlgorithm = [&](FMAlgorithmPreset preset) {
+            FMPatch patch;
+            patch.algorithm = fmAlgorithmFromPreset(preset);
+            patch.index = 4.0f;
+            for (FMOperator& op : patch.operators) {
+                op.attack = 0.0f;
+                op.decay = 0.0f;
+                op.sustain = 1.0f;
+            }
+            return render(patch, 220.0f, 1.0f, 8192);
+        };
+
+        const double brass = centroid(renderAlgorithm(FMAlgorithmPreset::Brass));
+        const double stack = centroid(renderAlgorithm(FMAlgorithmPreset::Stack));
+        const double additive = centroid(renderAlgorithm(FMAlgorithmPreset::Additive));
+
+        check(additive > 0.0 && brass > 0.0 && stack > 0.0,
+              "every algorithm produces a spectrum");
+        check(stack > additive,
+              "a five-deep modulation stack is brighter than six carriers "
+              "with no modulation at all (" + std::to_string(stack) +
+              " vs " + std::to_string(additive) + ")");
+        check(std::fabs(brass - stack) > 50.0,
+              "and the algorithms are not all the same routing wearing "
+              "different names");
+    }
+
+    // ---- Velocity reaches the timbre, not just the level --------------------
+    {
+        FMPatch patch;
+        patch.algorithm = FMAlgorithm::stack();
+        patch.index = 6.0f;
+        for (FMOperator& op : patch.operators) {
+            op.attack = 0.0f;
+            op.decay = 0.0f;
+            op.sustain = 1.0f;
+            op.velocitySensitivity = 0.0f;
+        }
+        // Only the modulators are velocity-sensitive, which is what makes
+        // playing harder sound brighter rather than merely louder.
+        for (int i = 1; i < FM_OPERATORS; ++i) {
+            patch.operators[static_cast<size_t>(i)].velocitySensitivity = 1.0f;
+        }
+
+        const double soft = centroid(render(patch, 220.0f, 0.2f, 8192));
+        const double hard = centroid(render(patch, 220.0f, 1.0f, 8192));
+
+        check(hard > soft * 1.3,
+              "playing harder makes it brighter, not just louder (" +
+              std::to_string(soft) + " -> " + std::to_string(hard) + ") - "
+              "which is the thing FM keyboards were famous for");
+    }
+
+    // ---- Per-operator envelopes really are per-operator ---------------------
+    {
+        // A bell: a carrier that rings under a modulator that dies fast. The
+        // sound must get PURER over time, which only happens if the two
+        // envelopes are independent.
+        FMPatch bell;
+        bell.algorithm = FMAlgorithm::threePairs();
+        bell.index = 8.0f;
+        for (FMOperator& op : bell.operators) {
+            op.attack = 0.001f;
+            op.decay = 3.0f;
+            op.sustain = 0.9f;
+        }
+        for (int i : {1, 3, 5}) {                 // the modulators
+            bell.operators[static_cast<size_t>(i)].decay = 0.05f;
+            bell.operators[static_cast<size_t>(i)].sustain = 0.0f;
+        }
+
+        const std::vector<float> audio = render(bell, 440.0f, 1.0f, 44100);
+        const std::vector<float> head(audio.begin(), audio.begin() + 4096);
+        const std::vector<float> tail(audio.begin() + 30000, audio.begin() + 34096);
+
+        const double headCentroid = centroid(head);
+        const double tailCentroid = centroid(tail);
+
+        check(headCentroid > tailCentroid * 1.3,
+              "a bell patch starts bright and settles pure (" +
+              std::to_string(headCentroid) + " -> " +
+              std::to_string(tailCentroid) + ") - which requires the "
+              "modulator's envelope to be independent of the carrier's, and "
+              "is most of what makes FM expressive");
+    }
+
+    // ---- The matrix cannot contain a cycle ----------------------------------
+    {
+        FMAlgorithm algorithm;
+        algorithm.modulation[0][5] = 1.0f;      // operator 0 modulates 5
+        algorithm.modulation[5][0] = 1.0f;      // and 5 modulates 0
+        algorithm.makeAcyclic();
+
+        check(algorithm.modulation[0][5] == 0.0f,
+              "an upper-triangle entry is dropped - it would be a cycle, and "
+              "a cycle in this matrix is infinite recursion in the audio "
+              "thread rather than a strange sound");
+        check(algorithm.modulation[5][0] == 1.0f,
+              "while the legal direction is kept");
+    }
+
+    // ---- Validation ---------------------------------------------------------
+    {
+        FMPatch hostile;
+        hostile.index = std::numeric_limits<float>::quiet_NaN();
+        hostile.algorithm.feedback = 40.0f;
+        hostile.operators[0].ratio = 9999.0f;
+        hostile.operators[0].level = -3.0f;
+        hostile.operators[1].attack = std::numeric_limits<float>::infinity();
+        hostile.operators[2].sustain = 7.0f;
+        for (int i = 0; i < FM_OPERATORS; ++i) {
+            hostile.algorithm.carrier[static_cast<size_t>(i)] = 0.0f;
+        }
+
+        clampFMPatch(hostile);
+
+        check(std::isfinite(hostile.index), "a NaN index is replaced");
+        check(hostile.algorithm.feedback <= 1.0f, "feedback is bounded");
+        check(hostile.operators[0].ratio <= 32.0f,
+              "an absurd ratio is clamped - past Nyquist an operator aliases "
+              "rather than sounds");
+        check(hostile.operators[0].level >= 0.0f, "a negative level is clamped");
+        check(std::isfinite(hostile.operators[1].attack),
+              "an infinite attack is replaced");
+        check(hostile.operators[2].sustain <= 1.0f, "sustain is bounded");
+
+        bool anyCarrier = false;
+        for (int i = 0; i < FM_OPERATORS; ++i) {
+            if (hostile.algorithm.carrier[static_cast<size_t>(i)] > 0.0f) {
+                anyCarrier = true;
+                break;
+            }
+        }
+        check(anyCarrier,
+              "and a patch with no carrier at all gets one, because silence "
+              "reads as the engine being broken rather than as a patch "
+              "nobody finished");
+
+        const std::vector<float> audio = render(hostile, 220.0f, 1.0f, 4096);
+        bool finite = true;
+        for (float v : audio) {
+            if (!std::isfinite(v)) { finite = false; break; }
+        }
+        check(finite, "the repaired patch renders finite audio");
+    }
+
+    // ---- Release --------------------------------------------------------------
+    {
+        FMPatch patch;
+        FMVoiceState state;
+        state.reset(patch);
+
+        for (int i = 0; i < 4410; ++i) {
+            fm::process(patch, state, 220.0f, 1.0f, rate, false);
+        }
+        state.release();
+
+        double energy = 0.0;
+        for (int i = 0; i < 44100; ++i) {
+            const float v = fm::process(patch, state, 220.0f, 1.0f, rate, true);
+            if (i > 40000) energy += std::fabs(double(v));
+        }
+        check(energy < 1.0,
+              "a released voice actually falls silent, so it can be reclaimed "
+              "rather than holding a slot forever");
+        check(state.finished(), "and reports itself finished");
+    }
+}
+
+// ============================================================================
+// 66. FM reaches the audio and the file
+// ============================================================================
+static void testFMReachesAudio() {
+    beginTest("FM reaches the audio and the file");
+
+    // ---- A note on an FM channel sounds, and differs from a pulse ----------
+    {
+        auto renderChannel = [](OscillatorType type) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 57;
+            note.startTime = 0.0f;
+            note.duration = 4.0f;
+            note.oscillatorType = type;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+            p.channels[0].oscillator.type = type;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512);
+            std::vector<float> collected;
+            for (int b = 0; b < 30; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                if (b >= 8) collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> fmAudio = renderChannel(OscillatorType::FMSynth);
+        const std::vector<float> pulseAudio = renderChannel(OscillatorType::Pulse);
+
+        double fmEnergy = 0.0;
+        for (float v : fmAudio) fmEnergy += double(v) * v;
+        check(fmEnergy > 1e-4, "an FM channel makes a sound through the engine");
+
+        double difference = 0.0;
+        const size_t n = std::min(fmAudio.size(), pulseAudio.size());
+        for (size_t i = 0; i < n; ++i) {
+            difference += std::fabs(double(fmAudio[i]) - double(pulseAudio[i]));
+        }
+        check(n > 0 && difference / double(n) > 1e-3,
+              "and it is not simply a pulse wave under another name");
+    }
+
+    // ---- The type name round-trips -----------------------------------------
+    {
+        /*
+         * The enum's shape, pinned.
+         *
+         * The Channel Editor's type dropdown listed six names and indexed
+         * them straight into OscillatorType. The enum's sixth entry is
+         * Supersaw, not Custom - so picking "Custom" set the channel to
+         * Supersaw and the wavetable controls never appeared whatever you
+         * chose. The dropdown maps by value now, and these pin the layout
+         * so a reorder is a failing test rather than a silently wrong menu.
+         */
+        check(static_cast<int>(OscillatorType::Supersaw) == 5,
+              "Supersaw is the sixth oscillator type");
+        check(static_cast<int>(OscillatorType::Custom) == 6,
+              "and Custom the seventh - a six-name list indexed into this "
+              "enum lands on the wrong one, which is exactly what the "
+              "Channel Editor was doing");
+        check(static_cast<int>(OscillatorType::FMSynth) >
+              static_cast<int>(OscillatorType::KavinskyBass),
+              "FM is last, so adding it renumbered nothing - the pad banks "
+              "and the palette's name table both index this enum");
+
+        check(stringToOscillatorType(oscillatorTypeToString(OscillatorType::FMSynth)) ==
+              OscillatorType::FMSynth,
+              "the FM type survives a name round trip - Vocoder, the "
+              "reggaeton kit and Supersaw all silently became Pulse for want "
+              "of exactly this");
+    }
+
+    // ---- The patch survives a save and load --------------------------------
+    {
+        Project p;
+        p.channels[2].oscillator.type = OscillatorType::FMSynth;
+        p.channels[2].oscillator.fmAlgorithmPreset =
+            static_cast<int>(FMAlgorithmPreset::DoubleStack);
+        p.channels[2].oscillator.fm.index = 5.75f;
+        p.channels[2].oscillator.fm.algorithm = FMAlgorithm::doubleStack();
+        p.channels[2].oscillator.fm.algorithm.feedback = 0.42f;
+        p.channels[2].oscillator.fm.operators[3].ratio = 7.0f;
+        p.channels[2].oscillator.fm.operators[3].detuneCents = -14.0f;
+        p.channels[2].oscillator.fm.operators[3].decay = 1.75f;
+        p.channels[2].oscillator.fm.operators[4].enabled = false;
+        p.channels[2].oscillator.fm.operators[5].velocitySensitivity = 0.85f;
+        p.arrangement.push_back(Clip{0, 2, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("fm_roundtrip.ctp");
+        check(saveProject(p, path), "an FM project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+
+        const OscillatorConfig& osc = loaded.channels[2].oscillator;
+        check(osc.type == OscillatorType::FMSynth, "the type survives");
+        check(std::fabs(osc.fm.index - 5.75f) < 1e-3f, "the index survives");
+        check(std::fabs(osc.fm.algorithm.feedback - 0.42f) < 1e-3f,
+              "the feedback survives");
+        check(std::fabs(osc.fm.operators[3].ratio - 7.0f) < 1e-3f,
+              "an operator's ratio survives");
+        check(std::fabs(osc.fm.operators[3].detuneCents + 14.0f) < 1e-2f,
+              "its detune survives");
+        check(std::fabs(osc.fm.operators[3].decay - 1.75f) < 1e-3f,
+              "its envelope survives");
+        check(!osc.fm.operators[4].enabled,
+              "a disabled operator stays disabled");
+        check(std::fabs(osc.fm.operators[5].velocitySensitivity - 0.85f) < 1e-3f,
+              "and velocity sensitivity survives");
+        check(osc.fm.algorithm.modulation[2][1] > 0.0f,
+              "the routing matrix survives, not just the preset number - a "
+              "patch edited away from its preset must come back as edited");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- A project with no FM channel writes no FM lines --------------------
+    {
+        Project plain;
+        const std::string path = testPath("fm_absent.ctp");
+        check(saveProject(plain, path), "a project with no FM channel saves");
+
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        check(ss.str().find("\nFM ") == std::string::npos,
+              "and writes no FM line - the patch is a hundred values, and "
+              "nobody who never touches the instrument should carry them");
+        std::remove(path.c_str());
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -10325,6 +10829,8 @@ int main(int argc, char** argv) {
     testVoiceToNotes();
     testWavetableEngine();
     testWavetableReachesAudio();
+    testFMSynth();
+    testFMReachesAudio();
     testLongRunStability();
 
     std::printf("\n==========================\n");

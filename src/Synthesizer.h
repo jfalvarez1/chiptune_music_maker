@@ -67,6 +67,9 @@ struct Voice {
     float slideTarget = 0.0f;       // Target frequency for portamento (0 = no slide)
     float slideSpeed = 0.0f;        // Slide speed (semitones per second)
 
+    // Six-operator FM state: phases and envelopes, one set per operator.
+    FMVoiceState fmState;
+
     // NES-style Duty Cycle
     DutyCycle dutyCycle = DutyCycle::Duty50;  // Pulse wave duty cycle
     bool useDutyCycle = false;                // Override channel duty cycle
@@ -856,6 +859,25 @@ private:
         return set.sample(voice.phase, morph, voice.phaseIncrement);
     }
 
+    /*
+     * Six-operator FM.
+     *
+     * The voice carries its own operator phases and envelopes, because the
+     * whole expressiveness of FM comes from the operators having DIFFERENT
+     * envelopes: a bell is a carrier that rings under a modulator that
+     * decays quickly. Sharing one envelope across the operators would make
+     * it a slightly odd additive synth.
+     *
+     * The operator envelopes run alongside the voice's own, not instead of
+     * it - so the channel's amplitude envelope, its filter and its whole
+     * insert rack still apply exactly as they do to every other oscillator.
+     */
+    float generateFM(Voice& voice) {
+        return fm::process(m_oscConfig.fm, voice.fmState, voice.frequency,
+                           voice.velocity, m_sampleRate,
+                           voice.envStage == Voice::EnvStage::Release);
+    }
+
     float generateOscillator(Voice& voice) {
         float sample = 0.0f;
         const float t = voice.phase;
@@ -894,6 +916,10 @@ private:
 
             case OscillatorType::Custom:
                 sample = generateWavetable(voice);
+                break;
+
+            case OscillatorType::FMSynth:
+                sample = generateFM(voice);
                 break;
 
             // Kicks

@@ -221,6 +221,14 @@ inline void clampChannelToValidRanges(ChannelConfig& c) {
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
 
+    // FM. The matrix is forced lower-triangular here: a cycle in it would
+    // be infinite recursion in the audio thread, and there is no smaller
+    // sensible value for "operator 0 modulates operator 5" to clamp to.
+    c.oscillator.fmAlgorithmPreset = sanitizeInt(
+        c.oscillator.fmAlgorithmPreset, 0,
+        static_cast<int>(FMAlgorithmPreset::Count) - 1, 0);
+    clampFMPatch(c.oscillator.fm);
+
     // Wavetable. A bank index past the end would read off the library from
     // the audio thread; the morph is clamped rather than dropped because a
     // value slightly outside 0..1 is a sweep that overshot, not corruption.

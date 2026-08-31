@@ -18,6 +18,7 @@
 #include "Snap.h"
 #include "Sample.h"
 #include "TempoMap.h"
+#include "FMSynth.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -123,7 +124,14 @@ enum class OscillatorType : uint8_t {
     
     // High-Accuracy Recreations
     Vocoder,        // Sawtooth with formant filtering (Nightcall lead)
-    KavinskyBass    // Filtered Saw with envelope (Nightcall bass)
+    KavinskyBass,   // Filtered Saw with envelope (Nightcall bass)
+
+    // Six-operator FM. At the END of the enum, and it has to be: the type is
+    // serialised by name, but the pad banks, the sound palette's name table
+    // and per-note overrides all index it numerically, so inserting in the
+    // middle silently renumbers every type after the insertion point. I put
+    // it after Custom first and the palette's static_assert caught it.
+    FMSynth
 };
 
 // ============================================================================
@@ -162,6 +170,14 @@ struct OscillatorConfig {
     // most common case would be a poor trade.
     float wavetableMorphSweep = 0.0f;
     float wavetableSweepTime = 0.5f;   // seconds to travel the sweep
+
+    // ---- Six-operator FM -------------------------------------------------
+    //
+    // Only meaningful when type == FMSynth. Held inline rather than behind a
+    // pointer so a ChannelConfig stays copyable and the audio thread never
+    // dereferences anything.
+    FMPatch fm;
+    int fmAlgorithmPreset = 0;      // index into FMAlgorithmPreset
 
     // General
     float detune = 0.0f;            // Cents (-100 to +100)

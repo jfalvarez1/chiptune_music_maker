@@ -152,6 +152,19 @@ foreach ($panel in $panels) {
     args = "--demo --focus `"Voice to Notes`""
 })
 
+# The two new instrument engines. Both add a block of controls to the Channel
+# Editor that only appears for their oscillator type, so neither is reachable
+# in any other shot.
+[void]$cases.Add(@{
+    name = "instrument-fm"
+    args = "--demo --instrument fm --focus `"Channel Editor`""
+})
+
+[void]$cases.Add(@{
+    name = "instrument-wavetable"
+    args = "--demo --instrument wavetable --focus `"Channel Editor`""
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"
