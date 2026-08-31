@@ -221,6 +221,11 @@ inline void clampChannelToValidRanges(ChannelConfig& c, int poolSize = 0) {
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
 
+    // An algorithm this build does not have falls back to Room rather than
+    // wrapping onto whichever one happens to sit at that index.
+    c.reverbAlgorithm = sanitizeInt(c.reverbAlgorithm, 0,
+                                    static_cast<int>(ReverbAlgorithm::Count) - 1, 0);
+
     // ---- Pitch and time --------------------------------------------------
     //
     // Two octaves either way. Past that a phase vocoder is producing an

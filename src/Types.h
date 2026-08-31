@@ -23,6 +23,7 @@
 #include "GranularSynth.h"
 #include "DrumMachine.h"
 #include "ModMatrix.h"
+#include "Reverbs.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -483,6 +484,10 @@ struct ChannelConfig {
     //
     // All three are phase-vocoder effects with a window of latency, and none
     // of them is remotely chip-authentic - so all three are off by default.
+    // Which reverb algorithm the channel's reverb slot runs. Room is the
+    // original and the default, so an existing project is untouched.
+    int reverbAlgorithm = 0;
+
     bool pitchShiftEnabled = false;
     float pitchShiftSemitones = 0.0f;
     float pitchShiftMix = 1.0f;

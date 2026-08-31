@@ -11545,10 +11545,45 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::Unindent();
         }
 
-        // Reverb (Schroeder-style algorithmic reverb)
+        // Reverb
         ImGui::Checkbox("Reverb", &fx.reverbEnabled);
         if (fx.reverbEnabled) {
             ImGui::Indent();
+
+            /*
+             * The algorithm, bound to the CONFIG rather than to the live
+             * chain like the sliders below it.
+             *
+             * That inconsistency is deliberate and temporary: the config is
+             * the only one of the two that is saved, and changing the
+             * algorithm has to re-size the tank's delay lines, which only
+             * happens through applyEffectsConfig. The surrounding controls
+             * writing straight to the chain is a bug of its own and is
+             * fixed separately.
+             */
+            const int algorithmCount = static_cast<int>(ReverbAlgorithm::Count);
+            int algorithm = std::clamp(channel.reverbAlgorithm, 0, algorithmCount - 1);
+
+            ImGui::SetNextItemWidth(150);
+            if (ImGui::BeginCombo("Algorithm##rev",
+                    reverbAlgorithmName(static_cast<ReverbAlgorithm>(algorithm)))) {
+                for (int i = 0; i < algorithmCount; ++i) {
+                    const ReverbAlgorithm candidate = static_cast<ReverbAlgorithm>(i);
+                    const bool selected = (i == algorithm);
+                    if (ImGui::Selectable(reverbAlgorithmName(candidate), selected)) {
+                        channel.reverbAlgorithm = i;
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", reverbAlgorithmBlurb(candidate));
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::TextDisabled("%s", reverbAlgorithmBlurb(
+                static_cast<ReverbAlgorithm>(algorithm)));
+
             ImGui::SliderFloat("Room Size##rev", &fx.reverb.roomSize, 0.1f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size of the virtual room (larger = longer decay)");
             ImGui::SliderFloat("Damping##rev", &fx.reverb.damping, 0.0f, 1.0f, "%.2f");

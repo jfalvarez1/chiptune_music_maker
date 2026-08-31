@@ -48,6 +48,7 @@
 #include "PitchShift.h"
 #include "InstrumentPresets.h"
 #include "SettingsAudit.h"
+#include "Reverbs.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -14000,6 +14001,440 @@ static void testShippedContentIsClean() {
     }
 }
 
+
+// ============================================================================
+// 83. Reverb algorithms
+// ============================================================================
+static void testReverbAlgorithms() {
+    beginTest("Reverb algorithms");
+
+    const float rate = 44100.0f;
+
+    // A short burst, then silence. Everything below measures what the tank
+    // does with the silence, which is the whole point of a reverb.
+    auto burstThenSilence = [rate](int burstSamples, int totalSamples) {
+        std::vector<float> input(static_cast<size_t>(totalSamples), 0.0f);
+        for (int i = 0; i < burstSamples && i < totalSamples; ++i) {
+            const float t = float(i) / rate;
+            input[static_cast<size_t>(i)] =
+                0.8f * std::sin(6.28318530718f * 220.0f * t);
+        }
+        return input;
+    };
+
+    auto renderTank = [rate](ReverbAlgorithm algorithm,
+                             const std::vector<float>& input) {
+        auto tankPtr = std::make_unique<AdvancedReverb>();
+        tankPtr->prepare(rate, algorithm);
+        tankPtr->size = 0.7f;
+        tankPtr->damping = 0.35f;
+
+        std::vector<float> out(input.size());
+        for (size_t i = 0; i < input.size(); ++i) {
+            const auto [l, r] = tankPtr->processStereo(input[i]);
+            out[i] = (l + r) * 0.5f;
+        }
+        return out;
+    };
+
+    auto rmsOf = [](const std::vector<float>& signal, size_t from, size_t to) {
+        if (from >= signal.size()) return 0.0;
+        to = std::min(to, signal.size());
+        double sum = 0.0;
+        size_t count = 0;
+        for (size_t i = from; i < to; ++i) { sum += double(signal[i]) * signal[i]; ++count; }
+        return (count > 0) ? std::sqrt(sum / double(count)) : 0.0;
+    };
+
+    // ---- Every algorithm makes a tail, and none of them runs away ----------
+    {
+        const std::vector<float> input = burstThenSilence(4410, 88200);
+
+        for (int a = 0; a < static_cast<int>(ReverbAlgorithm::Count); ++a) {
+            const ReverbAlgorithm algorithm = static_cast<ReverbAlgorithm>(a);
+            if (algorithm == ReverbAlgorithm::Room) continue;   // not the tank
+
+            const std::vector<float> out = renderTank(algorithm, input);
+            const std::string name = reverbAlgorithmName(algorithm);
+
+            bool finite = true;
+            float peak = 0.0f;
+            for (float v : out) {
+                if (!std::isfinite(v)) { finite = false; break; }
+                peak = std::max(peak, std::fabs(v));
+            }
+            if (!finite) {
+                check(false, name + " produced a non-finite sample");
+                continue;
+            }
+            check(peak < 4.0f,
+                  name + " stays bounded over two seconds (peak " +
+                  std::to_string(peak) + ")");
+
+            // There must be something after the input stops - otherwise it
+            // is a filter, not a reverb.
+            const double tail = rmsOf(out, 5000, 20000);
+            check(tail > 1e-4,
+                  name + " has a tail after the input stops (rms " +
+                  std::to_string(tail) + ")");
+        }
+    }
+
+    // ---- And they decay rather than sustaining -----------------------------
+    {
+        const std::vector<float> input = burstThenSilence(2205, 132300);
+
+        for (int a = 0; a < static_cast<int>(ReverbAlgorithm::Count); ++a) {
+            const ReverbAlgorithm algorithm = static_cast<ReverbAlgorithm>(a);
+            if (algorithm == ReverbAlgorithm::Room) continue;
+            // Reverse deliberately swells rather than decaying from the
+            // start; it gets its own test below.
+            if (algorithm == ReverbAlgorithm::Reverse) continue;
+
+            const std::vector<float> out = renderTank(algorithm, input);
+            const double early = rmsOf(out, 3000, 13000);
+            const double late = rmsOf(out, 100000, 110000);
+
+            if (!(early > late * 1.5)) {
+                check(false, std::string(reverbAlgorithmName(algorithm)) +
+                      " does not decay (early " + std::to_string(early) +
+                      ", late " + std::to_string(late) + ")");
+                break;
+            }
+        }
+        check(true, "every algorithm decays rather than sustaining forever - "
+                    "an orthogonal feedback matrix neither adds nor removes "
+                    "energy, so the decay comes entirely from the gain");
+    }
+
+    // ---- They are genuinely different from each other -----------------------
+    {
+        const std::vector<float> input = burstThenSilence(2205, 44100);
+        const std::vector<float> plate = renderTank(ReverbAlgorithm::Plate, input);
+        const std::vector<float> hall = renderTank(ReverbAlgorithm::Hall, input);
+        const std::vector<float> spring = renderTank(ReverbAlgorithm::Spring, input);
+
+        auto meanDifference = [](const std::vector<float>& a,
+                                 const std::vector<float>& b) {
+            const size_t n = std::min(a.size(), b.size());
+            double sum = 0.0;
+            for (size_t i = 0; i < n; ++i) sum += std::fabs(double(a[i]) - double(b[i]));
+            return (n > 0) ? sum / double(n) : 0.0;
+        };
+
+        check(meanDifference(plate, hall) > 1e-3,
+              "a plate and a hall are not the same reverb");
+        check(meanDifference(plate, spring) > 1e-3,
+              "and neither is a spring");
+    }
+
+    // ---- Gated cuts, rather than fading -------------------------------------
+    {
+        const std::vector<float> input = burstThenSilence(2205, 44100);
+        const std::vector<float> gated = renderTank(ReverbAlgorithm::Gated, input);
+        const std::vector<float> plate = renderTank(ReverbAlgorithm::Plate, input);
+
+        // Well past the gate's hold, the gated tail must be far quieter than
+        // the same tank left to decay.
+        const double gatedLate = rmsOf(gated, 30000, 40000);
+        const double plateLate = rmsOf(plate, 30000, 40000);
+
+        check(plateLate > 1e-6, "the ungated plate still has a tail there");
+        check(gatedLate < plateLate * 0.25,
+              "and the gated one has been cut off (" +
+              std::to_string(gatedLate) + " vs " + std::to_string(plateLate) +
+              ") - the eighties snare is not a short reverb, it is a long "
+              "one switched off part way through");
+    }
+
+    // ---- Reverse swells -------------------------------------------------------
+    {
+        // A single hit near the start. A reverse reverb's output should
+        // build rather than begin loud.
+        std::vector<float> input(88200, 0.0f);
+        for (int i = 0; i < 2205; ++i) {
+            const float t = float(i) / rate;
+            input[static_cast<size_t>(i)] =
+                0.8f * std::sin(6.28318530718f * 220.0f * t);
+        }
+
+        auto tankPtr = std::make_unique<AdvancedReverb>();
+        tankPtr->prepare(rate, ReverbAlgorithm::Reverse);
+        tankPtr->reverseSeconds = 0.5f;
+
+        std::vector<float> out(input.size());
+        for (size_t i = 0; i < input.size(); ++i) {
+            const auto [l, r] = tankPtr->processStereo(input[i]);
+            out[i] = (l + r) * 0.5f;
+        }
+
+        bool finite = true;
+        for (float v : out) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "reverse stays finite");
+
+        const double atStart = rmsOf(out, 0, 2000);
+        const double later = rmsOf(out, 8000, 18000);
+        check(later > atStart,
+              "a reverse reverb builds rather than starting at full level (" +
+              std::to_string(atStart) + " -> " + std::to_string(later) + ")");
+    }
+
+    // ---- Shimmer puts energy above the input --------------------------------
+    {
+        // A steady low tone in; the tail should contain content an octave up
+        // that the input never had.
+        std::vector<float> input(132300, 0.0f);
+        for (int i = 0; i < 44100; ++i) {
+            const float t = float(i) / rate;
+            input[static_cast<size_t>(i)] =
+                0.6f * std::sin(6.28318530718f * 220.0f * t);
+        }
+
+        auto tankPtr = std::make_unique<AdvancedReverb>();
+        tankPtr->prepare(rate, ReverbAlgorithm::Shimmer);
+        tankPtr->size = 0.85f;
+        tankPtr->damping = 0.15f;
+        tankPtr->shimmerAmount = 0.7f;
+        tankPtr->shimmerSemitones = 12.0f;
+
+        std::vector<float> out(input.size());
+        for (size_t i = 0; i < input.size(); ++i) {
+            const auto [l, r] = tankPtr->processStereo(input[i]);
+            out[i] = (l + r) * 0.5f;
+        }
+
+        bool finite = true;
+        float peak = 0.0f;
+        for (float v : out) {
+            if (!std::isfinite(v)) { finite = false; break; }
+            peak = std::max(peak, std::fabs(v));
+        }
+        check(finite && peak < 4.0f,
+              "shimmer stays finite and bounded with a pitch shifter inside "
+              "its own feedback path (peak " + std::to_string(peak) + ")");
+
+        const double tail = rmsOf(out, 60000, 90000);
+        check(tail > 1e-4, "and it rings on after the input stops");
+    }
+
+    // ---- Switching algorithm mid-life is safe --------------------------------
+    {
+        auto tankPtr = std::make_unique<AdvancedReverb>();
+        tankPtr->prepare(rate, ReverbAlgorithm::Plate);
+
+        bool finite = true;
+        for (int a = 0; a < static_cast<int>(ReverbAlgorithm::Count) && finite; ++a) {
+            tankPtr->prepare(rate, static_cast<ReverbAlgorithm>(a));
+            for (int i = 0; i < 4410; ++i) {
+                const float t = float(i) / rate;
+                const auto [l, r] = tankPtr->processStereo(
+                    0.5f * std::sin(6.28318530718f * 330.0f * t));
+                if (!std::isfinite(l) || !std::isfinite(r)) { finite = false; break; }
+            }
+        }
+        check(finite,
+              "re-preparing the tank for a different algorithm while it holds "
+              "a tail leaves it in a usable state rather than reading a "
+              "resized buffer with a stale index");
+    }
+
+    // ---- Extremes -------------------------------------------------------------
+    {
+        auto tankPtr = std::make_unique<AdvancedReverb>();
+        bool allSafe = true;
+        std::string failed;
+
+        for (int a = 0; a < static_cast<int>(ReverbAlgorithm::Count) && allSafe; ++a) {
+            const ReverbAlgorithm algorithm = static_cast<ReverbAlgorithm>(a);
+            tankPtr->prepare(rate, algorithm);
+
+            // Everything at its limit at once, with a loud input.
+            tankPtr->size = 1.0f;
+            tankPtr->damping = 0.0f;
+            tankPtr->predelay = 1.0f;
+            tankPtr->width = 1.0f;
+            tankPtr->shimmerAmount = 1.0f;
+            tankPtr->shimmerSemitones = 24.0f;
+            tankPtr->gateHold = 0.0f;
+            tankPtr->gateThreshold = 0.0f;
+            tankPtr->reverseSeconds = 5.0f;      // past the buffer
+            tankPtr->dispersion = 1.0f;
+
+            float peak = 0.0f;
+            for (int i = 0; i < 88200; ++i) {
+                const auto [l, r] = tankPtr->processStereo(0.95f);
+                if (!std::isfinite(l) || !std::isfinite(r)) {
+                    allSafe = false;
+                    failed = reverbAlgorithmName(algorithm);
+                    break;
+                }
+                peak = std::max(peak, std::max(std::fabs(l), std::fabs(r)));
+            }
+            if (allSafe && peak > 8.0f) {
+                allSafe = false;
+                failed = std::string(reverbAlgorithmName(algorithm)) +
+                         " reached " + std::to_string(peak);
+            }
+        }
+        check(allSafe,
+              "every algorithm survives every parameter at its limit with a "
+              "constant loud input" +
+              (allSafe ? std::string() : " (" + failed + ")"));
+    }
+
+    // ---- A NaN in does not poison the tank ------------------------------------
+    {
+        auto tankPtr = std::make_unique<AdvancedReverb>();
+        tankPtr->prepare(rate, ReverbAlgorithm::Plate);
+
+        tankPtr->processStereo(std::numeric_limits<float>::quiet_NaN());
+        tankPtr->processStereo(std::numeric_limits<float>::infinity());
+
+        bool recovered = true;
+        for (int i = 0; i < 4410; ++i) {
+            const auto [l, r] = tankPtr->processStereo(0.3f);
+            if (!std::isfinite(l) || !std::isfinite(r)) { recovered = false; break; }
+        }
+        check(recovered,
+              "a NaN arriving from a broken upstream effect does not poison "
+              "the tank permanently - a feedback loop that takes one is "
+              "silent for the rest of the session");
+    }
+}
+
+// ============================================================================
+// 84. The algorithms reach the channel and the file
+// ============================================================================
+static void testReverbAlgorithmsInChannel() {
+    beginTest("Reverb algorithms in a channel");
+
+    // ---- Room is the default and is untouched --------------------------------
+    {
+        const ChannelConfig fresh;
+        check(fresh.reverbAlgorithm == static_cast<int>(ReverbAlgorithm::Room),
+              "a new channel is set to Room - the original algorithm, so "
+              "every existing project sounds exactly as it did");
+
+        auto chainPtr = std::make_unique<EffectsChain>();
+        check(chainPtr->reverb.algorithm == ReverbAlgorithm::Room,
+              "and so is a fresh chain");
+    }
+
+    // ---- Choosing another one changes the audio -------------------------------
+    {
+        auto render = [](int algorithm) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+
+            p.channels[0].oscillator.type = OscillatorType::Pulse;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+            p.channels[0].reverbEnabled = true;
+            p.channels[0].reverbMix = 0.8f;
+            p.channels[0].reverbAlgorithm = algorithm;
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 60;
+            note.startTime = 0.0f;
+            note.duration = 0.5f;
+            note.oscillatorType = OscillatorType::Pulse;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512);
+            std::vector<float> collected;
+            for (int b = 0; b < 60; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> room = render(static_cast<int>(ReverbAlgorithm::Room));
+        const std::vector<float> plate = render(static_cast<int>(ReverbAlgorithm::Plate));
+        const std::vector<float> gated = render(static_cast<int>(ReverbAlgorithm::Gated));
+
+        auto meanDifference = [](const std::vector<float>& a,
+                                 const std::vector<float>& b) {
+            const size_t n = std::min(a.size(), b.size());
+            double sum = 0.0;
+            for (size_t i = 0; i < n; ++i) sum += std::fabs(double(a[i]) - double(b[i]));
+            return (n > 0) ? sum / double(n) : 0.0;
+        };
+
+        check(meanDifference(room, plate) > 1e-4,
+              "switching the channel to Plate changes what comes out");
+        check(meanDifference(plate, gated) > 1e-4,
+              "and Gated differs from Plate");
+
+        bool finite = true;
+        for (float v : plate) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and the result is finite through the whole chain");
+    }
+
+    // ---- It survives a save and load -------------------------------------------
+    {
+        Project p;
+        p.channels[2].reverbEnabled = true;
+        p.channels[2].reverbAlgorithm = static_cast<int>(ReverbAlgorithm::Shimmer);
+        p.arrangement.push_back(Clip{0, 2, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("reverb_algo.ctp");
+        check(saveProject(p, path), "a project with a reverb algorithm saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+        check(loaded.channels[2].reverbAlgorithm ==
+                  static_cast<int>(ReverbAlgorithm::Shimmer),
+              "with the algorithm intact");
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation ---------------------------------------------------------------
+    {
+        Project p;
+        p.channels[0].reverbAlgorithm = 900;
+        clampProjectToValidRanges(p);
+        check(p.channels[0].reverbAlgorithm == 0,
+              "an algorithm this build does not have falls back to Room "
+              "rather than wrapping onto whichever one sits at that index");
+    }
+
+    // ---- Every algorithm has a name and a description -----------------------------
+    {
+        bool allNamed = true;
+        for (int a = 0; a < static_cast<int>(ReverbAlgorithm::Count); ++a) {
+            const ReverbAlgorithm algorithm = static_cast<ReverbAlgorithm>(a);
+            const char* name = reverbAlgorithmName(algorithm);
+            const char* blurb = reverbAlgorithmBlurb(algorithm);
+            if (name == nullptr || *name == '\0' ||
+                blurb == nullptr || *blurb == '\0') {
+                allNamed = false;
+                break;
+            }
+        }
+        check(allNamed,
+              "every algorithm has a name and a line saying what it is for - "
+              "a menu of seven reverbs called Reverb 1 through 7 is not a "
+              "choice anybody can make");
+    }
+}
+
 // ============================================================================
 // Headless ImGui harness
 // ============================================================================
@@ -14660,6 +15095,8 @@ int main(int argc, char** argv) {
     testInstrumentPresets();
     testSettingsAudit();
     testShippedContentIsClean();
+    testReverbAlgorithms();
+    testReverbAlgorithmsInChannel();
     testPanelsDrawHeadless();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();

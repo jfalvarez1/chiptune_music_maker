@@ -9,6 +9,7 @@
 
 #include "Types.h"
 #include "PitchShift.h"
+#include "Reverbs.h"
 #include <cmath>
 #include <cstring>
 #include <array>
@@ -529,6 +530,18 @@ public:
     float width = 1.0f;         // Stereo width (0.0 = mono, 1.0 = full stereo)
     float predelay = 0.02f;     // Pre-delay in seconds (room size simulation)
 
+    /*
+     * Which reverb this is.
+     *
+     * Room is the original Schroeder-Moorer arrangement below, kept exactly
+     * as it was: it is the default, every existing project uses it, and
+     * there is a test asserting the rack still matches a frozen copy of the
+     * pre-rack chain. A "better" room would silently change every project
+     * ever saved. The other five run through the shared tank instead.
+     */
+    ReverbAlgorithm algorithm = ReverbAlgorithm::Room;
+    AdvancedReverb tank;
+
     Reverb() {
         // Initialize comb filters with prime-number-based delays for richness
         // These values create a dense, natural-sounding reverb
@@ -547,6 +560,10 @@ public:
 
     void setSampleRate(float sr) {
         m_sampleRate = sr;
+        // The tank sizes its own delay lines here, on the UI thread. It is
+        // the only place it allocates.
+        tank.prepare(sr, algorithm);
+
         // Rescale delays for sample rate
         float ratio = sr / 44100.0f;
         m_scaledCombDelays = {
@@ -562,8 +579,36 @@ public:
         m_predelayBuffer.resize(static_cast<int>(0.1f * sr), 0.0f);
     }
 
+    // Re-size the tank for a new algorithm. UI thread only: this
+    // reallocates, which is why it is not done inside processStereo when the
+    // algorithm happens to differ.
+    void setAlgorithm(ReverbAlgorithm wanted) {
+        if (wanted == algorithm && tank.algorithm() == wanted) return;
+        algorithm = wanted;
+        tank.prepare(m_sampleRate, wanted);
+    }
+
     // Process mono input, returns stereo pair
     std::pair<float, float> processStereo(float input) {
+        /*
+         * Anything but Room goes to the tank.
+         *
+         * Checked before the pre-delay rather than after, because the tank
+         * has its own - running both would double it, and a 40 ms pre-delay
+         * where the user asked for 20 is the sort of thing that is very hard
+         * to hear as a bug and very easy to hear as "this reverb is wrong".
+         */
+        if (algorithm != ReverbAlgorithm::Room) {
+            tank.size = roomSize;
+            tank.damping = damping;
+            tank.predelay = predelay;
+            tank.width = width;
+
+            const auto [wetL, wetR] = tank.processStereo(input);
+            return {input * (1.0f - mix) + wetL * mix,
+                    input * (1.0f - mix) + wetR * mix};
+        }
+
         // Pre-delay
         int predelaySamples = static_cast<int>(predelay * m_sampleRate);
         predelaySamples = std::min(predelaySamples, static_cast<int>(m_predelayBuffer.size()) - 1);

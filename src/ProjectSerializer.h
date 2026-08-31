@@ -172,6 +172,7 @@ inline constexpr IntField<ChannelConfig> CHANNEL_INTS[] = {
     {"dstType",  &ChannelConfig::distortionType},
     {"scSource", &ChannelConfig::sidechainSource},
     {"fmtVowel", &ChannelConfig::formantVowel},
+    {"revAlgo",  &ChannelConfig::reverbAlgorithm},
     {"atRoot",   &ChannelConfig::autoTuneRoot},
     {"atScale",  &ChannelConfig::autoTuneScaleMask},
 };

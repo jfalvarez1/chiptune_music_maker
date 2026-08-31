@@ -338,6 +338,13 @@ inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain)
     // coefficients, so setting these fields alone left the filter running at
     // whatever setSampleRate last computed - the 1000 Hz default - and the
     // cutoff and resonance controls did nothing at all.
+    // The reverb algorithm goes through the setter, which re-sizes the
+    // tank's delay lines. Assigning the field alone would leave the tank
+    // configured for whatever algorithm it last prepared.
+    chain.reverb.setAlgorithm(static_cast<ReverbAlgorithm>(
+        std::clamp(config.reverbAlgorithm, 0,
+                   static_cast<int>(ReverbAlgorithm::Count) - 1)));
+
     // ---- Pitch and time --------------------------------------------------
     chain.pitchShiftEnabled = config.pitchShiftEnabled;
     chain.pitchShifter.semitones = config.pitchShiftSemitones;
