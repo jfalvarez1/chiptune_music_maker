@@ -98,9 +98,7 @@ MPC-style pads for playing drums and auditioning sounds live.
 | Spectrum analyzer | Wavetable editor |
 |---|---|
 | ![Spectrum analyzer](docs/images/spectrum.png) | ![Wavetable editor](docs/images/wavetable.png) |
-
-| Parameter automation | MIDI input |
-|---|---|
+| **Parameter automation** | **MIDI input** |
 | ![Automation](docs/images/automation.png) | ![MIDI input](docs/images/midi-input.png) |
 
 ### Instrument engines
@@ -112,9 +110,7 @@ parameters and no idea where to begin.
 | Six-operator FM | Multisample sampler |
 |---|---|
 | ![FM](docs/images/engine-fm.png) | ![Sampler](docs/images/engine-sampler.png) |
-
-| Granular | Modelled drums |
-|---|---|
+| **Granular** | **Modelled drums** |
 | ![Granular](docs/images/engine-granular.png) | ![Drum model](docs/images/engine-drums.png) |
 
 The palette section they live in, and what a genre focus does to it —
@@ -191,24 +187,13 @@ not only the window chrome.
 | Stock | Cyberpunk |
 |---|---|
 | ![Stock](docs/images/theme-stock.png) | ![Cyberpunk](docs/images/theme-cyberpunk.png) |
-
-| Synthwave | Vaporwave |
-|---|---|
+| **Synthwave** | **Vaporwave** |
 | ![Synthwave](docs/images/theme-synthwave.png) | ![Vaporwave](docs/images/theme-vaporwave.png) |
-
-Synthwave is the saturated, neon-on-near-black one; Vaporwave takes the
-pastel, hazy lane. They used to be two shades of the same purple.
-
-| Game Boy DMG | Matrix |
-|---|---|
+| **Game Boy DMG** | **Matrix** |
 | ![Game Boy](docs/images/theme-gameboy.png) | ![Matrix](docs/images/theme-matrix.png) |
-
-| Retro Terminal | Minimal |
-|---|---|
+| **Retro Terminal** | **Minimal** |
 | ![Retro terminal](docs/images/theme-terminal.png) | ![Minimal](docs/images/theme-minimal.png) |
-
-| Frutiger Aero | Daylight |
-|---|---|
+| **Frutiger Aero** | **Daylight** |
 | ![Frutiger Aero](docs/images/theme-frutiger.png) | ![Daylight](docs/images/theme-daylight.png) |
 
 ## Features
