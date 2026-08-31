@@ -9,6 +9,7 @@
 
 #include "Types.h"
 #include "WavetableEngine.h"
+#include "Sampler.h"
 #include "Effects.h"
 #include "Sample.h"
 #include <cmath>
@@ -69,6 +70,10 @@ struct Voice {
 
     // Six-operator FM state: phases and envelopes, one set per operator.
     FMVoiceState fmState;
+
+    // Multisample playback state, and the round-robin counter that decides
+    // which alternate take of a repeated note this voice got.
+    SamplerVoice samplerVoice;
 
     // NES-style Duty Cycle
     DutyCycle dutyCycle = DutyCycle::Duty50;  // Pulse wave duty cycle
@@ -479,6 +484,34 @@ public:
             // Per-note oscillator type
             v.oscillatorType = oscType;
 
+            /*
+             * Multisample: pick the zone and start it here, because the zone
+             * depends on the note AND the velocity, neither of which the
+             * per-sample generator can see.
+             *
+             * A note with no zone covering it stays silent rather than
+             * playing a wildly stretched neighbour. A keyboard with a gap in
+             * it should have an audible gap - that is findable; a
+             * neighbouring sample dragged two octaves is just "the sampler
+             * sounds bad".
+             */
+            if (oscType == OscillatorType::Sampler) {
+                float weight = 1.0f;
+                const int zoneIndex = m_oscConfig.sampler.findZone(
+                    note, velocity, m_roundRobin, weight);
+                ++m_roundRobin;
+
+                if (zoneIndex >= 0 && m_samplePool != nullptr) {
+                    const SampleZone& zone =
+                        m_oscConfig.sampler.zones[static_cast<size_t>(zoneIndex)];
+                    v.samplerVoice.trigger(m_oscConfig.sampler, zone,
+                                           m_samplePool->getSample(zone.sampleId),
+                                           note, velocity, weight, m_sampleRate);
+                } else {
+                    v.samplerVoice.stop();
+                }
+            }
+
             // Per-note effects
             v.vibratoDepth = vibrato;       // 0.0 to 1.0 (1.0 = 1 semitone wobble)
             v.vibratoSpeed = 5.0f;          // 5 Hz default
@@ -809,6 +842,11 @@ public:
      */
     void setWavetables(const WavetableLibrary* library) { m_wavetables = library; }
 
+    // The project's sample pool, for the multisample engine. A pointer for
+    // the same reason the wavetable library is one: the audio thread reads
+    // it and nothing copies it.
+    void setSamplePool(const SamplePool* pool) { m_samplePool = pool; }
+
     const EffectsChain& effects() const { return m_effects; }
     Vibrato& vibrato() { return m_vibrato; }
     Arpeggiator& arpeggiator() { return m_arpeggiator; }
@@ -920,6 +958,10 @@ private:
 
             case OscillatorType::FMSynth:
                 sample = generateFM(voice);
+                break;
+
+            case OscillatorType::Sampler:
+                sample = voice.samplerVoice.process();
                 break;
 
             // Kicks
@@ -2897,6 +2939,13 @@ private:
     Envelope m_envelope;
 
     const WavetableLibrary* m_wavetables = nullptr;
+    const SamplePool* m_samplePool = nullptr;
+
+    // Advanced on every sampler note, so repeated hits cycle through the
+    // alternate takes instead of retriggering one recording. Two identical
+    // samples a few milliseconds apart comb-filter against each other, which
+    // is the "machine gun" sound that gives a sampled kit away.
+    int m_roundRobin = 0;
     EffectsChain m_effects;
     Vibrato m_vibrato;
     Arpeggiator m_arpeggiator;

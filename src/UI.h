@@ -10043,6 +10043,7 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             {"Supersaw",  OscillatorType::Supersaw},
             {"Wavetable", OscillatorType::Custom},
             {"FM",        OscillatorType::FMSynth},
+            {"Sampler",   OscillatorType::Sampler},
         };
 
         const std::string currentName = oscillatorTypeToString(osc.type);
@@ -10149,6 +10150,132 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
                                        0.01f, 5.0f, "%.2f s")) {
                     seq.updateChannelConfigs();
                 }
+            }
+        }
+
+        // ---- Multisample ----------------------------------------------------
+        //
+        // One recording stretched across the whole keyboard sounds like a
+        // tape played at the wrong speed, because the formants move with the
+        // pitch. Several recordings, each used near where it was made, is
+        // what every sampler since the Mirage has done.
+        if (osc.type == OscillatorType::Sampler) {
+            SamplerInstrument& sampler = osc.sampler;
+
+            ImGui::Text("%d zone%s", sampler.zoneCount,
+                        sampler.zoneCount == 1 ? "" : "s");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Add from file")) {
+                const std::string path = openFileDialog(
+                    "Audio Files (*.wav;*.mp3;*.ogg;*.flac)\0"
+                    "*.wav;*.mp3;*.ogg;*.flac\0All Files (*.*)\0*.*\0", "wav");
+                if (!path.empty()) {
+                    const int id = project.samplePool.loadSample(path);
+                    if (id >= 0) {
+                        g_UndoHistory.saveState(project, "Add Sample Zone");
+                        SampleZone zone;
+                        zone.sampleId = id;
+                        // A new zone covers the whole keyboard so it is
+                        // audible immediately; narrowing it is the next
+                        // thing you do, and an inaudible new zone reads as
+                        // the button not working.
+                        zone.lowKey = 0;
+                        zone.highKey = 127;
+                        zone.rootKey = 60;
+                        sampler.addZone(zone);
+                        seq.updateChannelConfigs();
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Load a recording and map it. Give each zone the keys and\n"
+                    "the velocities it should cover; zones with the same\n"
+                    "ranges are alternate takes and get cycled between, so a\n"
+                    "fast repeated hit does not phase against itself.");
+            }
+
+            if (ImGui::SliderFloat("Layer Blend", &sampler.velocityCrossfade,
+                                   0.0f, 0.5f, "%.2f")) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How far either side of a velocity boundary two layers\n"
+                    "blend. At zero the instrument changes character on one\n"
+                    "note of a crescendo, which is very audible.");
+            }
+            if (ImGui::SliderFloat("Vel -> Level", &sampler.velocityToLevel,
+                                   0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+
+            for (int z = 0; z < sampler.zoneCount; ++z) {
+                ImGui::PushID(800 + z);
+                SampleZone& zone = sampler.zones[static_cast<size_t>(z)];
+
+                const Sample* sample = project.samplePool.getSample(zone.sampleId);
+                char label[96];
+                snprintf(label, sizeof(label), "Zone %d - %s", z + 1,
+                         sample != nullptr ? sample->name.c_str() : "no sample");
+
+                if (ImGui::TreeNode(label)) {
+                    if (ImGui::DragIntRange2("Keys", &zone.lowKey, &zone.highKey,
+                                             0.5f, 0, 127)) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::DragInt("Root", &zone.rootKey, 0.5f, 0, 127)) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "The key this was recorded at. Everything else in\n"
+                            "the zone is pitch-shifted away from it, so a\n"
+                            "wrong root puts the whole zone out of tune.");
+                    }
+                    if (ImGui::DragFloatRange2("Velocity", &zone.lowVelocity,
+                                               &zone.highVelocity, 0.005f,
+                                               0.0f, 1.0f, "%.2f")) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::SliderFloat("Gain", &zone.gain, 0.0f, 2.0f)) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::SliderFloat("Pan", &zone.pan, -1.0f, 1.0f)) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::SliderFloat("Tune", &zone.tuneCents, -100.0f,
+                                           100.0f, "%.0f c")) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (ImGui::Checkbox("Loop", &zone.loop)) {
+                        seq.updateChannelConfigs();
+                    }
+                    if (zone.loop) {
+                        if (ImGui::DragFloat("Loop start", &zone.loopStartSeconds,
+                                             0.001f, 0.0f, 60.0f, "%.3f s")) {
+                            seq.updateChannelConfigs();
+                        }
+                        if (ImGui::DragFloat("Loop end", &zone.loopEndSeconds,
+                                             0.001f, 0.0f, 60.0f, "%.3f s")) {
+                            seq.updateChannelConfigs();
+                        }
+                    }
+                    if (ImGui::SmallButton("Remove")) {
+                        g_UndoHistory.saveState(project, "Remove Sample Zone");
+                        for (int k = z; k + 1 < sampler.zoneCount; ++k) {
+                            sampler.zones[static_cast<size_t>(k)] =
+                                sampler.zones[static_cast<size_t>(k) + 1];
+                        }
+                        --sampler.zoneCount;
+                        seq.updateChannelConfigs();
+                        ImGui::TreePop();
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
             }
         }
 
@@ -12384,7 +12511,9 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         // High-Accuracy Recreations (2) - indices 63-64
         "Vocoder", "Kavinsky Bass",
         // Six-operator FM - index 65
-        "FM"
+        "FM",
+        // Multisample - index 66
+        "Sampler"
     };
     const char* oscDesc[] = {
         // Oscillators (7) - indices 0-6
@@ -12414,7 +12543,9 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
         // High-Accuracy Recreations (2) - indices 63-64
         "Formant-filtered talkbox lead", "Resonant filtered saw bass",
         // Six-operator FM - index 65
-        "Six-operator FM: bells, e-pianos, brass, metallic basses"
+        "Six-operator FM: bells, e-pianos, brass, metallic basses",
+        // Multisample - index 66
+        "Multisample: key zones, velocity layers, round-robin"
     };
 
     constexpr int NUM_OSCILLATORS = 7;  // Pulse, Triangle, Sawtooth, Sine, Noise, Supersaw, Custom
@@ -12424,12 +12555,15 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     // Plus FM, which lives at the end of the enum. This assert is the reason
     // the mistake of inserting FMSynth mid-enum lasted one compile instead of
     // reaching a user as every instrument past Custom playing the wrong sound.
-    static_assert(RECREATIONS_START + NUM_RECREATIONS + 1 ==
+    static_assert(RECREATIONS_START + NUM_RECREATIONS + 2 ==
                       sizeof(oscNames) / sizeof(oscNames[0]),
                   "oscNames must stay index-aligned with OscillatorType");
-    static_assert(static_cast<int>(OscillatorType::FMSynth) + 1 ==
+    // Whatever is last in the enum must be last in the table. This assert is
+    // the reason inserting FMSynth mid-enum lasted one compile instead of
+    // reaching a user as every instrument past Custom playing wrong.
+    static_assert(static_cast<int>(OscillatorType::Sampler) + 1 ==
                       static_cast<int>(sizeof(oscNames) / sizeof(oscNames[0])),
-                  "FMSynth must be the last OscillatorType");
+                  "the last OscillatorType must be the last oscNames entry");
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // ========== OSCILLATORS (Collapsible) ==========

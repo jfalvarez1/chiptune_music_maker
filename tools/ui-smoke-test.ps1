@@ -166,6 +166,11 @@ foreach ($panel in $panels) {
 })
 
 [void]$cases.Add(@{
+    name = "instrument-sampler"
+    args = "--demo --instrument sampler --focus `"Channel Editor`""
+})
+
+[void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"
 })

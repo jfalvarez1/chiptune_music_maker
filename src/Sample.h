@@ -196,7 +196,21 @@ private:
 // ============================================================================
 class SampleOscillator {
 public:
-    void trigger(const Sample* sample, int midiNote, float velocity) {
+    /*
+     * Start a sample.
+     *
+     * `engineRate` is the rate the mixer runs at, and leaving it out was a
+     * real, shipping bug: the read step was the pitch ratio alone, with no
+     * term for the difference between the sample's rate and the engine's.
+     * The pool decodes everything to 48 kHz and the engine usually runs at
+     * 44.1, so every sample played 8.8% fast - nearly a semitone and a half
+     * sharp, and every sample instrument was out of tune with the synths.
+     *
+     * It defaults to 44100 so existing call sites keep compiling, but a
+     * caller that knows its rate should pass it.
+     */
+    void trigger(const Sample* sample, int midiNote, float velocity,
+                 float engineRate = 44100.0f) {
         m_sample = sample;
         m_position = 0.0;
         m_playing = true;
@@ -209,7 +223,11 @@ public:
 
         // Calculate pitch shift ratio
         float semitones = (float)midiNote - (float)sample->rootNote;
-        m_pitchRatio = std::pow(2.0f, semitones / 12.0f);
+        const float pitchRatio = std::pow(2.0f, semitones / 12.0f);
+
+        const float rateRatio = (engineRate > 0.0f)
+            ? (float)sample->sampleRate / engineRate : 1.0f;
+        m_pitchRatio = pitchRatio * rateRatio;
     }
 
     void release() {

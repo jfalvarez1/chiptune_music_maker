@@ -41,6 +41,7 @@
 #include "VoicePanel.h"
 #include "WavetableEngine.h"
 #include "FMSynth.h"
+#include "Sampler.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -10725,6 +10726,541 @@ static void testFMReachesAudio() {
     }
 }
 
+
+// ============================================================================
+// 67. The multisample sampler
+// ============================================================================
+static void testSampler() {
+    beginTest("Multisample sampler");
+
+    // A pool with three tones in it, standing in for three recordings of an
+    // instrument at different dynamics.
+    auto makePool = [](SamplePool& pool, int count) {
+        for (int i = 0; i < count; ++i) {
+            Sample sample;
+            sample.name = "layer" + std::to_string(i);
+            sample.sampleRate = 48000;
+            sample.rootNote = 60;
+            sample.audioData.resize(48000);
+            for (size_t n = 0; n < sample.audioData.size(); ++n) {
+                const float t = float(n) / 48000.0f;
+                // A different frequency per layer, so a test can tell which
+                // one it is hearing.
+                sample.audioData[n] = 0.8f * std::sin(
+                    6.28318530718f * (220.0f * float(i + 1)) * t);
+            }
+            sample.lengthSeconds = 1.0f;
+            sample.isLoaded = true;
+            pool.addSample(sample);
+        }
+    };
+
+    // ---- Zone selection ----------------------------------------------------
+    {
+        SamplerInstrument instrument;
+        instrument.velocityCrossfade = 0.0f;
+
+        SampleZone soft;
+        soft.sampleId = 0;
+        soft.lowKey = 0; soft.highKey = 127; soft.rootKey = 60;
+        soft.lowVelocity = 0.0f; soft.highVelocity = 0.5f;
+        instrument.addZone(soft);
+
+        SampleZone loud = soft;
+        loud.sampleId = 1;
+        loud.lowVelocity = 0.5f; loud.highVelocity = 1.0f;
+        instrument.addZone(loud);
+
+        float weight = 0.0f;
+        check(instrument.findZone(60, 0.2f, 0, weight) == 0,
+              "a soft note picks the soft layer");
+        check(instrument.findZone(60, 0.9f, 0, weight) == 1,
+              "and a hard one picks the loud layer - which is the whole "
+              "difference between a sampler and a tape player: a piano "
+              "played hard is not a piano played softly and turned up");
+    }
+
+    {
+        // Key zones bound how far any one recording is stretched.
+        SamplerInstrument instrument;
+        SampleZone low;
+        low.sampleId = 0;
+        low.lowKey = 0; low.highKey = 59; low.rootKey = 48;
+        instrument.addZone(low);
+
+        SampleZone high = low;
+        high.sampleId = 1;
+        high.lowKey = 60; high.highKey = 127; high.rootKey = 72;
+        instrument.addZone(high);
+
+        float weight = 0.0f;
+        check(instrument.findZone(40, 0.8f, 0, weight) == 0,
+              "a low note takes the low recording");
+        check(instrument.findZone(90, 0.8f, 0, weight) == 1,
+              "and a high one the high recording");
+    }
+
+    {
+        // A gap in the keyboard is silence, not a stretched neighbour.
+        SamplerInstrument instrument;
+        SampleZone zone;
+        zone.sampleId = 0;
+        zone.lowKey = 60; zone.highKey = 72;
+        instrument.addZone(zone);
+
+        float weight = 0.0f;
+        check(instrument.findZone(30, 0.8f, 0, weight) == -1,
+              "a note no zone covers finds nothing rather than the nearest "
+              "zone - an audible gap is findable, and a sample dragged three "
+              "octaves is just 'the sampler sounds bad'");
+    }
+
+    // ---- Velocity crossfade -------------------------------------------------
+    {
+        SamplerInstrument instrument;
+        instrument.velocityCrossfade = 0.2f;
+
+        SampleZone soft;
+        soft.sampleId = 0;
+        soft.lowVelocity = 0.0f; soft.highVelocity = 0.5f;
+        instrument.addZone(soft);
+
+        SampleZone loud = soft;
+        loud.sampleId = 1;
+        loud.lowVelocity = 0.5f; loud.highVelocity = 1.0f;
+        instrument.addZone(loud);
+
+        float middleWeight = 0.0f;
+        instrument.findZone(60, 0.5f, 0, middleWeight);
+        float clearWeight = 0.0f;
+        instrument.findZone(60, 0.1f, 0, clearWeight);
+
+        check(clearWeight > middleWeight,
+              "a note well inside a layer plays it at full weight, and one on "
+              "the boundary plays it partly (" + std::to_string(clearWeight) +
+              " vs " + std::to_string(middleWeight) + ") - without this, a "
+              "crescendo changes character on one note");
+    }
+
+    // ---- Round-robin --------------------------------------------------------
+    {
+        SamplerInstrument instrument;
+        instrument.velocityCrossfade = 0.0f;
+
+        for (int take = 0; take < 3; ++take) {
+            SampleZone zone;
+            zone.sampleId = take;
+            zone.roundRobinGroup = take;
+            instrument.addZone(zone);
+        }
+
+        float weight = 0.0f;
+        const int a = instrument.findZone(60, 0.8f, 0, weight);
+        const int b = instrument.findZone(60, 0.8f, 1, weight);
+        const int c = instrument.findZone(60, 0.8f, 2, weight);
+        const int d = instrument.findZone(60, 0.8f, 3, weight);
+
+        check(a != b && b != c,
+              "consecutive hits take different takes - two identical samples "
+              "a few milliseconds apart comb-filter against each other, which "
+              "is the machine-gun sound that gives a sampled kit away");
+        check(d == a, "and the cycle wraps");
+    }
+
+    // ---- The sample rate conversion, which was missing ---------------------
+    //
+    // SampleOscillator advanced by the pitch ratio alone. The pool decodes to
+    // 48 kHz and the engine usually runs at 44.1, so everything played 8.8%
+    // sharp - nearly a semitone and a half above the synths.
+    {
+        SamplePool pool;
+        makePool(pool, 1);
+
+        SamplerInstrument instrument;
+        instrument.attack = 0.0f;
+        instrument.release = 1.0f;
+        SampleZone zone;
+        zone.sampleId = 0;
+        zone.rootKey = 60;
+        instrument.addZone(zone);
+
+        // The sample is a 220 Hz tone recorded at 48 kHz. Played at its root
+        // key through a 44.1 kHz engine it must still come out at 220 Hz.
+        SamplerVoice voice;
+        voice.trigger(instrument, zone, pool.getSample(0), 60, 1.0f, 1.0f, 44100.0f);
+
+        const size_t N = 8192;
+        std::vector<float> re(N), im(N, 0.0f);
+        for (size_t i = 0; i < N; ++i) {
+            const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                float(i) / float(N - 1)));
+            re[i] = voice.process() * w;
+        }
+        DSP::FFTPlan plan;
+        plan.resize(N);
+        plan.transform(re.data(), im.data());
+
+        const double binHz = 44100.0 / double(N);
+        size_t loudest = 0;
+        double peak = 0.0;
+        for (size_t bin = 1; bin < N / 2; ++bin) {
+            const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                               double(im[bin]) * im[bin]);
+            if (magnitude > peak) { peak = magnitude; loudest = bin; }
+        }
+        const double found = double(loudest) * binHz;
+
+        check(std::fabs(found - 220.0) < 8.0,
+              "a 48 kHz sample played at its root through a 44.1 kHz engine "
+              "comes out at its recorded pitch (" + std::to_string(found) +
+              " Hz, want 220) - without the rate term it lands near 239 Hz, "
+              "which is what every sample instrument in the program has been "
+              "doing: a semitone and a half sharp of the synths");
+    }
+
+    // ---- Pitch shifting still works ----------------------------------------
+    {
+        SamplePool pool;
+        makePool(pool, 1);
+
+        SamplerInstrument instrument;
+        instrument.attack = 0.0f;
+        SampleZone zone;
+        zone.sampleId = 0;
+        zone.rootKey = 60;
+        instrument.addZone(zone);
+
+        auto pitchOf = [&](int note) {
+            SamplerVoice voice;
+            voice.trigger(instrument, zone, pool.getSample(0), note, 1.0f,
+                          1.0f, 44100.0f);
+            const size_t N = 8192;
+            std::vector<float> re(N), im(N, 0.0f);
+            for (size_t i = 0; i < N; ++i) {
+                const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                    float(i) / float(N - 1)));
+                re[i] = voice.process() * w;
+            }
+            DSP::FFTPlan plan;
+            plan.resize(N);
+            plan.transform(re.data(), im.data());
+            const double binHz = 44100.0 / double(N);
+            size_t loudest = 0;
+            double peak = 0.0;
+            for (size_t bin = 1; bin < N / 2; ++bin) {
+                const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                                   double(im[bin]) * im[bin]);
+                if (magnitude > peak) { peak = magnitude; loudest = bin; }
+            }
+            return double(loudest) * binHz;
+        };
+
+        const double root = pitchOf(60);
+        const double octave = pitchOf(72);
+        check(std::fabs(octave / root - 2.0) < 0.05,
+              "a note an octave above the root plays an octave higher (ratio " +
+              std::to_string(octave / root) + ")");
+    }
+
+    // ---- Looping ------------------------------------------------------------
+    {
+        SamplePool pool;
+        makePool(pool, 1);
+
+        SamplerInstrument instrument;
+        instrument.attack = 0.0f;
+        instrument.release = 10.0f;
+
+        SampleZone plain;
+        plain.sampleId = 0;
+        plain.rootKey = 60;
+        instrument.addZone(plain);
+
+        SampleZone looped = plain;
+        looped.loop = true;
+        looped.loopStartSeconds = 0.1f;
+        looped.loopEndSeconds = 0.5f;
+
+        auto energyAfter = [&](const SampleZone& zone, int skip, int count) {
+            SamplerVoice voice;
+            voice.trigger(instrument, zone, pool.getSample(0), 60, 1.0f,
+                          1.0f, 44100.0f);
+            for (int i = 0; i < skip; ++i) voice.process();
+            double energy = 0.0;
+            for (int i = 0; i < count; ++i) {
+                const float v = voice.process();
+                energy += std::fabs(double(v));
+            }
+            return energy;
+        };
+
+        // The sample is one second; at 44100 that is ~44100 frames of engine
+        // time before rate conversion, fewer after. Two seconds in, a
+        // non-looping voice is done and a looping one is not.
+        check(energyAfter(plain, 88200, 4410) < 1e-3,
+              "a non-looping sample stops when it runs out");
+        check(energyAfter(looped, 88200, 4410) > 1.0,
+              "and a looping one keeps going");
+    }
+
+    // ---- The envelope stops clicks -----------------------------------------
+    {
+        SamplePool pool;
+        makePool(pool, 1);
+
+        SamplerInstrument instrument;
+        instrument.attack = 0.05f;
+        SampleZone zone;
+        zone.sampleId = 0;
+        zone.rootKey = 60;
+        instrument.addZone(zone);
+
+        SamplerVoice voice;
+        voice.trigger(instrument, zone, pool.getSample(0), 60, 1.0f, 1.0f, 44100.0f);
+
+        const float first = std::fabs(voice.process());
+        float later = 0.0f;
+        for (int i = 0; i < 4410; ++i) later = std::max(later, std::fabs(voice.process()));
+
+        check(first < later * 0.2f,
+              "the attack ramps in rather than starting at full level - a "
+              "sample that begins mid-cycle at full amplitude is a click");
+    }
+
+    {
+        // And release actually ends the voice, so it can be reclaimed.
+        SamplePool pool;
+        makePool(pool, 1);
+
+        SamplerInstrument instrument;
+        instrument.attack = 0.0f;
+        instrument.release = 0.05f;
+        SampleZone zone;
+        zone.sampleId = 0;
+        zone.rootKey = 60;
+        zone.loop = true;
+        zone.loopEndSeconds = 0.5f;
+        instrument.addZone(zone);
+
+        SamplerVoice voice;
+        voice.trigger(instrument, zone, pool.getSample(0), 60, 1.0f, 1.0f, 44100.0f);
+        for (int i = 0; i < 1000; ++i) voice.process();
+        check(voice.isPlaying(), "a looping voice keeps playing");
+
+        voice.release();
+        for (int i = 0; i < 44100; ++i) voice.process();
+        check(!voice.isPlaying(),
+              "and a released one ends, even though it is looping - otherwise "
+              "it holds a voice slot forever");
+    }
+
+    // ---- Validation ---------------------------------------------------------
+    {
+        SamplerInstrument hostile;
+        SampleZone bad;
+        bad.sampleId = 500;                 // past the end of any pool
+        bad.lowKey = 90; bad.highKey = 20;  // backwards
+        bad.lowVelocity = 0.9f; bad.highVelocity = 0.1f;
+        bad.gain = std::numeric_limits<float>::quiet_NaN();
+        bad.loopStartSeconds = 5.0f;
+        bad.loopEndSeconds = 1.0f;
+        hostile.addZone(bad);
+        hostile.zoneCount = 900;            // more zones than exist
+
+        clampSamplerInstrument(hostile, 3);
+
+        check(hostile.zoneCount <= SamplerInstrument::MAX_ZONES,
+              "an impossible zone count is bounded");
+        check(hostile.zones[0].sampleId == -1,
+              "a sample id past the end of the pool becomes none - it would "
+              "be an out-of-bounds read from the audio thread");
+        check(hostile.zones[0].lowKey <= hostile.zones[0].highKey,
+              "a backwards key range is turned the right way round");
+        check(hostile.zones[0].lowVelocity <= hostile.zones[0].highVelocity,
+              "and so is a backwards velocity range");
+        check(std::isfinite(hostile.zones[0].gain), "a NaN gain is replaced");
+        check(hostile.zones[0].loopEndSeconds == 0.0f,
+              "and a loop that ends before it starts becomes no loop point");
+    }
+
+    // ---- A zone with no sample is silence, not a crash ---------------------
+    {
+        SamplerInstrument instrument;
+        SampleZone zone;
+        zone.sampleId = -1;
+        instrument.addZone(zone);
+
+        SamplerVoice voice;
+        voice.trigger(instrument, zone, nullptr, 60, 1.0f, 1.0f, 44100.0f);
+        check(!voice.isPlaying(), "a zone with no sample does not start");
+        check(voice.process() == 0.0f, "and renders silence rather than reading null");
+    }
+}
+
+// ============================================================================
+// 68. The sampler reaches the audio and the file
+// ============================================================================
+static void testSamplerReachesAudio() {
+    beginTest("Sampler reaches the audio and the file");
+
+    // ---- A sampler channel makes the sound of its sample --------------------
+    {
+        Project p;
+        p.bpm = 120.0f;
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+        p.masterVolume = 0.7f;
+
+        Sample tone;
+        tone.name = "tone";
+        tone.sampleRate = 48000;
+        tone.rootNote = 60;
+        tone.audioData.resize(48000);
+        for (size_t i = 0; i < tone.audioData.size(); ++i) {
+            tone.audioData[i] = 0.8f * std::sin(
+                6.28318530718f * 440.0f * float(i) / 48000.0f);
+        }
+        tone.lengthSeconds = 1.0f;
+        tone.isLoaded = true;
+        const int id = p.samplePool.addSample(tone);
+        check(id >= 0, "the pool takes the sample");
+
+        p.channels[0].oscillator.type = OscillatorType::Sampler;
+        SampleZone zone;
+        zone.sampleId = id;
+        zone.rootKey = 60;
+        p.channels[0].oscillator.sampler.addZone(zone);
+        p.channels[0].oscillator.sampler.attack = 0.0f;
+        p.channels[0].volume = 0.8f;
+        p.channels[0].pan = 0.0f;
+
+        p.patterns.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = 60;
+        note.startTime = 0.0f;
+        note.duration = 2.0f;
+        note.oscillatorType = OscillatorType::Sampler;
+        pattern.notes.push_back(note);
+        p.patterns.push_back(pattern);
+
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&p);
+        seqPtr->updateChannelConfigs();
+        seqPtr->updateMasterEffects();
+        seqPtr->play();
+
+        std::vector<float> l(512), r(512);
+        double energy = 0.0;
+        for (int b = 0; b < 30; ++b) {
+            seqPtr->process(l.data(), r.data(), 512);
+            if (b >= 5) for (float v : l) energy += double(v) * v;
+        }
+        check(energy > 1e-4,
+              "a sampler channel plays its sample through the engine - "
+              "SampleOscillator was declared on Voice and triggered from "
+              "nowhere, so none of this was reachable before");
+    }
+
+    // ---- Name round trip ----------------------------------------------------
+    {
+        check(stringToOscillatorType(oscillatorTypeToString(OscillatorType::Sampler)) ==
+              OscillatorType::Sampler,
+              "the Sampler type survives a name round trip");
+    }
+
+    // ---- Zones survive a save and load --------------------------------------
+    {
+        Project p;
+        Sample tone;
+        tone.name = "tone";
+        tone.filepath = "";
+        tone.sampleRate = 48000;
+        tone.audioData.assign(1000, 0.3f);
+        tone.lengthSeconds = 1000.0f / 48000.0f;
+        tone.isLoaded = true;
+        p.samplePool.addSample(tone);
+
+        p.channels[1].oscillator.type = OscillatorType::Sampler;
+        SamplerInstrument& s = p.channels[1].oscillator.sampler;
+        s.velocityCrossfade = 0.15f;
+        s.attack = 0.02f;
+        s.release = 0.4f;
+        s.velocityToLevel = 0.6f;
+
+        SampleZone a;
+        a.sampleId = 0;
+        a.lowKey = 36; a.highKey = 59; a.rootKey = 48;
+        a.lowVelocity = 0.0f; a.highVelocity = 0.6f;
+        a.gain = 0.75f; a.pan = -0.4f; a.tuneCents = 7.0f;
+        a.loop = true; a.loopStartSeconds = 0.05f; a.loopEndSeconds = 0.4f;
+        a.roundRobinGroup = 2;
+        s.addZone(a);
+
+        SampleZone b = a;
+        b.lowKey = 60; b.highKey = 84; b.rootKey = 72;
+        b.roundRobinGroup = 0;
+        s.addZone(b);
+
+        p.arrangement.push_back(Clip{0, 1, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("sampler_roundtrip.ctp");
+        check(saveProject(p, path), "a sampler project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+
+        const SamplerInstrument& g = loaded.channels[1].oscillator.sampler;
+        check(loaded.channels[1].oscillator.type == OscillatorType::Sampler,
+              "the type survives");
+        check(g.zoneCount == 2, "both zones survive");
+        if (g.zoneCount == 2) {
+            check(g.zones[0].lowKey == 36 && g.zones[0].highKey == 59 &&
+                  g.zones[0].rootKey == 48,
+                  "with their key ranges");
+            check(std::fabs(g.zones[0].highVelocity - 0.6f) < 1e-3f,
+                  "their velocity ranges");
+            check(std::fabs(g.zones[0].gain - 0.75f) < 1e-3f &&
+                  std::fabs(g.zones[0].pan + 0.4f) < 1e-3f &&
+                  std::fabs(g.zones[0].tuneCents - 7.0f) < 1e-2f,
+                  "their gain, pan and tuning");
+            check(g.zones[0].loop &&
+                  std::fabs(g.zones[0].loopEndSeconds - 0.4f) < 1e-3f,
+                  "their loop points");
+            check(g.zones[0].roundRobinGroup == 2,
+                  "and their round-robin group");
+        }
+        check(std::fabs(g.velocityCrossfade - 0.15f) < 1e-3f &&
+              std::fabs(g.attack - 0.02f) < 1e-3f &&
+              std::fabs(g.release - 0.4f) < 1e-3f &&
+              std::fabs(g.velocityToLevel - 0.6f) < 1e-3f,
+              "and the instrument's own settings survive");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- Nothing written for a project with no sampler ---------------------
+    {
+        Project plain;
+        const std::string path = testPath("sampler_absent.ctp");
+        check(saveProject(plain, path), "a project with no sampler saves");
+
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        const std::string text = ss.str();
+        check(text.find("SAMPLER ") == std::string::npos &&
+              text.find("SZONE ") == std::string::npos,
+              "and writes no sampler lines");
+        std::remove(path.c_str());
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -10831,6 +11367,8 @@ int main(int argc, char** argv) {
     testWavetableReachesAudio();
     testFMSynth();
     testFMReachesAudio();
+    testSampler();
+    testSamplerReachesAudio();
     testLongRunStability();
 
     std::printf("\n==========================\n");

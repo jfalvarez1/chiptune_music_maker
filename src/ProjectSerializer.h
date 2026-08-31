@@ -616,6 +616,37 @@ inline bool writeProject(std::ostream& file, const Project& project) {
             file << "\n";
         }
 
+        // The multisample instrument: one line for its own settings, one
+        // per zone. Per-zone lines rather than a single enormous one so a
+        // 64-zone piano stays diffable and readable by hand, which is the
+        // entire reason this format is text.
+        if (c.oscillator.type == OscillatorType::Sampler) {
+            const SamplerInstrument& s = c.oscillator.sampler;
+            file << "SAMPLER " << ch << ' '
+                 << ctp::floatToToken(s.velocityCrossfade) << ' '
+                 << ctp::floatToToken(s.attack) << ' '
+                 << ctp::floatToToken(s.decay) << ' '
+                 << ctp::floatToToken(s.sustain) << ' '
+                 << ctp::floatToToken(s.release) << ' '
+                 << ctp::floatToToken(s.velocityToLevel) << "\n";
+
+            for (int z = 0; z < s.zoneCount; ++z) {
+                const SampleZone& zone = s.zones[static_cast<size_t>(z)];
+                file << "SZONE " << ch << ' ' << zone.sampleId << ' '
+                     << zone.lowKey << ' ' << zone.highKey << ' '
+                     << zone.rootKey << ' '
+                     << ctp::floatToToken(zone.lowVelocity) << ' '
+                     << ctp::floatToToken(zone.highVelocity) << ' '
+                     << ctp::floatToToken(zone.gain) << ' '
+                     << ctp::floatToToken(zone.pan) << ' '
+                     << ctp::floatToToken(zone.tuneCents) << ' '
+                     << (zone.loop ? 1 : 0) << ' '
+                     << ctp::floatToToken(zone.loopStartSeconds) << ' '
+                     << ctp::floatToToken(zone.loopEndSeconds) << ' '
+                     << zone.roundRobinGroup << "\n";
+            }
+        }
+
         // Sends, written only when they go somewhere.
         for (int slot = 0; slot < MAX_SENDS_PER_CHANNEL; ++slot) {
             const SendConfig& send = c.sends[static_cast<size_t>(slot)];
@@ -1035,6 +1066,36 @@ inline bool readProject(std::istream& file, Project& project) {
                         static_cast<uint8_t>(type);
                 }
                 target.fxSlotCount = count;
+            }
+        }
+        else if (cmd == "SAMPLER") {
+            int ch = -1;
+            iss >> ch;
+            if (ch >= 0 && ch < Project::MAX_CHANNELS) {
+                SamplerInstrument& s =
+                    project.channels[static_cast<size_t>(ch)].oscillator.sampler;
+                iss >> s.velocityCrossfade >> s.attack >> s.decay
+                    >> s.sustain >> s.release >> s.velocityToLevel;
+                // The zones arrive on their own lines after this one, so the
+                // count starts at zero and each SZONE appends.
+                s.zoneCount = 0;
+            }
+        }
+        else if (cmd == "SZONE") {
+            int ch = -1;
+            iss >> ch;
+            if (ch >= 0 && ch < Project::MAX_CHANNELS) {
+                SamplerInstrument& s =
+                    project.channels[static_cast<size_t>(ch)].oscillator.sampler;
+                SampleZone zone;
+                int loop = 0;
+                iss >> zone.sampleId >> zone.lowKey >> zone.highKey
+                    >> zone.rootKey >> zone.lowVelocity >> zone.highVelocity
+                    >> zone.gain >> zone.pan >> zone.tuneCents >> loop
+                    >> zone.loopStartSeconds >> zone.loopEndSeconds
+                    >> zone.roundRobinGroup;
+                zone.loop = (loop != 0);
+                s.addZone(zone);
             }
         }
         else if (cmd == "FM") {

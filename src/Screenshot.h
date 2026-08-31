@@ -219,7 +219,7 @@ struct CaptureRequest {
 //   --fx-rack            open the Effect Rack section
 //   --audio-clip         put an audio clip on the arrangement
 //   --structure          add tempo/meter changes, markers and regions
-//   --instrument <name>  fm|wavetable - put channel 0 on that engine
+//   --instrument <name>  fm|wavetable|sampler - channel 0's engine
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -625,6 +625,38 @@ inline void applyCaptureState(const CaptureRequest& request,
             project.channels[0].oscillator.wavetableBank = 0;
             project.channels[0].oscillator.wavetableMorph = 0.4f;
             project.channels[0].oscillator.wavetableMorphSweep = 0.5f;
+        } else if (request.instrument == "sampler") {
+            project.channels[0].oscillator.type = OscillatorType::Sampler;
+
+            // Two layers over two key ranges, built in memory so the shot
+            // does not depend on a fixture file. The zone rows only draw
+            // when there are zones, which is the part worth photographing.
+            for (int layer = 0; layer < 2; ++layer) {
+                Sample sample;
+                sample.name = (layer == 0) ? "piano_soft_C3.wav"
+                                           : "piano_hard_C5.wav";
+                sample.sampleRate = 48000;
+                sample.rootNote = (layer == 0) ? 48 : 72;
+                sample.audioData.resize(4800);
+                for (size_t i = 0; i < sample.audioData.size(); ++i) {
+                    const float t = float(i) / 48000.0f;
+                    sample.audioData[i] = 0.6f * std::exp(-t * 4.0f) *
+                        std::sin(6.28318530718f * (220.0f * float(layer + 1)) * t);
+                }
+                sample.lengthSeconds = 0.1f;
+                sample.isLoaded = true;
+                const int id = project.samplePool.addSample(sample);
+                if (id < 0) continue;
+
+                SampleZone zone;
+                zone.sampleId = id;
+                zone.lowKey = (layer == 0) ? 36 : 60;
+                zone.highKey = (layer == 0) ? 59 : 84;
+                zone.rootKey = sample.rootNote;
+                zone.lowVelocity = (layer == 0) ? 0.0f : 0.55f;
+                zone.highVelocity = (layer == 0) ? 0.55f : 1.0f;
+                project.channels[0].oscillator.sampler.addZone(zone);
+            }
         }
     }
 

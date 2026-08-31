@@ -19,6 +19,7 @@
 #include "Sample.h"
 #include "TempoMap.h"
 #include "FMSynth.h"
+#include "Sampler.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -131,7 +132,10 @@ enum class OscillatorType : uint8_t {
     // and per-note overrides all index it numerically, so inserting in the
     // middle silently renumbers every type after the insertion point. I put
     // it after Custom first and the palette's static_assert caught it.
-    FMSynth
+    FMSynth,
+
+    // Multisample instrument. Same rule: appended, never inserted.
+    Sampler
 };
 
 // ============================================================================
@@ -178,6 +182,13 @@ struct OscillatorConfig {
     // dereferences anything.
     FMPatch fm;
     int fmAlgorithmPreset = 0;      // index into FMAlgorithmPreset
+
+    // ---- Multisample -----------------------------------------------------
+    //
+    // Only meaningful when type == Sampler. Inline for the same reason the
+    // FM patch is: a ChannelConfig stays copyable and the audio thread never
+    // dereferences anything to reach it.
+    SamplerInstrument sampler;
 
     // General
     float detune = 0.0f;            // Cents (-100 to +100)

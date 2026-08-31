@@ -554,6 +554,7 @@ public:
 
         for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
             m_synths[ch].setWavetables(&m_wavetables);
+            m_synths[ch].setSamplePool(&m_project->samplePool);
             const auto& config = m_project->channels[ch];
             // Single sync point: oscillator, envelope, filter envelope and the
             // full per-channel effects chain (see Synthesizer::setChannelConfig).

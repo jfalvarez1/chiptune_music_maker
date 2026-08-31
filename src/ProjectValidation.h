@@ -152,7 +152,7 @@ inline void clampMacrosToValidRanges(InstrumentMacros& macros) {
     macros.rateHz = sanitizeFloat(macros.rateHz, 1.0f, 600.0f, 60.0f);
 }
 
-inline void clampChannelToValidRanges(ChannelConfig& c) {
+inline void clampChannelToValidRanges(ChannelConfig& c, int poolSize = 0) {
     // ---- Sends ---------------------------------------------------------
     //
     // A destination naming a bus this build does not have becomes no send at
@@ -220,6 +220,10 @@ inline void clampChannelToValidRanges(ChannelConfig& c) {
     c.oscillator.pulseWidth = sanitizeFloat(c.oscillator.pulseWidth, 0.01f, 0.99f, 0.5f);
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
+
+    // The multisample zones. A zone naming a sample the pool does not have
+    // would be an out-of-bounds read from the audio thread.
+    clampSamplerInstrument(c.oscillator.sampler, poolSize);
 
     // FM. The matrix is forced lower-triangular here: a cycle in it would
     // be infinite recursion in the audio thread, and there is no smaller
@@ -452,7 +456,7 @@ inline void clampProjectToValidRanges(Project& project) {
     breakRoutingCycles(project.auxBuses);
 
     for (ChannelConfig& channel : project.channels) {
-        clampChannelToValidRanges(channel);
+        clampChannelToValidRanges(channel, project.samplePool.count());
     }
 
     // Patterns
