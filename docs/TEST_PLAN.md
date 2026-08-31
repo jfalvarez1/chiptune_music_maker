@@ -48,7 +48,7 @@ cmake --build build --config Release --target ChiptuneTests
 build/bin/Release/ChiptuneTests.exe          # add --verbose for every check
 ```
 
-**2185 checks across 48 groups.** Exit code 0 = pass, 1 = failure, and every
+**2239 checks across 51 groups.** Exit code 0 = pass, 1 = failure, and every
 failure names the field or parameter involved.
 
 | Group | What it asserts |
@@ -100,6 +100,9 @@ failure names the field or parameter involved.
 | Effect rack identity | The rack in classic order is sample-identical to a frozen verbatim copy of the old fixed chain, at exact float equality, across all fourteen effects together and each alone; reordering reverb before distortion provably changes the audio; a zero-mix slot passes through; a copied chain drives its own effects rather than the original's. |
 | Effect rack stability | Under a reorder storm from a second thread: no non-finite sample and a structurally intact rack with feedback effects present, and a tight amplitude bound with them removed - the two are separated because peak amplitude under feedback depends on thread interleaving and a flaky test is worse than none. |
 | Effect rack persistence | A reordered rack round-trips; an untouched project writes no rack line at all; a v2 file migrates with every enabled effect intact and a live chain in classic order; duplicates and unknown effects are dropped; a rack that sanitises to nothing falls back to classic rather than going silent; an absurd slot count cannot walk off the array. |
+| Aux routing graph | Self-feeding buses, two-bus loops and four-bus rings are all detected; the master is always a safe destination; a cycle is reported rather than resolved into something wrong; a bus is ordered before the bus it feeds; a file carrying a loop is repaired to the master; a clean graph is left alone; a null output array is refused. |
+| Sends and buses | A send adds signal and a muted bus contributes nothing; bus volume scales the return; a pre-fader send from a SILENT channel still feeds the bus while a post-fader one sends silence; an effect on a bus strip changes the bus output; a bus feeding a bus still reaches the master; a file carrying a loop renders finite samples throughout; a send to a bus that does not exist is ignored safely. |
+| Routing persistence | Sends, sidechain bus, bus name/level/pan/output and a bus rack order all round-trip; a project with no routing writes no routing lines; a v3 file loads with no sends and every bus on the master; hostile values are clamped and impossible destinations become no send. |
 | Autosave | A clean directory offers nothing to recover; a save is loadable and complete; the previous generation is kept so a crash mid-write cannot destroy the only copy; a clean exit clears the evidence; the timer fires only when something changed; a disabled autosave never writes; an unwritable target fails quietly rather than crashing. |
 | Theme legibility | Links ImGui and calls `ApplyTheme` for real. Ten themes × seventeen surfaces = 170 contrast assertions, plus Header/Button remaining distinguishable, interactive alpha surviving the correction, no unset colour slots, and order-independence when switching themes. **This is what caught button labels at 1.22:1 in nine themes.** |
 

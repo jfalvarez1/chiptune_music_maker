@@ -271,6 +271,106 @@ inline float getDrumDecayTime(OscillatorType type) {
 // ============================================================================
 // Synthesizer (Per-channel)
 // ============================================================================
+/*
+ * Copy the effect settings of a ChannelConfig into an EffectsChain.
+ *
+ * Both Synthesizer::setChannelConfig and the aux buses call this. An aux
+ * bus strip is also a ChannelConfig, so one function configures both and
+ * there is no second path to drift - and the path that would have drifted
+ * is the bus one, because nobody looks at it.
+ *
+ * Sidechain is NOT here on purpose: it is per-channel routing rather than
+ * an effect parameter, and a bus has no sidechain source.
+ */
+inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain) {
+    // The rack order. A count of 0 is the classic order, which is also what
+    // a pre-v3 project means, so both land here identically.
+    if (config.fxSlotCount <= 0) {
+        chain.resetOrderToClassic();
+    } else {
+        EffectType slots[MAX_FX_SLOTS];
+        int count = 0;
+        for (int i = 0; i < config.fxSlotCount && i < MAX_FX_SLOTS; ++i) {
+            const uint8_t raw = config.fxOrder[static_cast<size_t>(i)];
+            if (raw < static_cast<uint8_t>(EffectType::Count)) {
+                slots[count++] = static_cast<EffectType>(raw);
+            }
+        }
+        if (count > 0) chain.setOrder(slots, count);
+        else chain.resetOrderToClassic();
+    }
+
+    chain.bitcrusherEnabled = config.bitcrusherEnabled;
+    chain.bitcrusher.bitDepth = config.bitDepth;
+    chain.bitcrusher.sampleRateReduction = config.sampleRateDiv;
+
+    chain.distortionEnabled = config.distortionEnabled;
+    chain.distortion.type = static_cast<DistortionType>(config.distortionType);
+    chain.distortion.drive = config.distortionDrive;
+    chain.distortion.mix = config.distortionMix;
+
+    chain.filterEnabled = config.filterEnabled;
+    chain.filter.type = static_cast<FilterType>(config.filterType);
+    chain.filter.cutoff = config.filterCutoff;
+    chain.filter.resonance = config.filterResonance;
+
+    chain.eqEnabled = config.eqEnabled;
+    chain.eq.lowGain = config.eqLow;
+    chain.eq.midGain = config.eqMid;
+    chain.eq.highGain = config.eqHigh;
+    chain.eq.lowFreq = config.eqLowFreq;
+    chain.eq.midFreq = config.eqMidFreq;
+    chain.eq.highFreq = config.eqHighFreq;
+
+    chain.compressorEnabled = config.compressorEnabled;
+    chain.compressor.threshold = config.compThreshold;
+    chain.compressor.ratio = config.compRatio;
+    chain.compressor.attack = config.compAttack;
+    chain.compressor.release = config.compRelease;
+    chain.compressor.makeupGain = config.compGain;
+
+    chain.formantEnabled = config.formantEnabled;
+    chain.formant.vowel = static_cast<FormantFilter::Vowel>(config.formantVowel);
+    chain.formant.resonance = config.formantResonance;
+
+    chain.delayEnabled = config.delayEnabled;
+    chain.delay.delayTime = config.delayTime;
+    chain.delay.feedback = config.delayFeedback;
+    chain.delay.mix = config.delayMix;
+
+    chain.chorusEnabled = config.chorusEnabled;
+    chain.chorus.mix = config.chorusMix;
+    chain.chorus.rate = config.chorusRate;
+    chain.chorus.depth = config.chorusDepth;
+
+    chain.flangerEnabled = config.flangerEnabled;
+    chain.flanger.rate = config.flangerRate;
+    chain.flanger.depth = config.flangerDepth;
+    chain.flanger.feedback = config.flangerFeedback;
+    chain.flanger.mix = config.flangerMix;
+
+    chain.tremoloEnabled = config.tremoloEnabled;
+    chain.tremolo.rate = config.tremoloRate;
+    chain.tremolo.depth = config.tremoloDepth;
+
+    chain.phaserEnabled = config.phaserEnabled;
+    chain.phaser.rate = config.phaserRate;
+    chain.phaser.depth = config.phaserDepth;
+    chain.phaser.feedback = config.phaserFeedback;
+
+    chain.reverbEnabled = config.reverbEnabled;
+    chain.reverb.mix = config.reverbMix;
+    chain.reverb.roomSize = config.reverbRoomSize;
+    chain.reverb.damping = config.reverbDamping;
+
+    chain.stereoWidenerEnabled = config.stereoWidenerEnabled;
+    chain.stereoWidener.width = config.stereoWidenerWidth;
+    chain.stereoWidener.haasDelay = config.stereoWidenerHaas;
+    chain.stereoWidener.mix = config.stereoWidenerMix;
+
+    chain.tapeSaturationEnabled = config.tapeSaturationEnabled;
+}
+
 class Synthesizer {
 public:
     static constexpr int MAX_VOICES = 8;  // Polyphony
@@ -303,100 +403,15 @@ public:
         m_filterEnvAttack = config.filterEnvAttack;
         m_filterEnvDecay = config.filterEnvDecay;
         
-        // Effects
-        // The rack order. A count of 0 is the classic order, which is
-        // also what a pre-v3 project means, so both land here identically.
-        if (config.fxSlotCount <= 0) {
-            m_effects.resetOrderToClassic();
-        } else {
-            EffectType slots[MAX_FX_SLOTS];
-            int count = 0;
-            for (int i = 0; i < config.fxSlotCount && i < MAX_FX_SLOTS; ++i) {
-                const uint8_t raw = config.fxOrder[static_cast<size_t>(i)];
-                if (raw < static_cast<uint8_t>(EffectType::Count)) {
-                    slots[count++] = static_cast<EffectType>(raw);
-                }
-            }
-            if (count > 0) m_effects.setOrder(slots, count);
-            else m_effects.resetOrderToClassic();
-        }
+        // Effects. One shared path with the aux buses, so the two cannot
+        // drift; sidechain stays here because it is per-channel routing
+        // rather than an effect parameter.
+        applyEffectsConfig(config, m_effects);
 
-        m_effects.bitcrusherEnabled = config.bitcrusherEnabled;
-        m_effects.bitcrusher.bitDepth = config.bitDepth;
-        m_effects.bitcrusher.sampleRateReduction = config.sampleRateDiv;
-        
-        m_effects.distortionEnabled = config.distortionEnabled;
-        m_effects.distortion.type = static_cast<DistortionType>(config.distortionType);
-        m_effects.distortion.drive = config.distortionDrive;
-        m_effects.distortion.mix = config.distortionMix;
-        
-        m_effects.filterEnabled = config.filterEnabled;
-        m_effects.filter.type = static_cast<FilterType>(config.filterType);
-        m_effects.filter.cutoff = config.filterCutoff;
-        m_effects.filter.resonance = config.filterResonance;
-        
-        m_effects.eqEnabled = config.eqEnabled;
-        m_effects.eq.lowGain = config.eqLow;
-        m_effects.eq.midGain = config.eqMid;
-        m_effects.eq.highGain = config.eqHigh;
-        m_effects.eq.lowFreq = config.eqLowFreq;
-        m_effects.eq.midFreq = config.eqMidFreq;
-        m_effects.eq.highFreq = config.eqHighFreq;
-        
-        m_effects.compressorEnabled = config.compressorEnabled;
-        m_effects.compressor.threshold = config.compThreshold;
-        m_effects.compressor.ratio = config.compRatio;
-        m_effects.compressor.attack = config.compAttack;
-        m_effects.compressor.release = config.compRelease;
-        m_effects.compressor.makeupGain = config.compGain;
-        
-        m_effects.formantEnabled = config.formantEnabled;
-        m_effects.formant.vowel = static_cast<FormantFilter::Vowel>(config.formantVowel);
-        m_effects.formant.resonance = config.formantResonance;
-        
-        m_effects.delayEnabled = config.delayEnabled;
-        m_effects.delay.delayTime = config.delayTime;
-        m_effects.delay.feedback = config.delayFeedback;
-        m_effects.delay.mix = config.delayMix;
-        
-        m_effects.chorusEnabled = config.chorusEnabled;
-        m_effects.chorus.mix = config.chorusMix;
-        m_effects.chorus.rate = config.chorusRate;
-        m_effects.chorus.depth = config.chorusDepth;
-
-        m_effects.flangerEnabled = config.flangerEnabled;
-        m_effects.flanger.rate = config.flangerRate;
-        m_effects.flanger.depth = config.flangerDepth;
-        m_effects.flanger.feedback = config.flangerFeedback;
-        m_effects.flanger.mix = config.flangerMix;
-
-        m_effects.tremoloEnabled = config.tremoloEnabled;
-        m_effects.tremolo.rate = config.tremoloRate;
-        m_effects.tremolo.depth = config.tremoloDepth;
-        
-        m_effects.phaserEnabled = config.phaserEnabled;
-        m_effects.phaser.rate = config.phaserRate;
-        m_effects.phaser.depth = config.phaserDepth;
-        m_effects.phaser.feedback = config.phaserFeedback;
-        
         m_effects.sidechainEnabled = config.sidechainEnabled;
-        // Without the source channel the sequencer's sidechain pass is skipped
-        // entirely, so the whole effect silently does nothing.
         m_effects.sidechainSource = config.sidechainSource;
         m_effects.sidechain.amount = config.sidechainAmount;
         m_effects.sidechain.release = config.sidechainRelease;
-        
-        m_effects.reverbEnabled = config.reverbEnabled;
-        m_effects.reverb.mix = config.reverbMix;
-        m_effects.reverb.roomSize = config.reverbRoomSize;
-        m_effects.reverb.damping = config.reverbDamping;
-        
-        m_effects.stereoWidenerEnabled = config.stereoWidenerEnabled;
-        m_effects.stereoWidener.width = config.stereoWidenerWidth;
-        m_effects.stereoWidener.haasDelay = config.stereoWidenerHaas;
-        m_effects.stereoWidener.mix = config.stereoWidenerMix;
-        
-        m_effects.tapeSaturationEnabled = config.tapeSaturationEnabled;
         m_effects.tapeSaturation.drive = config.tapeDrive;
         m_effects.tapeSaturation.warmth = config.tapeWarmth;
         m_effects.tapeSaturation.compression = config.tapeCompression;

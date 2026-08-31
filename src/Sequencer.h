@@ -9,6 +9,7 @@
 
 #include "Types.h"
 #include "ChipMix.h"
+#include "Routing.h"
 #include "LoopRange.h"
 #include "NoteEvents.h"
 #include "Synthesizer.h"
@@ -224,10 +225,21 @@ public:
             // Pass 2: Update sidechain envelopes and apply sidechain compression
             for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
                 auto& fx = m_synths[ch].effects();
-                if (fx.sidechainEnabled && fx.sidechainSource >= 0 && fx.sidechainSource < MAX_CHANNELS) {
-                    // Update envelope from source channel
+                if (!fx.sidechainEnabled) continue;
+
+                // A bus source wins when set; otherwise the legacy channel
+                // tap, which is how every pre-v4 project works.
+                //
+                // The bus value is last sample's sum: sends are accumulated
+                // during the channel loop below, and using this sample's
+                // value would need a second pass over every channel. 23
+                // microseconds at 44.1 kHz, against a real ordering problem.
+                const int busSource = m_project->channels[ch].sidechainBus;
+                if (busSource >= 0 && busSource < Project::MAX_AUX_BUSES) {
+                    fx.sidechain.updateEnvelope(m_auxPrevious[static_cast<size_t>(busSource)]);
+                    channelSamples[ch] = fx.sidechain.process(channelSamples[ch]);
+                } else if (fx.sidechainSource >= 0 && fx.sidechainSource < MAX_CHANNELS) {
                     fx.sidechain.updateEnvelope(channelSamples[fx.sidechainSource]);
-                    // Apply sidechain compression to this channel
                     channelSamples[ch] = fx.sidechain.process(channelSamples[ch]);
                 }
             }
@@ -310,6 +322,24 @@ public:
                     peak = (magnitude > peak) ? magnitude : peak * 0.9995f;
                 }
 
+                // Sends: a copy of this channel into a bus, at its own
+                // level. Pre-fader takes it before the channel's volume, so
+                // pulling the channel down leaves the send standing - which
+                // is how a dry signal fades into its own reverb tail.
+                for (int slot = 0; slot < MAX_SENDS_PER_CHANNEL; ++slot) {
+                    const SendConfig& send =
+                        m_project->channels[ch].sends[static_cast<size_t>(slot)];
+                    if (send.destination < 0 ||
+                        send.destination >= Project::MAX_AUX_BUSES) {
+                        continue;
+                    }
+                    if (send.level <= 0.0f) continue;
+
+                    const float tap = send.preFader ? sample : (sample * volume);
+                    m_auxAccum[static_cast<size_t>(send.destination)] +=
+                        tap * send.level;
+                }
+
                 auto& fx = m_synths[ch].effects();
                 if (fx.stereoWidenerEnabled) {
                     auto [wideL, wideR] = fx.stereoWidener.process(sample);
@@ -320,6 +350,37 @@ public:
                     right += sample * rightGain;
                 }
             }
+
+            // ---- Aux buses --------------------------------------------------
+            //
+            // Walked in the precomputed order, so a bus always runs after
+            // everything feeding it. No graph traversal here.
+            for (int slot = 0; slot < m_busOrderCount; ++slot) {
+                const int bus = m_busOrder[static_cast<size_t>(slot)];
+                if (bus < 0 || bus >= Project::MAX_AUX_BUSES) continue;
+
+                const AuxBusConfig& config =
+                    m_project->auxBuses[static_cast<size_t>(bus)];
+
+                float busSample = m_auxAccum[static_cast<size_t>(bus)];
+                busSample = m_auxChains[static_cast<size_t>(bus)].process(busSample,
+                                                                          m_state.currentTime);
+                if (config.muted) busSample = 0.0f;
+                busSample *= config.volume;
+
+                if (config.output >= 0 && config.output < Project::MAX_AUX_BUSES &&
+                    config.output != bus) {
+                    m_auxAccum[static_cast<size_t>(config.output)] += busSample;
+                } else {
+                    const float busPan = config.pan;
+                    left += busSample * std::cos((busPan + 1.0f) * 0.25f * PI);
+                    right += busSample * std::sin((busPan + 1.0f) * 0.25f * PI);
+                }
+            }
+
+            // Kept for next sample's bus sidechaining, then cleared.
+            m_auxPrevious = m_auxAccum;
+            m_auxAccum.fill(0.0f);
 
             // The console's own output filters, applied before the master
             // bus: on hardware these are the last thing between the APU and
@@ -439,6 +500,22 @@ public:
             // Single sync point: oscillator, envelope, filter envelope and the
             // full per-channel effects chain (see Synthesizer::setChannelConfig).
             m_synths[ch].setChannelConfig(config);
+        }
+
+        // Aux buses. Their strips are ChannelConfigs, so the same rack sync
+        // the channels use configures them - one code path, not two.
+        for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
+            applyEffectsConfig(m_project->auxBuses[static_cast<size_t>(bus)].strip,
+                               m_auxChains[static_cast<size_t>(bus)]);
+            m_auxChains[static_cast<size_t>(bus)].setSampleRate(m_sampleRate);
+        }
+
+        // Resolve the routing graph here, on the UI thread, so the audio
+        // thread only ever walks a precomputed order. A file carrying a
+        // loop is repaired rather than trusted.
+        if (!computeBusOrder(m_project->auxBuses, m_busOrder.data(), m_busOrderCount)) {
+            breakRoutingCycles(m_project->auxBuses);
+            computeBusOrder(m_project->auxBuses, m_busOrder.data(), m_busOrderCount);
         }
     }
 
@@ -896,6 +973,18 @@ private:
     Project* m_project = nullptr;
     PlaybackState m_state;
     uint32_t m_loopPass = 0;
+
+    // ---- Aux buses -------------------------------------------------------
+    //
+    // The chains are full EffectsChains, so a bus gets the whole Task A rack.
+    // The order is resolved when configs change, never in the callback.
+    std::array<EffectsChain, Project::MAX_AUX_BUSES> m_auxChains;
+    std::array<float, Project::MAX_AUX_BUSES> m_auxAccum{};
+    // Last sample's bus sums, for sidechaining off a bus without needing a
+    // second pass over every channel.
+    std::array<float, Project::MAX_AUX_BUSES> m_auxPrevious{};
+    std::array<int, Project::MAX_AUX_BUSES> m_busOrder{};
+    int m_busOrderCount = 0;
 
     ChipFilterChain m_chipFilter;
     ChipFilterChain::Mode m_chipFilterMode = ChipFilterChain::Mode::NES;

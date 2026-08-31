@@ -266,6 +266,23 @@ struct Pattern {
 // ============================================================================
 // Channel Configuration
 // ============================================================================
+// How many sends a channel can carry. Two covers the common case - a
+// reverb and a delay - without making the mixer strip unreadable.
+inline constexpr int MAX_SENDS_PER_CHANNEL = 2;
+
+/*
+ * A copy of a channel's signal, delivered to an aux bus at its own level.
+ *
+ * Pre-fader means the send is taken before the channel's volume, so pulling
+ * the channel down leaves the send at full level - the usual way to fade a
+ * dry signal into its own reverb tail.
+ */
+struct SendConfig {
+    int destination = -1;    // aux bus index; -1 = no send
+    float level = 0.0f;      // 0..1
+    bool preFader = false;
+};
+
 // Capacity of a channel's insert rack. Lives here because ChannelConfig
 // carries the order and Types.h is below Effects.h; EffectsChain static_asserts
 // that its own MAX_SLOTS agrees with this.
@@ -380,6 +397,15 @@ struct ChannelConfig {
     float eqLowFreq = 200.0f;
     float eqMidFreq = 1000.0f;
     float eqHighFreq = 5000.0f;
+
+    // Sends to the aux buses. Silent by default: a project that has never
+    // heard of sends behaves exactly as it did.
+    std::array<SendConfig, MAX_SENDS_PER_CHANNEL> sends{};
+
+    // Sidechain from an aux bus rather than by tapping a channel directly.
+    // -1 keeps the legacy channel tap in sidechainSource, which is how every
+    // pre-v4 project works and must keep working.
+    int sidechainBus = -1;
 
     // Insert-rack order, as EffectType indices.
     //
@@ -764,6 +790,29 @@ struct AutomationLane {
 // ============================================================================
 // Project State
 // ============================================================================
+/*
+ * An aux bus: sums the sends pointed at it, runs its own insert rack, and
+ * feeds the master or another bus.
+ *
+ * `strip` is a full ChannelConfig, which is more than a bus needs - the
+ * oscillator, envelope and macro fields are meaningless here. It is
+ * deliberate: it buys the entire Task A insert rack, the serialization
+ * machinery and the config-to-chain sync with no second code path that
+ * could drift from the channel one.
+ */
+struct AuxBusConfig {
+    std::string name = "Aux";
+    float volume = 0.8f;
+    float pan = 0.0f;
+    bool muted = false;
+
+    // -1 = master. Anything else is another aux index, which is why
+    // Routing.h exists.
+    int output = -1;
+
+    ChannelConfig strip;
+};
+
 struct Project {
     static constexpr int MAX_CHANNELS = 8;
     static constexpr int MAX_PATTERNS = 64;
@@ -805,6 +854,11 @@ struct Project {
     float humanizeVelocity = 0.1f;  // Humanize velocity variation (0.0 to 1.0)
 
     std::array<ChannelConfig, MAX_CHANNELS> channels;
+
+    // Four aux buses. Empty and routed to the master by default, so a
+    // project that never touches them mixes exactly as it did before.
+    static constexpr int MAX_AUX_BUSES = 4;
+    std::array<AuxBusConfig, MAX_AUX_BUSES> auxBuses;
     std::vector<Pattern> patterns;
     std::vector<Clip> arrangement;
     std::vector<AutomationLane> automationLanes;  // Parameter automation

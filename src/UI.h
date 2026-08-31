@@ -26,6 +26,7 @@
 #include "GenreKits.h"
 #include "GroovePresets.h"
 #include "Tutorial.h"
+#include "Routing.h"
 #include "Sequencer.h"
 #include "Widgets.h"
 #include "FileIO.h"
@@ -5117,6 +5118,70 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
         // impose on a project that is not trying to be a NES.
         // ------------------------------------------------------------------
         if (g_ExpandChipAccuracy) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    // ------------------------------------------------------------------
+    // Aux buses
+    //
+    // Here rather than in a new dockable window on purpose: a new panel
+    // needs a Layout.h slot AND a row in AdoptOrphanedWindows, and
+    // forgetting the second is what left this very panel floating over the
+    // left column. Routing is mixing.
+    // ------------------------------------------------------------------
+    if (ImGui::CollapsingHeader("Aux Buses")) {
+        ImGui::TextDisabled("Channels send here; buses feed the master.");
+
+        for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
+            AuxBusConfig& busConfig = project.auxBuses[static_cast<size_t>(bus)];
+            ImGui::PushID(2000 + bus);
+
+            char nameBuffer[64];
+            snprintf(nameBuffer, sizeof(nameBuffer), "%s", busConfig.name.c_str());
+            ImGui::SetNextItemWidth(100);
+            if (ImGui::InputText("##busname", nameBuffer, sizeof(nameBuffer))) {
+                busConfig.name = nameBuffer;
+            }
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90);
+            ImGui::SliderFloat("##busvol", &busConfig.volume, 0.0f, 1.5f, "%.2f");
+
+            ImGui::SameLine();
+            bool busMuted = busConfig.muted;
+            if (ImGui::Checkbox("M", &busMuted)) busConfig.muted = busMuted;
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(95);
+            const char* outLabel = (busConfig.output < 0)
+                ? "master"
+                : project.auxBuses[static_cast<size_t>(busConfig.output)].name.c_str();
+            if (ImGui::BeginCombo("##busout", outLabel)) {
+                if (ImGui::Selectable("master", busConfig.output < 0)) {
+                    busConfig.output = ROUTE_TO_MASTER;
+                }
+                for (int target = 0; target < Project::MAX_AUX_BUSES; ++target) {
+                    if (target == bus) continue;
+
+                    // Refused here, so an impossible routing is never
+                    // written down at all.
+                    const bool loops = wouldCreateCycle(project.auxBuses, bus, target);
+                    if (loops) ImGui::BeginDisabled();
+                    if (ImGui::Selectable(
+                            project.auxBuses[static_cast<size_t>(target)].name.c_str(),
+                            busConfig.output == target)) {
+                        busConfig.output = target;
+                    }
+                    if (loops) ImGui::EndDisabled();
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Where this bus goes. Destinations that would\n"
+                                  "feed it back into itself are greyed out.");
+            }
+
+            ImGui::PopID();
+        }
+    }
+
     if (ImGui::CollapsingHeader("Chip Accuracy")) {
             ImGui::Checkbox("Non-linear mixing", &project.chipMixEnabled);
             if (ImGui::IsItemHovered()) {
@@ -8974,6 +9039,80 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
     }
 
     // Effects
+    if (ImGui::CollapsingHeader("Sends")) {
+        ChannelConfig& sendChannel = project.channels[ui.selectedChannel];
+
+        ImGui::TextDisabled("A copy of this channel, sent to a bus.");
+
+        for (int slot = 0; slot < MAX_SENDS_PER_CHANNEL; ++slot) {
+            SendConfig& send = sendChannel.sends[static_cast<size_t>(slot)];
+            ImGui::PushID(1000 + slot);
+
+            const char* label = (send.destination < 0)
+                ? "off"
+                : project.auxBuses[static_cast<size_t>(send.destination)].name.c_str();
+
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::BeginCombo("##senddest", label)) {
+                if (ImGui::Selectable("off", send.destination < 0)) {
+                    send.destination = -1;
+                }
+                for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
+                    if (ImGui::Selectable(
+                            project.auxBuses[static_cast<size_t>(bus)].name.c_str(),
+                            send.destination == bus)) {
+                        send.destination = bus;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            ImGui::SliderFloat("##sendlevel", &send.level, 0.0f, 1.0f, "%.2f");
+
+            ImGui::SameLine();
+            bool pre = send.preFader;
+            if (ImGui::Checkbox("pre", &pre)) send.preFader = pre;
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Take the send before this channel's volume,\n"
+                                  "so pulling the channel down leaves the send\n"
+                                  "standing - how a dry signal fades into its\n"
+                                  "own reverb tail.");
+            }
+
+            ImGui::PopID();
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Sidechain source");
+        ImGui::SetNextItemWidth(160);
+        {
+            const char* scLabel = (sendChannel.sidechainBus >= 0)
+                ? project.auxBuses[static_cast<size_t>(sendChannel.sidechainBus)].name.c_str()
+                : "channel tap (legacy)";
+            if (ImGui::BeginCombo("##scbus", scLabel)) {
+                if (ImGui::Selectable("channel tap (legacy)",
+                                      sendChannel.sidechainBus < 0)) {
+                    sendChannel.sidechainBus = -1;
+                }
+                for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
+                    if (ImGui::Selectable(
+                            project.auxBuses[static_cast<size_t>(bus)].name.c_str(),
+                            sendChannel.sidechainBus == bus)) {
+                        sendChannel.sidechainBus = bus;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Duck this channel from a bus's signal.\n"
+                              "The legacy option taps one channel directly,\n"
+                              "which is how projects before v4 work.");
+        }
+    }
+
     if (g_ExpandEffectRack) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
     if (ImGui::CollapsingHeader("Effect Rack")) {
         auto& rackFx = seq.getSynth(ui.selectedChannel).effects();

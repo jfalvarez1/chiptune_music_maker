@@ -31,6 +31,7 @@
 #include <istream>
 #include <ostream>
 #include <sstream>
+#include <cstdlib>
 #include <iomanip>
 #include <string>
 #include <vector>
@@ -45,7 +46,13 @@ namespace ctp {
 // count of 0 means the classic order, which is what every v1 and v2 file
 // implies, so an old project cannot be misread. The old *On flags are still
 // written too, so a v3 file also still loads in a 3.6 binary.
-inline constexpr int FORMAT_VERSION = 3;
+// v4 added sends and aux buses.
+//
+// Migration is a no-op by construction, like v3's: a send destination of -1
+// is no send and a bus output of -1 is the master, and both are the
+// defaults - which is precisely what a pre-v4 file means. A project that
+// never touches routing writes no new lines at all.
+inline constexpr int FORMAT_VERSION = 4;
 
 // ============================================================================
 // Field tables
@@ -498,6 +505,18 @@ inline bool writeProject(std::ostream& file, const Project& project) {
 
         file << "\n";
 
+        // Sends, written only when they go somewhere.
+        for (int slot = 0; slot < MAX_SENDS_PER_CHANNEL; ++slot) {
+            const SendConfig& send = c.sends[static_cast<size_t>(slot)];
+            if (send.destination < 0) continue;
+            file << "SEND " << ch << ' ' << slot << ' ' << send.destination
+                 << ' ' << ctp::floatToToken(send.level)
+                 << ' ' << (send.preFader ? 1 : 0) << "\n";
+        }
+        if (c.sidechainBus >= 0) {
+            file << "SCBUS " << ch << ' ' << c.sidechainBus << "\n";
+        }
+
         // The insert-rack order, written only when it is not the classic
         // one - so a project nobody reordered produces the same bytes it
         // did before v3.
@@ -519,6 +538,52 @@ inline bool writeProject(std::ostream& file, const Project& project) {
         ctp::writeMacro(file, ch, "pitch", c.macros.pitch,    c.macros.rateHz);
     }
     file << "\n";
+
+    // Aux buses. Written only when a bus differs from its default, so a
+    // project that never opened the routing panel is byte-identical to one
+    // written before v4.
+    {
+        const AuxBusConfig busDefaults;
+        for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
+            const AuxBusConfig& b = project.auxBuses[static_cast<size_t>(bus)];
+
+            const bool headerDiffers =
+                b.name != busDefaults.name ||
+                b.volume != busDefaults.volume ||
+                b.pan != busDefaults.pan ||
+                b.muted != busDefaults.muted ||
+                b.output != busDefaults.output;
+
+            std::ostringstream fxTokens;
+            ctp::writeFloats(fxTokens, b.strip, busDefaults.strip, ctp::CHANNEL_FLOATS);
+            ctp::writeInts(fxTokens, b.strip, busDefaults.strip, ctp::CHANNEL_INTS);
+            ctp::writeBools(fxTokens, b.strip, busDefaults.strip, ctp::CHANNEL_BOOLS);
+            const std::string fx = fxTokens.str();
+
+            const bool orderDiffers = b.strip.fxSlotCount > 0;
+
+            if (!headerDiffers && fx.empty() && !orderDiffers) continue;
+
+            file << "AUXBUS " << bus << ' ' << ctp::quote(b.name)
+                 << " out=" << b.output
+                 << " vol=" << ctp::floatToToken(b.volume)
+                 << " pan=" << ctp::floatToToken(b.pan)
+                 << " mute=" << (b.muted ? 1 : 0) << "\n";
+
+            if (!fx.empty()) {
+                file << "AUXFX " << bus << fx << "\n";
+            }
+            if (orderDiffers) {
+                file << "AUXORDER " << bus;
+                for (int slot = 0; slot < b.strip.fxSlotCount && slot < MAX_FX_SLOTS; ++slot) {
+                    const uint8_t raw = b.strip.fxOrder[static_cast<size_t>(slot)];
+                    if (raw >= static_cast<uint8_t>(EffectType::Count)) continue;
+                    file << ' ' << effectTypeId(static_cast<EffectType>(raw));
+                }
+                file << "\n";
+            }
+        }
+    }
 
     // Patterns
     for (const Pattern& pattern : project.patterns) {
@@ -702,6 +767,76 @@ inline bool readProject(std::istream& file, Project& project) {
         }
         else if (cmd == "END_PATTERN") {
             currentPattern = nullptr;
+        }
+        else if (cmd == "SEND") {
+            int channel = -1, slot = -1, destination = -1, pre = 0;
+            float level = 0.0f;
+            iss >> channel >> slot >> destination >> level >> pre;
+            if (channel >= 0 && channel < Project::MAX_CHANNELS &&
+                slot >= 0 && slot < MAX_SENDS_PER_CHANNEL) {
+                SendConfig& send =
+                    project.channels[static_cast<size_t>(channel)].sends[static_cast<size_t>(slot)];
+                send.destination = destination;
+                send.level = level;
+                send.preFader = (pre != 0);
+            }
+        }
+        else if (cmd == "SCBUS") {
+            int channel = -1, bus = -1;
+            iss >> channel >> bus;
+            if (channel >= 0 && channel < Project::MAX_CHANNELS) {
+                project.channels[static_cast<size_t>(channel)].sidechainBus = bus;
+            }
+        }
+        else if (cmd == "AUXBUS") {
+            int index = -1;
+            iss >> index;
+            if (index >= 0 && index < Project::MAX_AUX_BUSES) {
+                AuxBusConfig& b = project.auxBuses[static_cast<size_t>(index)];
+
+                size_t pos = 0;
+                b.name = ctp::unquote(line, pos);
+
+                std::istringstream rest(line.substr(pos));
+                std::string token, key, value;
+                while (rest >> token) {
+                    if (!ctp::splitToken(token, key, value)) continue;
+                    if (key == "out")       b.output = std::atoi(value.c_str());
+                    else if (key == "vol")  b.volume = std::strtof(value.c_str(), nullptr);
+                    else if (key == "pan")  b.pan = std::strtof(value.c_str(), nullptr);
+                    else if (key == "mute") b.muted = (value == "1");
+                }
+            }
+        }
+        else if (cmd == "AUXFX") {
+            int index = -1;
+            iss >> index;
+            if (index >= 0 && index < Project::MAX_AUX_BUSES) {
+                ChannelConfig& strip = project.auxBuses[static_cast<size_t>(index)].strip;
+                std::string token, key, value;
+                while (iss >> token) {
+                    if (!ctp::splitToken(token, key, value)) continue;
+                    ctp::applyFloat(strip, key, value, ctp::CHANNEL_FLOATS) ||
+                    ctp::applyInt(strip, key, value, ctp::CHANNEL_INTS) ||
+                    ctp::applyBool(strip, key, value, ctp::CHANNEL_BOOLS);
+                }
+            }
+        }
+        else if (cmd == "AUXORDER") {
+            int index = -1;
+            iss >> index;
+            if (index >= 0 && index < Project::MAX_AUX_BUSES) {
+                ChannelConfig& strip = project.auxBuses[static_cast<size_t>(index)].strip;
+                int count = 0;
+                std::string token;
+                while ((iss >> token) && count < MAX_FX_SLOTS) {
+                    EffectType type;
+                    if (!effectTypeFromId(token.c_str(), type)) continue;
+                    strip.fxOrder[static_cast<size_t>(count++)] =
+                        static_cast<uint8_t>(type);
+                }
+                strip.fxSlotCount = count;
+            }
         }
         else if (cmd == "FXORDER") {
             // Carries its own channel index rather than relying on read

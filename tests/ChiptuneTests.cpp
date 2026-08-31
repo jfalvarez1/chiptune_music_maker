@@ -38,6 +38,7 @@
 #include "Version.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
+#include "Routing.h"
 #include <thread>
 #include "UndoHistory.h"
 
@@ -7114,6 +7115,495 @@ static void testEffectRackPersistence() {
 }
 
 // ============================================================================
+// 50. The routing graph
+// ============================================================================
+static void testRoutingGraph() {
+    beginTest("Aux routing graph");
+
+    using Buses = std::array<AuxBusConfig, Project::MAX_AUX_BUSES>;
+
+    // ---- Cycle detection --------------------------------------------------
+    {
+        Buses buses;   // all default to master
+
+        check(!wouldCreateCycle(buses, 0, ROUTE_TO_MASTER),
+              "routing a bus to the master can never loop");
+        check(!wouldCreateCycle(buses, 0, 1),
+              "routing bus 0 into bus 1 is fine when 1 goes to master");
+        check(wouldCreateCycle(buses, 0, 0),
+              "a bus feeding itself is a loop");
+
+        // 1 -> 2 already; now try 2 -> 1.
+        buses[1].output = 2;
+        check(wouldCreateCycle(buses, 2, 1),
+              "closing a two-bus loop is caught");
+        check(!wouldCreateCycle(buses, 3, 1),
+              "but an unrelated bus joining the chain is not a loop");
+
+        // A longer chain: 0 -> 1 -> 2 -> 3, then 3 -> 0.
+        Buses chain;
+        chain[0].output = 1;
+        chain[1].output = 2;
+        chain[2].output = 3;
+        check(wouldCreateCycle(chain, 3, 0),
+              "a four-bus loop is caught too");
+        check(!wouldCreateCycle(chain, 3, ROUTE_TO_MASTER),
+              "and the master is still always safe");
+
+        // Out-of-range destinations are not cycles; validation drops them.
+        check(!wouldCreateCycle(buses, 0, 99), "an absurd destination is not a cycle");
+        check(!wouldCreateCycle(buses, 99, 0), "nor is an absurd source");
+    }
+
+    // ---- Processing order -------------------------------------------------
+    {
+        Buses buses;
+        int order[Project::MAX_AUX_BUSES];
+        int count = 0;
+
+        check(computeBusOrder(buses, order, count),
+              "a graph where every bus feeds the master resolves");
+        check(count == Project::MAX_AUX_BUSES, "with every bus placed");
+
+        // 0 -> 1 means 0 must run before 1.
+        buses[0].output = 1;
+        check(computeBusOrder(buses, order, count), "a chained graph resolves");
+
+        int posZero = -1, posOne = -1;
+        for (int i = 0; i < count; ++i) {
+            if (order[i] == 0) posZero = i;
+            if (order[i] == 1) posOne = i;
+        }
+        check(posZero >= 0 && posOne >= 0 && posZero < posOne,
+              "a bus is processed before the bus it feeds - otherwise its "
+              "signal would arrive a sample late, every sample");
+
+        // A cycle must be reported, not walked.
+        Buses looped;
+        looped[0].output = 1;
+        looped[1].output = 0;
+        check(!computeBusOrder(looped, order, count),
+              "a cycle is reported rather than resolved into something wrong");
+    }
+
+    // ---- Repairing a file that already loops -------------------------------
+    {
+        Buses looped;
+        looped[0].output = 1;
+        looped[1].output = 0;
+
+        const int repaired = breakRoutingCycles(looped);
+        check(repaired > 0, "a loop in a file is repaired (" +
+              std::to_string(repaired) + " bus(es))");
+
+        int order[Project::MAX_AUX_BUSES];
+        int count = 0;
+        check(computeBusOrder(looped, order, count),
+              "and the graph resolves afterwards");
+    }
+
+    {
+        Buses selfFed;
+        selfFed[2].output = 2;
+        check(breakRoutingCycles(selfFed) > 0, "a self-feeding bus is repaired");
+        check(selfFed[2].output == ROUTE_TO_MASTER, "by routing it to the master");
+    }
+
+    {
+        Buses bogus;
+        bogus[0].output = 77;
+        check(breakRoutingCycles(bogus) > 0, "an out-of-range output is repaired");
+        check(bogus[0].output == ROUTE_TO_MASTER, "to the master");
+    }
+
+    {
+        // Every bus in one long cycle: 0->1->2->3->0.
+        Buses ring;
+        ring[0].output = 1;
+        ring[1].output = 2;
+        ring[2].output = 3;
+        ring[3].output = 0;
+
+        check(breakRoutingCycles(ring) > 0, "a full ring is repaired");
+        int order[Project::MAX_AUX_BUSES];
+        int count = 0;
+        check(computeBusOrder(ring, order, count), "and resolves");
+    }
+
+    {
+        Buses clean;
+        check(breakRoutingCycles(clean) == 0,
+              "a graph with nothing wrong is left completely alone");
+    }
+
+    // ---- Hygiene ----------------------------------------------------------
+    {
+        Buses buses;
+        int count = 0;
+        check(!computeBusOrder(buses, nullptr, count),
+              "a null output array is refused rather than written through");
+    }
+}
+
+// ============================================================================
+// 51. Sends and buses reach the audio
+// ============================================================================
+static void testSendsAndBuses() {
+    beginTest("Sends and aux buses");
+
+    // A send that changes nothing audible is a send that does not exist, so
+    // every one of these renders and measures.
+
+    auto render = [](void (*configure)(Project&), int blocks) {
+        Project p;
+        p.bpm = 120.0f;
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+        p.patterns.clear();
+        p.arrangement.clear();
+
+        Pattern pat;
+        Note n;
+        n.pitch = 69;
+        n.startTime = 0.0f;
+        n.duration = 4.0f;
+        n.oscillatorType = OscillatorType::Pulse;
+        pat.notes.push_back(n);
+        p.patterns.push_back(pat);
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 8.0f, 0});
+        p.channels[0].volume = 0.5f;
+
+        if (configure) configure(p);
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.updateChannelConfigs();
+        seq.play();
+
+        std::vector<float> l(512), r(512);
+        double energy = 0.0;
+        int counted = 0;
+        for (int b = 0; b < blocks; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            if (b >= 10) {
+                for (float v : l) { energy += double(v) * double(v); ++counted; }
+            }
+        }
+        return (counted > 0) ? std::sqrt(energy / counted) : 0.0;
+    };
+
+    // ---- A send adds signal -----------------------------------------------
+    {
+        const double dry = render(nullptr, 60);
+        const double sent = render([](Project& p) {
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+        }, 60);
+
+        check(dry > 1e-4, "the dry channel renders");
+        check(sent > dry * 1.2,
+              "a send to a bus adds that bus's output to the master (dry " +
+              std::to_string(dry) + " vs sent " + std::to_string(sent) + ")");
+    }
+
+    // ---- A muted bus contributes nothing -----------------------------------
+    {
+        const double dry = render(nullptr, 60);
+        const double muted = render([](Project& p) {
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+            p.auxBuses[0].muted = true;
+        }, 60);
+
+        check(std::fabs(muted - dry) < dry * 0.05,
+              "a muted bus contributes nothing, leaving just the dry channel");
+    }
+
+    // ---- Bus volume scales it ---------------------------------------------
+    {
+        const double full = render([](Project& p) {
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+            p.auxBuses[0].volume = 1.0f;
+        }, 60);
+        const double quiet = render([](Project& p) {
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+            p.auxBuses[0].volume = 0.1f;
+        }, 60);
+
+        check(full > quiet, "bus volume scales what the bus returns (" +
+              std::to_string(full) + " vs " + std::to_string(quiet) + ")");
+    }
+
+    // ---- Pre-fader ignores the channel fader -------------------------------
+    //
+    // The point of pre-fader: pull the channel to silence and the send keeps
+    // feeding the bus, which is how a dry signal fades into its own tail.
+    {
+        const double postFader = render([](Project& p) {
+            p.channels[0].volume = 0.0f;          // channel silent
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+            p.channels[0].sends[0].preFader = false;
+        }, 60);
+
+        const double preFader = render([](Project& p) {
+            p.channels[0].volume = 0.0f;          // channel silent
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+            p.channels[0].sends[0].preFader = true;
+        }, 60);
+
+        check(postFader < 1e-4,
+              "a post-fader send from a silent channel sends silence");
+        check(preFader > 1e-3,
+              "a pre-fader send from a silent channel still feeds the bus - "
+              "which is the entire reason pre-fader exists (got " +
+              std::to_string(preFader) + ")");
+    }
+
+    // ---- A bus effect actually processes ------------------------------------
+    {
+        const double clean = render([](Project& p) {
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+        }, 60);
+        const double crushed = render([](Project& p) {
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+            p.auxBuses[0].strip.distortionEnabled = true;
+            p.auxBuses[0].strip.distortionDrive = 20.0f;
+            p.auxBuses[0].strip.distortionMix = 1.0f;
+        }, 60);
+
+        check(std::fabs(crushed - clean) > clean * 0.05,
+              "an effect on the bus strip changes the bus output - the bus "
+              "really does own a full insert rack (" + std::to_string(clean) +
+              " vs " + std::to_string(crushed) + ")");
+    }
+
+    // ---- Bus feeding bus ----------------------------------------------------
+    {
+        const double chained = render([](Project& p) {
+            p.channels[0].sends[0].destination = 0;
+            p.channels[0].sends[0].level = 1.0f;
+            p.auxBuses[0].output = 1;             // 0 feeds 1, 1 feeds master
+            p.auxBuses[1].volume = 1.0f;
+        }, 60);
+        const double direct = render(nullptr, 60);
+
+        check(chained > direct * 1.1,
+              "a bus feeding another bus still reaches the master (" +
+              std::to_string(direct) + " vs " + std::to_string(chained) + ")");
+    }
+
+    // ---- A routing loop must not hang or explode ---------------------------
+    //
+    // The graph is repaired when configs are applied, so this asserts the
+    // repair happens rather than that the audio thread survives a cycle.
+    {
+        Project p;
+        p.masterLimiterEnabled = false;
+        p.auxBuses[0].output = 1;
+        p.auxBuses[1].output = 0;                 // a loop, straight from a file
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.updateChannelConfigs();               // repairs the graph
+
+        check(p.auxBuses[0].output == ROUTE_TO_MASTER ||
+              p.auxBuses[1].output == ROUTE_TO_MASTER,
+              "applying configs breaks a routing loop rather than trusting it");
+
+        std::vector<float> l(512), r(512);
+        bool finite = true;
+        for (int b = 0; b < 200; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            for (float v : l) if (!std::isfinite(v)) { finite = false; break; }
+            if (!finite) break;
+        }
+        check(finite, "and the audio thread renders finite samples throughout");
+    }
+
+    // ---- A send pointing at nothing is silent, not a crash -----------------
+    {
+        Project p;
+        p.masterLimiterEnabled = false;
+        p.patterns.clear();
+        p.arrangement.clear();
+        Pattern pat;
+        Note n; n.pitch = 60; n.duration = 2.0f;
+        pat.notes.push_back(n);
+        p.patterns.push_back(pat);
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        p.channels[0].sends[0].destination = 99;   // no such bus
+        p.channels[0].sends[0].level = 1.0f;
+        p.channels[0].sends[1].destination = -1;   // explicitly nowhere
+        p.channels[0].sends[1].level = 1.0f;
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.updateChannelConfigs();
+        seq.play();
+
+        std::vector<float> l(512), r(512);
+        bool finite = true;
+        for (int b = 0; b < 60; ++b) {
+            seq.process(l.data(), r.data(), 512);
+            for (float v : l) if (!std::isfinite(v)) { finite = false; break; }
+        }
+        check(finite, "a send to a bus that does not exist is ignored safely");
+    }
+}
+
+// ============================================================================
+// 52. Sends and buses survive save and load
+// ============================================================================
+static void testRoutingPersistence() {
+    beginTest("Routing persistence");
+
+    // ---- Round trip ---------------------------------------------------------
+    {
+        Project original;
+        original.channels[2].sends[0].destination = 1;
+        original.channels[2].sends[0].level = 0.42f;
+        original.channels[2].sends[0].preFader = true;
+        original.channels[2].sidechainBus = 3;
+
+        original.auxBuses[1].name = "Plate";
+        original.auxBuses[1].volume = 0.65f;
+        original.auxBuses[1].pan = -0.3f;
+        original.auxBuses[1].output = 2;
+        original.auxBuses[1].strip.reverbEnabled = true;
+        original.auxBuses[1].strip.reverbMix = 0.8f;
+        original.auxBuses[1].strip.fxOrder[0] = static_cast<uint8_t>(EffectType::Reverb);
+        original.auxBuses[1].strip.fxOrder[1] = static_cast<uint8_t>(EffectType::Delay);
+        original.auxBuses[1].strip.fxSlotCount = 2;
+
+        const std::string path = testPath("routing_roundtrip.ctp");
+        check(saveProjectFile(original, path), "routing saves");
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "and loads");
+
+        check(loaded.channels[2].sends[0].destination == 1 &&
+              std::fabs(loaded.channels[2].sends[0].level - 0.42f) < 0.01f &&
+              loaded.channels[2].sends[0].preFader,
+              "the send survives with its level and pre-fader flag");
+        check(loaded.channels[2].sidechainBus == 3,
+              "and the sidechain bus survives");
+
+        check(loaded.auxBuses[1].name == "Plate" &&
+              std::fabs(loaded.auxBuses[1].volume - 0.65f) < 0.01f &&
+              std::fabs(loaded.auxBuses[1].pan + 0.3f) < 0.01f &&
+              loaded.auxBuses[1].output == 2,
+              "the bus keeps its name, level, pan and output");
+        check(loaded.auxBuses[1].strip.reverbEnabled &&
+              std::fabs(loaded.auxBuses[1].strip.reverbMix - 0.8f) < 0.01f,
+              "and its strip settings");
+        check(loaded.auxBuses[1].strip.fxSlotCount == 2 &&
+              loaded.auxBuses[1].strip.fxOrder[0] ==
+                  static_cast<uint8_t>(EffectType::Reverb),
+              "and its own rack order");
+        std::remove(path.c_str());
+    }
+
+    // ---- An untouched project writes nothing new ---------------------------
+    {
+        Project plain;
+        const std::string path = testPath("routing_none.ctp");
+        check(saveProjectFile(plain, path), "a project with no routing saves");
+
+        const std::string text = readWholeFile(path);
+        check(text.find("SEND ") == std::string::npos &&
+              text.find("AUXBUS ") == std::string::npos,
+              "and writes no routing lines, so a project that never opened "
+              "the panel is unchanged by the v4 bump");
+        std::remove(path.c_str());
+    }
+
+    // ---- A v3 file still loads ---------------------------------------------
+    {
+        const std::string path = testPath("routing_v3.ctp");
+        {
+            std::ofstream file(path);
+            file << "CHIPTUNE_PROJECT v3\n";
+            file << "NAME Older\n";
+            file << "CHANNEL 0 \"Lead\" Pulse revOn=1\n";
+            file << "PATTERN \"P\" 16\n";
+            file << "END_PATTERN\n";
+            file << "END_PROJECT\n";
+        }
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "a v3 file loads");
+        check(loaded.channels[0].reverbEnabled, "with its effects intact");
+        check(loaded.channels[0].sends[0].destination == -1,
+              "and no sends, which is what a pre-v4 file means");
+        check(loaded.auxBuses[0].output == ROUTE_TO_MASTER,
+              "and every bus routed to the master");
+        std::remove(path.c_str());
+    }
+
+    // ---- A file carrying a loop is repaired on load -------------------------
+    {
+        const std::string path = testPath("routing_loop.ctp");
+        {
+            std::ofstream file(path);
+            file << "CHIPTUNE_PROJECT v4\n";
+            file << "AUXBUS 0 \"A\" out=1 vol=0.8 pan=0 mute=0\n";
+            file << "AUXBUS 1 \"B\" out=0 vol=0.8 pan=0 mute=0\n";
+            file << "PATTERN \"P\" 16\n";
+            file << "END_PATTERN\n";
+            file << "END_PROJECT\n";
+        }
+
+        Project loaded;
+        check(loadProjectFile(loaded, path), "a looped file loads");
+
+        int order[Project::MAX_AUX_BUSES];
+        int count = 0;
+        check(computeBusOrder(loaded.auxBuses, order, count),
+              "and its graph is repaired during validation rather than "
+              "reaching the audio thread as a cycle");
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation clamps hostile values -----------------------------------
+    {
+        Project hostile;
+        hostile.channels[0].sends[0].destination = 500;
+        hostile.channels[0].sends[0].level = 9.0f;
+        hostile.channels[0].sends[1].level = -3.0f;
+        hostile.channels[0].sidechainBus = 42;
+        hostile.auxBuses[0].volume = 99.0f;
+        hostile.auxBuses[0].pan = -7.0f;
+
+        clampProjectToValidRanges(hostile);
+
+        check(hostile.channels[0].sends[0].destination == -1,
+              "a send to a bus that does not exist becomes no send");
+        check(hostile.channels[0].sends[0].level <= 1.0f &&
+              hostile.channels[0].sends[1].level >= 0.0f,
+              "send levels are clamped into range");
+        check(hostile.channels[0].sidechainBus == -1,
+              "an impossible sidechain bus falls back to the channel tap");
+        check(hostile.auxBuses[0].volume <= 2.0f &&
+              hostile.auxBuses[0].pan >= -1.0f,
+              "bus volume and pan are clamped");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -7202,6 +7692,9 @@ int main(int argc, char** argv) {
     testEffectRackIdentity();
     testEffectRackStability();
     testEffectRackPersistence();
+    testRoutingGraph();
+    testSendsAndBuses();
+    testRoutingPersistence();
     testLongRunStability();
 
     std::printf("\n==========================\n");

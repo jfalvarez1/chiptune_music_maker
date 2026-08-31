@@ -18,6 +18,7 @@
 
 #include "Types.h"
 #include "Effects.h"
+#include "Routing.h"
 
 #include <cmath>
 #include <algorithm>
@@ -151,6 +152,21 @@ inline void clampMacrosToValidRanges(InstrumentMacros& macros) {
 }
 
 inline void clampChannelToValidRanges(ChannelConfig& c) {
+    // ---- Sends ---------------------------------------------------------
+    //
+    // A destination naming a bus this build does not have becomes no send at
+    // all. Silencing one send is recoverable; indexing past the bus array
+    // from the audio thread is not.
+    for (SendConfig& send : c.sends) {
+        if (send.destination < 0 || send.destination >= Project::MAX_AUX_BUSES) {
+            send.destination = -1;
+        }
+        send.level = sanitizeFloat(send.level, 0.0f, 1.0f, 0.0f);
+    }
+    if (c.sidechainBus < -1 || c.sidechainBus >= Project::MAX_AUX_BUSES) {
+        c.sidechainBus = -1;
+    }
+
     // ---- Insert rack ---------------------------------------------------
     //
     // A rack arriving from a file can name an effect this build does not
@@ -325,6 +341,18 @@ inline void clampProjectToValidRanges(Project& project) {
     project.masterCompMakeup = sanitizeFloat(project.masterCompMakeup, -12.0f, 24.0f, 2.0f);
     project.masterLimiterCeiling = sanitizeFloat(project.masterLimiterCeiling, -12.0f, 0.0f, -0.3f);
     project.masterLimiterRelease = sanitizeFloat(project.masterLimiterRelease, 0.001f, 2.0f, 0.05f);
+
+    // ---- Aux buses -------------------------------------------------------
+    //
+    // A routing loop would have the audio thread walking a cycle, so it is
+    // repaired rather than trusted - offenders are routed to the master,
+    // because losing a send is recoverable and a hung callback is not.
+    for (AuxBusConfig& bus : project.auxBuses) {
+        bus.volume = sanitizeFloat(bus.volume, 0.0f, 2.0f, 0.8f);
+        bus.pan = sanitizeFloat(bus.pan, -1.0f, 1.0f, 0.0f);
+        clampChannelToValidRanges(bus.strip);
+    }
+    breakRoutingCycles(project.auxBuses);
 
     for (ChannelConfig& channel : project.channels) {
         clampChannelToValidRanges(channel);
