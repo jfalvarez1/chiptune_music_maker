@@ -1064,7 +1064,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             ChiptuneTracker::renderAutomation(project, uiState, sequencer.getState());
         }
         if (uiState.showWavetableEditor) {
-            ChiptuneTracker::renderWavetableEditor(project, uiState);
+            ChiptuneTracker::renderWavetableEditor(project, uiState, sequencer);
         }
 
         // Keyboard shortcuts

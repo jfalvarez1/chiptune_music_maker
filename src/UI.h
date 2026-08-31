@@ -10044,9 +10044,75 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             if (ImGui::Button("75%")) { osc.pulseWidth = 0.75f; seq.updateChannelConfigs(); }
         }
 
-        if (osc.type == OscillatorType::Triangle || osc.type == OscillatorType::Custom) {
+        if (osc.type == OscillatorType::Triangle) {
             if (ImGui::SliderFloat("Triangle Slope", &osc.triangleSlope, 0.0f, 1.0f)) {
                 seq.updateChannelConfigs();
+            }
+        }
+
+        // ---- Wavetable ------------------------------------------------------
+        //
+        // Custom used to be a triangle wearing a different name: the whole
+        // wavetable editor wrote into banks that nothing played. These are
+        // the controls that connect the two.
+        if (osc.type == OscillatorType::Custom) {
+            const int bankCount = std::max(1, std::min(
+                static_cast<int>(project.wavetableBanks.size()),
+                WavetableLibrary::MAX_BANKS));
+
+            ImGui::SetNextItemWidth(160);
+            const char* bankName =
+                (osc.wavetableBank >= 0 &&
+                 osc.wavetableBank < static_cast<int>(project.wavetableBanks.size()))
+                    ? project.wavetableBanks[static_cast<size_t>(osc.wavetableBank)].name.c_str()
+                    : "Default";
+            if (ImGui::BeginCombo("Bank", bankName)) {
+                for (int i = 0; i < bankCount; ++i) {
+                    const bool selected = (i == osc.wavetableBank);
+                    const char* name =
+                        (i < static_cast<int>(project.wavetableBanks.size()))
+                            ? project.wavetableBanks[static_cast<size_t>(i)].name.c_str()
+                            : "Default";
+                    if (ImGui::Selectable(name, selected)) {
+                        osc.wavetableBank = i;
+                        seq.updateChannelConfigs();
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Which bank of drawn waveforms this channel plays.\n"
+                    "Draw them in the Wavetable Editor.");
+            }
+
+            if (ImGui::SliderFloat("Morph", &osc.wavetableMorph, 0.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Where between the bank's waveforms this sits.\n"
+                    "0 is the first table, 1 the last, and everything\n"
+                    "between is a blend of the two nearest.");
+            }
+
+            if (ImGui::SliderFloat("Morph Sweep", &osc.wavetableMorphSweep,
+                                   -1.0f, 1.0f)) {
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How far the morph travels over the life of each note.\n"
+                    "A table that does not move is a sampled waveform; one\n"
+                    "that does is the reason to have a bank at all.");
+            }
+
+            if (osc.wavetableMorphSweep != 0.0f) {
+                if (ImGui::SliderFloat("Sweep Time", &osc.wavetableSweepTime,
+                                       0.01f, 5.0f, "%.2f s")) {
+                    seq.updateChannelConfigs();
+                }
             }
         }
 
@@ -14946,9 +15012,31 @@ inline void renderAutomation(Project& project, UIState& uiState, const PlaybackS
 // ============================================================================
 // Wavetable Editor Window
 // ============================================================================
-inline void renderWavetableEditor(Project& project, UIState& uiState) {
+inline void renderWavetableEditor(Project& project, UIState& uiState,
+                                  Sequencer& seq) {
     ImGui::SetNextWindowSize(ImVec2(700, 600), ImGuiCond_FirstUseEver);
     ImGui::Begin("Wavetable Editor", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    /*
+     * Republish the band-limited tables when anything here changes them.
+     *
+     * Rebuilding is seven FFTs per table, so it happens when the drawing
+     * settles rather than on every mouse-move sample: ImGui reports the end
+     * of a drag, and that is the moment to do it. Without this the editor
+     * would still be a drawing toy - a better connected one, but the sound
+     * would not follow the picture until something else happened to
+     * reconfigure the channels.
+     */
+    struct WavetableRepublish {
+        Sequencer& sequencer;
+        bool dirty = false;
+        ~WavetableRepublish() { if (dirty) sequencer.updateWavetables(); }
+    } republish{seq};
+
+    ImGui::TextDisabled(
+        "Draw a waveform here, then set a channel's oscillator to Custom "
+        "and point it at this bank.");
+    ImGui::Separator();
 
     // Ensure at least one bank exists
     if (project.wavetableBanks.empty()) {
@@ -15181,6 +15269,38 @@ inline void renderWavetableEditor(Project& project, UIState& uiState) {
         }
 
         ImGui::Dummy(preview_sz);
+    }
+
+    /*
+     * Rebuild when the tables have actually changed.
+     *
+     * Driven by a checksum of the data rather than by flagging each of the
+     * two dozen controls that can write to it: that sort of list grows one
+     * stale entry and silently stops working, which is precisely how the
+     * editor came to be disconnected from the engine in the first place.
+     * A few thousand floats a frame is nothing next to seven FFTs per table.
+     */
+    {
+        double checksum = 0.0;
+        for (size_t b = 0; b < project.wavetableBanks.size() &&
+                           b < WavetableLibrary::MAX_BANKS; ++b) {
+            const WavetableBank& bank = project.wavetableBanks[b];
+            checksum += double(bank.tables.size()) * 7919.0;
+            for (size_t t = 0; t < bank.tables.size(); ++t) {
+                for (int i = 0; i < Wavetable::TABLE_SIZE; i += 4) {
+                    checksum += double(bank.tables[t].samples[size_t(i)]) *
+                                double(i + 1) * double(t + 1);
+                }
+            }
+        }
+
+        static double lastChecksum = 0.0;
+        static bool primed = false;
+        if (!primed || checksum != lastChecksum) {
+            republish.dirty = primed;   // not on the very first draw
+            lastChecksum = checksum;
+            primed = true;
+        }
     }
 
     ImGui::End();

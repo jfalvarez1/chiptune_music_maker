@@ -8,6 +8,7 @@
  */
 
 #include "Types.h"
+#include "WavetableEngine.h"
 #include "Effects.h"
 #include "Sample.h"
 #include <cmath>
@@ -797,6 +798,14 @@ public:
 
     // Accessors
     EffectsChain& effects() { return m_effects; }
+    /*
+     * The wavetable library, owned by the Sequencer and shared by every
+     * channel. A pointer rather than a copy: the mipmapped set is about
+     * 150 KB per bank, and thirty-two channels each holding their own copy
+     * of the same tables would be five megabytes of duplicates.
+     */
+    void setWavetables(const WavetableLibrary* library) { m_wavetables = library; }
+
     const EffectsChain& effects() const { return m_effects; }
     Vibrato& vibrato() { return m_vibrato; }
     Arpeggiator& arpeggiator() { return m_arpeggiator; }
@@ -815,6 +824,38 @@ private:
     // ========================================================================
     // Oscillator Generation
     // ========================================================================
+    /*
+      * The wavetable oscillator.
+      *
+      * This used to be `generateTriangle()`. The band-limiting lives in
+      * WavetableSet, which picks a pre-filtered copy of the table from the
+      * phase increment - so a drawn square played three octaves up is dull
+      * rather than full of descending alias tones.
+      *
+      * With no library attached it falls back to the triangle it always
+      * was, which keeps every existing project that used Custom sounding
+      * exactly as it did.
+      */
+    float generateWavetable(Voice& voice) {
+        if (m_wavetables == nullptr) {
+            return generateTriangle(voice.phase, m_oscConfig.triangleSlope);
+        }
+
+        float morph = m_oscConfig.wavetableMorph;
+        if (m_oscConfig.wavetableMorphSweep != 0.0f &&
+            m_oscConfig.wavetableSweepTime > 1e-4f) {
+            const float through = std::clamp(
+                voice.realTimeElapsed / m_oscConfig.wavetableSweepTime, 0.0f, 1.0f);
+            morph += m_oscConfig.wavetableMorphSweep * through;
+        }
+
+        const WavetableSet& set = m_wavetables->bank(m_oscConfig.wavetableBank);
+        if (set.empty()) {
+            return generateTriangle(voice.phase, m_oscConfig.triangleSlope);
+        }
+        return set.sample(voice.phase, morph, voice.phaseIncrement);
+    }
+
     float generateOscillator(Voice& voice) {
         float sample = 0.0f;
         const float t = voice.phase;
@@ -852,7 +893,7 @@ private:
                 break;
 
             case OscillatorType::Custom:
-                sample = generateTriangle(t, m_oscConfig.triangleSlope);
+                sample = generateWavetable(voice);
                 break;
 
             // Kicks
@@ -2829,6 +2870,7 @@ private:
     OscillatorConfig m_oscConfig;
     Envelope m_envelope;
 
+    const WavetableLibrary* m_wavetables = nullptr;
     EffectsChain m_effects;
     Vibrato m_vibrato;
     Arpeggiator m_arpeggiator;

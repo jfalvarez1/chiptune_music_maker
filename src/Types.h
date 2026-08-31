@@ -147,6 +147,22 @@ struct OscillatorConfig {
     // keyboard. 0 is the highest pitch, 15 the lowest rumble.
     int noisePeriod = -1;
 
+    // ---- Wavetable -----------------------------------------------------
+    //
+    // Which of the project's banks the Custom oscillator plays, and where
+    // between its tables it sits. Morph is a first-class parameter rather
+    // than a fixed table choice because moving through a bank while a note
+    // holds is the entire reason a bank has more than one table in it.
+    int wavetableBank = 0;
+    float wavetableMorph = 0.0f;    // 0 = first table, 1 = last
+
+    // How far the morph travels over the life of a note, in morph units.
+    // A static wavetable is a sampled waveform; a moving one is what makes
+    // the engine worth having, and requiring an automation lane for the
+    // most common case would be a poor trade.
+    float wavetableMorphSweep = 0.0f;
+    float wavetableSweepTime = 0.5f;   // seconds to travel the sweep
+
     // General
     float detune = 0.0f;            // Cents (-100 to +100)
     float phase = 0.0f;             // Starting phase (0.0 to 1.0)

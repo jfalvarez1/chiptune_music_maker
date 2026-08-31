@@ -198,10 +198,14 @@ inline constexpr FloatField<OscillatorConfig> OSC_FLOATS[] = {
     {"slope",  &OscillatorConfig::triangleSlope},
     {"det",    &OscillatorConfig::detune},
     {"phase",  &OscillatorConfig::phase},
+    {"wtMorph", &OscillatorConfig::wavetableMorph},
+    {"wtSweep", &OscillatorConfig::wavetableMorphSweep},
+    {"wtTime",  &OscillatorConfig::wavetableSweepTime},
 };
 
 inline constexpr IntField<OscillatorConfig> OSC_INTS[] = {
     {"noisePeriod", &OscillatorConfig::noisePeriod},
+    {"wtBank",      &OscillatorConfig::wavetableBank},
 };
 
 inline constexpr BoolField<OscillatorConfig> OSC_BOOLS[] = {

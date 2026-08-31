@@ -528,10 +528,32 @@ public:
         return m_synths[static_cast<size_t>(index)].effects();
     }
 
+    /*
+     * Rebuild the band-limited wavetables.
+     *
+     * Separate from updateChannelConfigs because it is expensive - ten FFTs
+     * per table - and the banks change far less often than a fader does.
+     * The UI calls it when a table is edited; updateChannelConfigs calls it
+     * once so that loading a project never leaves a channel pointing at a
+     * library that was never built.
+     */
+    void updateWavetables() {
+        if (!m_project) return;
+        m_wavetables.rebuild(m_project->wavetableBanks);
+    }
+
+    const WavetableLibrary& wavetables() const { return m_wavetables; }
+
     void updateChannelConfigs() {
         if (!m_project) return;
 
+        if (!m_wavetablesBuilt) {
+            updateWavetables();
+            m_wavetablesBuilt = true;
+        }
+
         for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            m_synths[ch].setWavetables(&m_wavetables);
             const auto& config = m_project->channels[ch];
             // Single sync point: oscillator, envelope, filter envelope and the
             // full per-channel effects chain (see Synthesizer::setChannelConfig).
@@ -1101,6 +1123,12 @@ private:
     //
     // The chains are full EffectsChains, so a bus gets the whole Task A rack.
     // The order is resolved when configs change, never in the callback.
+    // Owned here and shared by every channel: a mipmapped bank is about
+    // 150 KB, and thirty-two channels each holding their own copy of the
+    // same tables would be five megabytes of duplicates.
+    WavetableLibrary m_wavetables;
+    bool m_wavetablesBuilt = false;
+
     std::array<EffectsChain, Project::MAX_AUX_BUSES> m_auxChains;
     std::array<float, Project::MAX_AUX_BUSES> m_auxAccum{};
     // Last sample's bus sums, for sidechaining off a bus without needing a

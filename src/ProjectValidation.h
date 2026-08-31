@@ -19,6 +19,7 @@
 #include "Types.h"
 #include "Effects.h"
 #include "Routing.h"
+#include "WavetableEngine.h"
 
 #include <cmath>
 #include <algorithm>
@@ -219,6 +220,18 @@ inline void clampChannelToValidRanges(ChannelConfig& c) {
     c.oscillator.pulseWidth = sanitizeFloat(c.oscillator.pulseWidth, 0.01f, 0.99f, 0.5f);
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
+
+    // Wavetable. A bank index past the end would read off the library from
+    // the audio thread; the morph is clamped rather than dropped because a
+    // value slightly outside 0..1 is a sweep that overshot, not corruption.
+    c.oscillator.wavetableBank = sanitizeInt(c.oscillator.wavetableBank, 0,
+                                             WavetableLibrary::MAX_BANKS - 1, 0);
+    c.oscillator.wavetableMorph = sanitizeFloat(c.oscillator.wavetableMorph,
+                                                0.0f, 1.0f, 0.0f);
+    c.oscillator.wavetableMorphSweep = sanitizeFloat(
+        c.oscillator.wavetableMorphSweep, -1.0f, 1.0f, 0.0f);
+    c.oscillator.wavetableSweepTime = sanitizeFloat(
+        c.oscillator.wavetableSweepTime, 0.001f, 60.0f, 0.5f);
     c.oscillator.phase = sanitizeFloat(c.oscillator.phase, 0.0f, 1.0f, 0.0f);
     // -1 means "track the note"; otherwise one of the sixteen NES periods.
     if (c.oscillator.noisePeriod < -1 || c.oscillator.noisePeriod > 15) {

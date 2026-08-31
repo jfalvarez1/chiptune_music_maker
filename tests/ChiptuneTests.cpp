@@ -39,6 +39,7 @@
 #include "VoiceCapture.h"
 #include "LiveVoice.h"
 #include "VoicePanel.h"
+#include "WavetableEngine.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -9810,6 +9811,416 @@ static void testVoiceToNotes() {
     }
 }
 
+
+// ============================================================================
+// 63. The wavetable engine
+// ============================================================================
+static void testWavetableEngine() {
+    beginTest("Wavetable engine");
+
+    // ---- A band-limited table is still the wave you drew --------------------
+    {
+        WavetableBank bank;
+        bank.tables.clear();
+        Wavetable sine;
+        sine.initSine();
+        bank.tables.push_back(sine);
+
+        WavetableSet set;
+        set.build(bank);
+        check(set.count() == 1, "the bank builds");
+
+        // Level 0 keeps every harmonic, so a sine must survive untouched.
+        // An FFT round trip that got the conjugate symmetry wrong shows up
+        // here as a half-amplitude or phase-shifted result.
+        float worst = 0.0f;
+        for (int i = 0; i < 64; ++i) {
+            const float phase = float(i) / 64.0f;
+            const float expected = std::sin(6.28318530718f * phase);
+            const float got = set.sample(phase, 0.0f, 1.0f / 4096.0f);
+            worst = std::max(worst, std::fabs(got - expected));
+        }
+        check(worst < 0.02f,
+              "a sine survives the band-limiting round trip (worst error " +
+              std::to_string(worst) + ") - getting the spectrum's conjugate "
+              "symmetry wrong would halve it or shift its phase");
+    }
+
+    // ---- Band-limiting actually removes harmonics ---------------------------
+    {
+        WavetableBank bank;
+        bank.tables.clear();
+        Wavetable square;
+        square.initSquare();
+        bank.tables.push_back(square);
+
+        WavetableSet set;
+        set.build(bank);
+
+        // Read one cycle at each level and measure how sharp the edge is.
+        // A band-limited square rings and slopes; the raw one is vertical.
+        auto edgeSteepness = [&](int level) {
+            const WavetableMips& mips = set.table(0);
+            float steepest = 0.0f;
+            for (int i = 0; i < WavetableMips::SIZE; ++i) {
+                const float a = mips.levels[static_cast<size_t>(level)][static_cast<size_t>(i)];
+                const float b = mips.levels[static_cast<size_t>(level)][static_cast<size_t>(i) + 1];
+                steepest = std::max(steepest, std::fabs(b - a));
+            }
+            return steepest;
+        };
+
+        const float raw = edgeSteepness(0);
+        const float filtered = edgeSteepness(6);
+        check(raw > filtered * 2.0f,
+              "a high mip level has a visibly softer edge than the raw table "
+              "(" + std::to_string(raw) + " vs " + std::to_string(filtered) +
+              ") - which is what removing the harmonics means");
+
+        check(WavetableMips::harmonicsAtLevel(0) > WavetableMips::harmonicsAtLevel(5),
+              "and each level keeps fewer harmonics than the one below");
+        check(WavetableMips::harmonicsAtLevel(WavetableMips::LEVELS - 1) >= 1,
+              "the last level still keeps one, so it is a sine rather than "
+              "silence");
+    }
+
+    // ---- The level follows the pitch ---------------------------------------
+    {
+        // A low note can afford every harmonic; a high one cannot.
+        const float lowStep = 55.0f / 44100.0f;      // A1
+        const float highStep = 7040.0f / 44100.0f;   // A8
+
+        check(WavetableMips::levelFor(lowStep) < 1.0f,
+              "a low note plays the brightest table");
+        check(WavetableMips::levelFor(highStep) >
+              WavetableMips::levelFor(lowStep) + 3.0f,
+              "and a note seven octaves up plays a much duller one");
+        check(WavetableMips::levelFor(0.0f) == 0.0f,
+              "a zero increment does not divide by zero");
+        check(WavetableMips::levelFor(0.49f) <= float(WavetableMips::LEVELS - 1),
+              "and an absurd one is bounded rather than indexing off the end");
+    }
+
+    // ---- Aliasing, measured -------------------------------------------------
+    //
+    // The whole reason the engine exists. Play a drawn square high up and
+    // look for energy at frequencies that are not harmonics of the note.
+    // Without band-limiting those fold-down tones are louder than the
+    // harmonics they came from.
+    {
+        WavetableBank bank;
+        bank.tables.clear();
+        Wavetable square;
+        square.initSquare();
+        bank.tables.push_back(square);
+
+        WavetableSet set;
+        set.build(bank);
+
+        const int rate = 44100;
+        const float frequency = 3520.0f;         // A7
+        const float step = frequency / float(rate);
+        const size_t N = 4096;
+
+        std::vector<float> limited(N), raw(N);
+        float phase = 0.0f;
+        for (size_t i = 0; i < N; ++i) {
+            limited[i] = set.sample(phase, 0.0f, step);
+            // The same table read with no band-limiting at all - level 0
+            // regardless of pitch, which is what the engine would do if the
+            // mip selection were removed.
+            raw[i] = set.table(0).sampleLevel(0, phase);
+            phase += step;
+            phase -= std::floor(phase);
+        }
+
+        // Energy that is NOT within a bin or two of a harmonic of 3520 Hz.
+        auto inharmonicEnergy = [&](const std::vector<float>& signal) {
+            std::vector<float> re(signal), im(N, 0.0f);
+            DSP::FFTPlan plan;
+            plan.resize(N);
+            for (size_t i = 0; i < N; ++i) {
+                const float w = 0.5f * (1.0f - std::cos(6.28318530718f *
+                    float(i) / float(N - 1)));
+                re[i] = signal[i] * w;
+            }
+            plan.transform(re.data(), im.data());
+
+            const float binHz = float(rate) / float(N);
+            double stray = 0.0;
+            for (size_t bin = 2; bin < N / 2; ++bin) {
+                const float hz = float(bin) * binHz;
+                const float ratio = hz / frequency;
+                const float distance = std::fabs(ratio - std::round(ratio));
+                if (distance < 0.06f) continue;      // it is a harmonic
+                const double magnitude = std::sqrt(double(re[bin]) * re[bin] +
+                                                   double(im[bin]) * im[bin]);
+                stray += magnitude;
+            }
+            return stray;
+        };
+
+        const double strayLimited = inharmonicEnergy(limited);
+        const double strayRaw = inharmonicEnergy(raw);
+
+        check(strayRaw > 0.0, "the unfiltered read produces stray energy");
+        check(strayLimited < strayRaw * 0.5,
+              "band-limiting removes most of the inharmonic energy at A7 (" +
+              std::to_string(strayLimited) + " vs " + std::to_string(strayRaw) +
+              ") - those tones are alias fold-down, and they move DOWN as the "
+              "note goes up, which is what makes them so obvious");
+    }
+
+    // ---- Morphing -----------------------------------------------------------
+    {
+        WavetableBank bank;
+        bank.tables.clear();
+        Wavetable sine, saw;
+        sine.initSine();
+        saw.initSaw();
+        bank.tables.push_back(sine);
+        bank.tables.push_back(saw);
+
+        WavetableSet set;
+        set.build(bank);
+        check(set.count() == 2, "a two-table bank builds");
+
+        const float step = 1.0f / 4096.0f;   // low enough for level 0
+        const float atSine = set.sample(0.25f, 0.0f, step);
+        const float atSaw = set.sample(0.25f, 1.0f, step);
+        const float atMiddle = set.sample(0.25f, 0.5f, step);
+
+        check(std::fabs(atSine - atSaw) > 0.1f,
+              "the two ends of the bank sound different");
+        check(atMiddle > std::min(atSine, atSaw) - 0.05f &&
+              atMiddle < std::max(atSine, atSaw) + 0.05f,
+              "and the middle is between them, which is what morphing means");
+
+        // Out-of-range morph must not index off the end.
+        check(std::isfinite(set.sample(0.25f, -5.0f, step)) &&
+              std::isfinite(set.sample(0.25f, 9.0f, step)),
+              "a morph outside 0..1 is clamped rather than read off the end "
+              "of the bank");
+    }
+
+    // ---- Phase outside 0..1, which detune and vibrato produce --------------
+    {
+        WavetableBank bank;
+        WavetableSet set;
+        set.build(bank);
+
+        const float step = 1.0f / 4096.0f;
+        const float inside = set.sample(0.3f, 0.0f, step);
+        check(std::fabs(set.sample(1.3f, 0.0f, step) - inside) < 1e-3f,
+              "a phase past 1 wraps rather than clamping - vibrato and detune "
+              "both hand it values outside the range");
+        check(std::fabs(set.sample(-0.7f, 0.0f, step) - inside) < 1e-3f,
+              "and so does a negative one");
+    }
+
+    // ---- An empty bank is a sine, not silence -------------------------------
+    {
+        WavetableBank empty;
+        empty.tables.clear();
+        WavetableSet set;
+        set.build(empty);
+
+        check(set.count() >= 1,
+              "a bank with no tables falls back to one rather than being "
+              "silence, which would read as the engine being broken");
+
+        float peak = 0.0f;
+        for (int i = 0; i < 64; ++i) {
+            peak = std::max(peak, std::fabs(
+                set.sample(float(i) / 64.0f, 0.0f, 1.0f / 4096.0f)));
+        }
+        check(peak > 0.5f, "and it makes a sound");
+    }
+
+    // ---- The library publishes without tearing ------------------------------
+    {
+        // On the heap deliberately. The library is most of a megabyte, and
+        // a local one overflowed the stack outright - which is worth
+        // knowing about the type, not just working around.
+        auto libraryPtr = std::make_unique<WavetableLibrary>();
+        WavetableLibrary& library = *libraryPtr;
+        std::vector<WavetableBank> banks;
+
+        WavetableBank first;
+        first.tables.clear();
+        Wavetable square;
+        square.initSquare();
+        first.tables.push_back(square);
+        banks.push_back(first);
+
+        library.rebuild(banks);
+        const float step = 1.0f / 4096.0f;
+        const float before = library.bank(0).sample(0.1f, 0.0f, step);
+
+        WavetableBank second;
+        second.tables.clear();
+        Wavetable sine;
+        sine.initSine();
+        second.tables.push_back(sine);
+        banks[0] = second;
+        library.rebuild(banks);
+
+        const float after = library.bank(0).sample(0.1f, 0.0f, step);
+        check(std::fabs(before - after) > 0.1f,
+              "rebuilding the library changes what plays");
+
+        check(std::isfinite(library.bank(WavetableLibrary::MAX_BANKS + 5)
+                                   .sample(0.1f, 0.0f, step)),
+              "and a bank index past the end is clamped rather than read off "
+              "the array, which the audio thread would do every sample");
+    }
+}
+
+// ============================================================================
+// 64. A drawn wavetable reaches the speakers
+// ============================================================================
+static void testWavetableReachesAudio() {
+    beginTest("Wavetable reaches the audio");
+
+    // Custom used to run generateTriangle(). A user could draw a waveform,
+    // watch the editor's preview redraw, save it in the project, and hear a
+    // triangle. This renders two projects that differ ONLY in the drawn
+    // table and asserts the audio differs.
+    auto renderWith = [](const Wavetable& table, float morph) {
+        Project p;
+        p.bpm = 120.0f;
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+        p.masterVolume = 0.6f;
+
+        p.wavetableBanks.clear();
+        WavetableBank bank;
+        bank.tables.clear();
+        bank.tables.push_back(table);
+        Wavetable second;
+        second.initSquare();
+        bank.tables.push_back(second);
+        p.wavetableBanks.push_back(bank);
+
+        p.patterns.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = 57;                 // A3, low enough to keep harmonics
+        note.startTime = 0.0f;
+        note.duration = 4.0f;
+        note.oscillatorType = OscillatorType::Custom;
+        pattern.notes.push_back(note);
+        p.patterns.push_back(pattern);
+
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+        p.channels[0].oscillator.type = OscillatorType::Custom;
+        p.channels[0].oscillator.wavetableBank = 0;
+        p.channels[0].oscillator.wavetableMorph = morph;
+        p.channels[0].volume = 0.8f;
+        p.channels[0].pan = 0.0f;
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&p);
+        seqPtr->updateChannelConfigs();
+        seqPtr->updateMasterEffects();
+        seqPtr->play();
+
+        std::vector<float> l(512), r(512);
+        std::vector<float> collected;
+        for (int b = 0; b < 40; ++b) {
+            seqPtr->process(l.data(), r.data(), 512);
+            if (b >= 10) collected.insert(collected.end(), l.begin(), l.end());
+        }
+        return collected;
+    };
+
+    Wavetable sine, saw;
+    sine.initSine();
+    saw.initSaw();
+
+    const std::vector<float> withSine = renderWith(sine, 0.0f);
+    const std::vector<float> withSaw = renderWith(saw, 0.0f);
+
+    auto rms = [](const std::vector<float>& signal) {
+        double sum = 0.0;
+        for (float v : signal) sum += double(v) * v;
+        return signal.empty() ? 0.0 : std::sqrt(sum / double(signal.size()));
+    };
+
+    check(rms(withSine) > 1e-4, "a Custom-oscillator note makes a sound");
+
+    double difference = 0.0;
+    const size_t n = std::min(withSine.size(), withSaw.size());
+    for (size_t i = 0; i < n; ++i) {
+        difference += std::fabs(double(withSine[i]) - double(withSaw[i]));
+    }
+    check(n > 0 && difference / double(n) > 1e-3,
+          "changing the drawn waveform changes the audio - it did not before, "
+          "because the Custom oscillator ran generateTriangle() and the whole "
+          "wavetable editor was a drawing toy (mean difference " +
+          std::to_string(n > 0 ? difference / double(n) : 0.0) + ")");
+
+    // Morph has to reach the audio too, or a bank is one table with extras.
+    const std::vector<float> atStart = renderWith(sine, 0.0f);
+    const std::vector<float> atEnd = renderWith(sine, 1.0f);
+    double morphDifference = 0.0;
+    const size_t m = std::min(atStart.size(), atEnd.size());
+    for (size_t i = 0; i < m; ++i) {
+        morphDifference += std::fabs(double(atStart[i]) - double(atEnd[i]));
+    }
+    check(m > 0 && morphDifference / double(m) > 1e-3,
+          "and moving the morph across the bank changes it as well");
+
+    // ---- The settings survive a save and load ------------------------------
+    {
+        Project p;
+        p.channels[3].oscillator.type = OscillatorType::Custom;
+        p.channels[3].oscillator.wavetableBank = 2;
+        p.channels[3].oscillator.wavetableMorph = 0.625f;
+        p.channels[3].oscillator.wavetableMorphSweep = -0.5f;
+        p.channels[3].oscillator.wavetableSweepTime = 1.25f;
+        p.arrangement.push_back(Clip{0, 3, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("wavetable_roundtrip.ctp");
+        check(saveProject(p, path), "a project with wavetable settings saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+        check(loaded.channels[3].oscillator.wavetableBank == 2,
+              "the bank choice survives");
+        check(std::fabs(loaded.channels[3].oscillator.wavetableMorph - 0.625f) < 1e-4f,
+              "the morph survives");
+        check(std::fabs(loaded.channels[3].oscillator.wavetableMorphSweep + 0.5f) < 1e-4f,
+              "the sweep survives");
+        check(std::fabs(loaded.channels[3].oscillator.wavetableSweepTime - 1.25f) < 1e-4f,
+              "and its duration survives");
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation --------------------------------------------------------
+    {
+        Project p;
+        p.channels[0].oscillator.wavetableBank = 900;
+        p.channels[0].oscillator.wavetableMorph =
+            std::numeric_limits<float>::quiet_NaN();
+        p.channels[0].oscillator.wavetableSweepTime = 0.0f;
+
+        clampProjectToValidRanges(p);
+
+        check(p.channels[0].oscillator.wavetableBank >= 0 &&
+              p.channels[0].oscillator.wavetableBank < WavetableLibrary::MAX_BANKS,
+              "a bank index past the end of the library is repaired - the "
+              "audio thread would otherwise read off the array every sample");
+        check(std::isfinite(p.channels[0].oscillator.wavetableMorph),
+              "a NaN morph is replaced");
+        check(p.channels[0].oscillator.wavetableSweepTime > 0.0f,
+              "and a zero sweep time cannot divide by zero in the voice");
+    }
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -9912,6 +10323,8 @@ int main(int argc, char** argv) {
     testFFTPlan();
     testLiveVoice();
     testVoiceToNotes();
+    testWavetableEngine();
+    testWavetableReachesAudio();
     testLongRunStability();
 
     std::printf("\n==========================\n");
