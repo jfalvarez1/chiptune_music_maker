@@ -142,6 +142,49 @@ pastel, hazy lane. They used to be two shades of the same purple.
 
 ## What's new
 
+### 3.7 — "Instruments"
+
+Five configurable engines, a modulation matrix, audio on the timeline, and
+song structure. Everything below defaults to off or absent, so an existing
+project sounds exactly as it did.
+
+- **Wavetable synthesis** — the editor has existed for a long time and drove
+  nothing: the "Custom" oscillator ran `generateTriangle()`. There is a real
+  band-limited engine behind it now, with mipmapped tables so a drawn square
+  played high is dull rather than full of descending alias tones
+- **Six-operator FM** — a routing matrix, feedback, and a separate envelope
+  per operator, which is where FM's expressiveness actually lives. The
+  YM2612 is six-op FM, so this is more on-brand for a chip tracker than most
+  of what a DAW offers
+- **Multisample sampler** — key zones, velocity layers and round-robin
+- **Granular** — clouds, and a freeze that holds one moment without moving
+  its pitch
+- **Modelled drums** — the editable version of the 21 fixed drum voices
+- **Modulation matrix** — nine sources to nine destinations, per-voice LFOs
+  and a second envelope, polyphony limits and pitch bend
+- **Audio clips on the timeline** — recorded or imported audio running
+  through a channel's volume, pan, effects and sends like anything else
+- **Tempo and time-signature changes**, markers and regions
+- **Voice to notes** — sing or beatbox and get notes, live or from a take
+- **Pitch shift, formant shift and autotune** — a phase vocoder, plus an
+  offline time stretch that fits an imported break to a clip
+
+Bugs found on the way, all of them older than this work:
+
+- **Sample playback was a semitone and a half sharp.** The read step never
+  accounted for the 48 kHz pool against the 44.1 kHz engine, so every sample
+  instrument was out of tune with the synths
+- **The per-channel filter cutoff and resonance did nothing.** `process()`
+  reads cached coefficients and only `setCutoff()` recomputed them; the
+  filter ran at its 1000 Hz default wherever the slider was
+- **…and fixing that exposed the filter going unstable above ~7 kHz**, which
+  produced NaN — silence for the rest of the session — and had never
+  surfaced only because the first bug pinned the cutoff
+- **MIDI export wrote the wrong time signature**, `x/2` rather than `x/4`, so
+  any DAW importing one saw bars of twice the intended length
+- **The loop ruler was unreachable** after the channel count went to 32; it
+  was positioned below the last lane, ~960px down
+
 ### 3.4 — "Legible"
 
 - **Fixed: nine of ten themes had unreadable button labels** — seven under
@@ -204,8 +247,8 @@ along with an honest list of what is *not* covered.
 ```powershell
 cmake --build build --config Release
 
-build/bin/Release/ChiptuneTests.exe    # 1727 headless checks
-./tools/ui-smoke-test.ps1              # 26 rendering checks
+build/bin/Release/ChiptuneTests.exe    # 3604 headless checks
+./tools/ui-smoke-test.ps1              # 55 rendering checks
 python tools/audit-themes.py           # theme contrast report
 ./tools/generate-gallery.ps1           # refresh the screenshots above
 ```
@@ -217,6 +260,34 @@ that the code runs. That is what caught the dead stereo widener, the dead
 sidechain and the muting master EQ.
 
 ## Features
+
+### Instrument engines
+Each is a channel oscillator type, found under **Engines** in the Sound
+Palette, and configured in the Channel Editor. Each ships with a short list
+of starting points rather than a preset browser.
+
+- **Wavetable**: draw the waveform, morph across a bank, sweep the morph over
+  a note. Band-limited per octave, so it stays clean at the top of the range
+- **FM**: six operators, a full routing matrix rather than a numbered list of
+  algorithms, feedback, and per-operator ratio, level, detune and envelope
+- **Sampler**: key zones and velocity layers, with round-robin so repeated
+  hits do not comb-filter against each other
+- **Granular**: grain size, density, spray, pitch scatter, reverse chance and
+  window shape; freeze the position for a drone, or scan slowly for a
+  pitch-preserving stretch
+- **Drum model**: an editable kick, snare and hi-hat modelled on the analogue
+  circuits — the kick's pitch sweep, the snare's shell-versus-rattle balance,
+  the 808 hat's six inharmonic squares
+
+### Modulation
+- **Matrix**: any of nine sources to any of nine destinations
+- **Sources**: three LFOs, a second envelope, velocity, key tracking, mod
+  wheel, pitch bend, and a random value chosen per note
+- **Destinations**: pitch, level, pulse width, wavetable morph, FM
+  brightness, grain position and density, filter cutoff and resonance
+- **Per-voice**: every note has its own LFO phases, so held notes do not
+  wobble in lockstep
+- **Per-channel polyphony limits** and pitch-bend range
 
 ### Sound Generation
 - **Oscillators**: PolyBLEP-corrected Pulse (variable duty), Triangle, Sawtooth, Sine, Supersaw

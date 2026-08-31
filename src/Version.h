@@ -13,7 +13,7 @@
 namespace ChiptuneTracker {
 
 inline constexpr int VERSION_MAJOR = 3;
-inline constexpr int VERSION_MINOR = 6;
+inline constexpr int VERSION_MINOR = 7;
 inline constexpr int VERSION_PATCH = 0;
 
 // Composed, never written by hand. This was a second hand-written literal
@@ -23,7 +23,7 @@ inline const std::string VERSION_STRING =
     std::to_string(VERSION_MAJOR) + "." +
     std::to_string(VERSION_MINOR) + "." +
     std::to_string(VERSION_PATCH);
-inline constexpr const char* VERSION_NAME = "Welcome";
+inline constexpr const char* VERSION_NAME = "Instruments";
 inline constexpr const char* APP_NAME = "ChiptuneTracker";
 
 inline std::string windowTitle() {
@@ -33,9 +33,12 @@ inline std::string windowTitle() {
 inline std::string aboutText() {
     return std::string(APP_NAME) + " " + VERSION_STRING + " \"" + VERSION_NAME + "\"\n\n"
            "A chiptune tracker and DAW.\n\n"
-           "Piano roll, tracker and arrangement views, 65 instruments,\n"
-           "instrument macros, a full per-channel effects chain, a\n"
-           "mastering bus, and export to WAV, MP3 and MIDI.\n\n"
+           "Piano roll, tracker and arrangement views.\n\n"
+           "Wavetable, FM, sampler, granular and modelled-drum engines,\n"
+           "a modulation matrix, instrument macros, audio clips on the\n"
+           "timeline, tempo and meter changes, voice-to-notes, a full\n"
+           "per-channel effects rack, a mastering bus, and export to\n"
+           "WAV, MP3 and MIDI.\n\n"
            "Keyboard:\n"
            "  Space       play / pause\n"
            "  F4          instrument macros\n"
