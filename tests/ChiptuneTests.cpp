@@ -7844,6 +7844,731 @@ static void testMidiChannelBounds() {
     }
 }
 
+
+// ============================================================================
+// 55. Audio clips on the timeline
+// ============================================================================
+static void testAudioClips() {
+    beginTest("Audio clips");
+
+    // ---- A sample on disk, so the pool's real loader is what runs ---------
+    //
+    // Building the Sample by hand would test the mixer against a fixture the
+    // shipping path never produces. loadSample() resamples to 48 kHz, mono,
+    // and normalises to 0.95 - all three of which the mixer has to cope with,
+    // and none of which a hand-built struct would exercise.
+    auto writeTestWav = [](const std::string& path, float seconds,
+                           float frequency, float silentUntil) {
+        const int rate = 44100;
+        const size_t frames = static_cast<size_t>(seconds * float(rate));
+        std::vector<float> l(frames), r(frames);
+        for (size_t i = 0; i < frames; ++i) {
+            const float t = float(i) / float(rate);
+            const float v = (t < silentUntil)
+                ? 0.0f
+                : 0.8f * std::sin(6.28318530718f * frequency * t);
+            l[i] = v;
+            r[i] = v;
+        }
+        return writeWavFile(path, l, r);
+    };
+
+    const std::string wavPath = testPath("clip_tone.wav");
+    const std::string wavHalf = testPath("clip_halfsilent.wav");
+    check(writeTestWav(wavPath, 2.0f, 220.0f, 0.0f),
+          "a two-second test tone is written to disk");
+    check(writeTestWav(wavHalf, 2.0f, 220.0f, 1.0f),
+          "and one whose first second is silence");
+
+    // Render `beats` of a project and return the RMS of the left channel.
+    auto renderRms = [](Project& p, float beats, float skipBeats = 0.0f) {
+        auto seqPtr = std::make_unique<Sequencer>();
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&p);
+        seq.updateChannelConfigs();
+        seq.updateMasterEffects();
+        seq.play();
+
+        const float secondsPerBeat = 60.0f / p.bpm;
+        const int totalFrames = int(beats * secondsPerBeat * 44100.0f);
+        const int skipFrames = int(skipBeats * secondsPerBeat * 44100.0f);
+
+        std::vector<float> l(256), r(256);
+        double sum = 0.0;
+        int counted = 0;
+        for (int done = 0; done < totalFrames; done += 256) {
+            seq.process(l.data(), r.data(), 256);
+            if (done < skipFrames) continue;
+            for (float v : l) { sum += double(v) * double(v); ++counted; }
+        }
+        return (counted > 0) ? std::sqrt(sum / counted) : 0.0;
+    };
+
+    // A project with nothing in it but one audio clip, so anything measured
+    // came from the clip and not from a synth voice.
+    auto audioOnlyProject = [&](Project& p) {
+        p.bpm = 120.0f;
+        p.patterns.clear();
+        p.arrangement.clear();
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+        p.masterVolume = 0.8f;
+    };
+
+    auto makeAudioClip = [](int sampleId, int channel, float start, float length) {
+        Clip c;
+        c.type = ClipType::Audio;
+        c.sampleId = sampleId;
+        c.channelIndex = channel;
+        c.startBeat = start;
+        c.lengthBeats = length;
+        return c;
+    };
+
+    // ---- It reaches the audio at all --------------------------------------
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        check(id >= 0, "the pool loads the test tone");
+
+        const double silent = renderRms(p, 2.0f);
+        check(silent < 1e-6,
+              "an empty arrangement renders silence, so anything below is "
+              "the clip and not a stray voice");
+
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 2.0f));
+        const double sounding = renderRms(p, 2.0f);
+        check(sounding > 0.01,
+              "an audio clip renders actual audio (rms " +
+              std::to_string(sounding) + ")");
+    }
+
+    // ---- It is bounded by its own start and length ------------------------
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        p.arrangement.push_back(makeAudioClip(id, 0, 2.0f, 2.0f));
+
+        // Beats 0..1.9. Stopping just short of 2.0 rather than at it: the
+        // renderer works in 256-frame blocks and would otherwise cross the
+        // boundary inside the last one and pick up the clip's first samples.
+        const double before = renderRms(p, 1.9f);
+        check(before < 1e-6, "nothing sounds before the clip starts");
+
+        // Beats 2..4 are inside it.
+        const double during = renderRms(p, 4.0f, 2.0f);
+        check(during > 0.01, "and it sounds once the playhead reaches it");
+    }
+
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 1.0f));
+
+        const double after = renderRms(p, 3.0f, 1.5f);
+        check(after < 1e-6,
+              "and it stops at its end even though the sample has more audio "
+              "left - the clip length is the edit, not a suggestion");
+    }
+
+    // ---- Gain scales it ---------------------------------------------------
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 2.0f));
+
+        p.arrangement[0].gain = 0.25f;
+        const double quiet = renderRms(p, 2.0f);
+        p.arrangement[0].gain = 0.5f;
+        const double loud = renderRms(p, 2.0f);
+
+        check(quiet > 1e-5 && loud > 1e-5, "both gains render");
+        const double ratio = loud / quiet;
+        check(ratio > 1.9 && ratio < 2.1,
+              "doubling clip gain doubles the level (got " +
+              std::to_string(ratio) + ")");
+    }
+
+    // ---- Trim skips into the sample ---------------------------------------
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavHalf);
+        check(id >= 0, "the half-silent sample loads");
+
+        // The first second is silence, and at 120 bpm one beat is half a
+        // second - so the first two beats of an untrimmed clip are silent.
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 4.0f));
+        const double untrimmed = renderRms(p, 1.5f);
+        check(untrimmed < 1e-6,
+              "an untrimmed clip plays the sample's leading silence");
+
+        p.arrangement[0].trimStartSeconds = 1.0f;
+        const double trimmed = renderRms(p, 1.5f);
+        check(trimmed > 0.01,
+              "trimming past the silence makes the clip sound immediately "
+              "(rms " + std::to_string(trimmed) + ")");
+    }
+
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 4.0f));
+
+        // Half a second of a two-second sample, then silence: the clip is
+        // four beats but only the first beat has audio behind it.
+        p.arrangement[0].trimEndSeconds = 0.5f;
+        const double tail = renderRms(p, 4.0f, 2.0f);
+        check(tail < 1e-6,
+              "trimEnd stops playback even though the clip is still running "
+              "and the sample still has audio");
+    }
+
+    // ---- Loop refills the clip --------------------------------------------
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+
+        // Eight beats at 120 bpm is four seconds; the sample is two.
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 8.0f));
+
+        const double tailOnce = renderRms(p, 8.0f, 5.0f);
+        check(tailOnce < 1e-6,
+              "a clip longer than its sample falls silent once the sample "
+              "runs out");
+
+        p.arrangement[0].loopClip = true;
+        const double tailLooped = renderRms(p, 8.0f, 5.0f);
+        check(tailLooped > 0.01,
+              "and keeps sounding when the clip loops (rms " +
+              std::to_string(tailLooped) + ")");
+    }
+
+    // ---- Fades ------------------------------------------------------------
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 4.0f));
+        p.arrangement[0].loopClip = true;
+
+        const double flatHead = renderRms(p, 0.5f);
+
+        p.arrangement[0].fadeInBeats = 2.0f;
+        const double fadedHead = renderRms(p, 0.5f);
+
+        check(flatHead > 1e-5, "the un-faded head sounds");
+        check(fadedHead < flatHead * 0.6,
+              "a fade-in makes the head quieter than the same audio without "
+              "one (" + std::to_string(fadedHead) + " vs " +
+              std::to_string(flatHead) + ")");
+    }
+
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 4.0f));
+        p.arrangement[0].loopClip = true;
+
+        const double flatTail = renderRms(p, 4.0f, 3.5f);
+        p.arrangement[0].fadeOutBeats = 2.0f;
+        const double fadedTail = renderRms(p, 4.0f, 3.5f);
+
+        check(flatTail > 1e-5, "the un-faded tail sounds");
+        check(fadedTail < flatTail * 0.6,
+              "and a fade-out makes the tail quieter");
+    }
+
+    // ---- It goes THROUGH the channel strip, not around it -----------------
+    //
+    // This is the whole reason an audio clip lives on a channel rather than
+    // on a track type of its own. If it bypassed the strip, a recorded part
+    // could not use the channel's reverb or its send, and the mixer's fader
+    // would not move it.
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        p.arrangement.push_back(makeAudioClip(id, 3, 0.0f, 2.0f));
+
+        p.channels[3].volume = 0.8f;
+        const double open = renderRms(p, 2.0f);
+        check(open > 0.01, "an audio clip on channel 3 sounds");
+
+        p.channels[3].volume = 0.0f;
+        const double closed = renderRms(p, 2.0f);
+        check(closed < 1e-6,
+              "pulling that channel's fader down silences the audio clip - "
+              "it runs through the channel strip, not around it");
+
+        p.channels[3].volume = 0.8f;
+        p.channels[3].muted = true;
+        const double muted = renderRms(p, 2.0f);
+        check(muted < 1e-6, "and muting the channel silences it too");
+    }
+
+    // ---- Pattern clips and audio clips do not bleed into each other -------
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+
+        Pattern pat;
+        Note n;
+        n.pitch = 60;
+        n.startTime = 0.0f;
+        n.duration = 2.0f;
+        pat.notes.push_back(n);
+        p.patterns.push_back(pat);
+
+        // A pattern clip that happens to carry a sample id must not play it.
+        Clip patternClip{0, 0, 0.0f, 2.0f, 0};
+        patternClip.sampleId = id;
+        patternClip.gain = 1.0f;
+        p.arrangement.push_back(patternClip);
+
+        const double patternOnly = renderRms(p, 2.0f);
+        check(patternOnly > 1e-5, "the pattern clip plays its notes");
+
+        // Same project, the clip switched to Audio: now the notes must not
+        // sound and the sample must.
+        Project q;
+        audioOnlyProject(q);
+        const int qid = q.samplePool.loadSample(wavPath);
+        q.patterns.push_back(pat);
+        Clip audioClip = makeAudioClip(qid, 0, 0.0f, 2.0f);
+        audioClip.patternIndex = 0;      // a live index it must ignore
+        q.arrangement.push_back(audioClip);
+
+        // Silence the synth entirely; whatever is left is the sample.
+        for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+            q.channels[ch].volume = 0.8f;
+        }
+        const double audioOnly = renderRms(q, 2.0f);
+        check(audioOnly > 0.01,
+              "and an audio clip plays its sample, not the pattern its "
+              "patternIndex still points at");
+    }
+
+    // ---- Chip-authentic mode bounds audio clips too -----------------------
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        p.arrangement.push_back(makeAudioClip(id, 20, 0.0f, 2.0f));
+
+        p.chipAuthentic = false;
+        check(renderRms(p, 2.0f) > 0.01,
+              "an audio clip on channel 20 sounds with the chip cap off");
+
+        p.chipAuthentic = true;
+        check(renderRms(p, 2.0f) < 1e-6,
+              "and is silent with it on - the cap is enforced in the engine, "
+              "not just drawn in the UI");
+    }
+
+    // ---- The sample rate conversion is real -------------------------------
+    //
+    // The pool decodes to 48 kHz and the engine here runs at 44.1. Reading
+    // the array without resampling would play it 8.8% fast, which is nearly
+    // a semitone and a half - and would finish early.
+    {
+        Project p;
+        audioOnlyProject(p);
+        const int id = p.samplePool.loadSample(wavPath);
+        const Sample* s = p.samplePool.getSample(id);
+        check(s != nullptr && s->sampleRate == 48000,
+              "the pool decodes to 48 kHz regardless of the file's rate");
+        check(s != nullptr && std::fabs(s->lengthSeconds - 2.0f) < 0.05f,
+              "and reports the real duration in seconds");
+
+        // Four beats at 120 bpm is two seconds, exactly the sample length.
+        // Play five beats and measure the last: correct resampling leaves
+        // that beat silent, playing 9% fast would have finished sooner but
+        // still silent - so measure the beat that straddles the end instead.
+        p.arrangement.push_back(makeAudioClip(id, 0, 0.0f, 8.0f));
+
+        // Beats 3.5..3.9 are inside the sample under correct resampling
+        // (1.75..1.95 s of 2.0 s) and past its end at 48/44.1 speed
+        // (1.90..2.12 s), where it would already be silent.
+        const double nearEnd = renderRms(p, 3.9f, 3.5f);
+        check(nearEnd > 0.005,
+              "the sample is still playing just before its true end, which it "
+              "would not be if the 48 kHz data were read at 44.1 (rms " +
+              std::to_string(nearEnd) + ")");
+    }
+
+    // ---- The pool cannot move under the audio thread ----------------------
+    {
+        Project p;
+        const int id = p.samplePool.loadSample(wavPath);
+        check(id >= 0, "a sample loads");
+        const Sample* first = p.samplePool.getSample(id);
+
+        Sample synthetic;
+        synthetic.name = "synthetic";
+        synthetic.audioData.assign(1000, 0.5f);
+        synthetic.sampleRate = 48000;
+        synthetic.lengthSeconds = 1000.0f / 48000.0f;
+        synthetic.isLoaded = true;
+        for (int i = 0; i < 32; ++i) p.samplePool.addSample(synthetic);
+
+        check(p.samplePool.getSample(id) == first,
+              "adding 32 more samples does not move the first one - the pool "
+              "reserves its whole capacity up front, because the audio thread "
+              "holds a pointer into it while the UI thread loads");
+        check(p.samplePool.count() == 33, "and the count tracks what is in it");
+    }
+
+    std::remove(wavPath.c_str());
+    std::remove(wavHalf.c_str());
+}
+
+// ============================================================================
+// 56. Audio clips survive a save and load
+// ============================================================================
+static void testAudioClipPersistence() {
+    beginTest("Audio clip persistence");
+
+    const std::string wavA = testPath("persist_a.wav");
+    const std::string wavB = testPath("persist_b.wav");
+    {
+        std::vector<float> l(4410, 0.5f), r(4410, 0.5f);
+        check(writeWavFile(wavA, l, r), "sample A is on disk");
+        check(writeWavFile(wavB, l, r), "sample B is on disk");
+    }
+
+    check(ctp::FORMAT_VERSION == 5,
+          "audio clips bumped the format to v5");
+
+    // ---- Every field round-trips -----------------------------------------
+    {
+        Project p;
+        p.patterns.clear();
+        p.arrangement.clear();
+        const int id = p.samplePool.loadSample(wavA);
+        check(id >= 0, "the sample loads before saving");
+
+        Clip c;
+        c.type = ClipType::Audio;
+        c.sampleId = id;
+        c.channelIndex = 5;
+        c.startBeat = 6.5f;
+        c.lengthBeats = 3.25f;
+        c.color = 0xFF3366CCu;
+        c.gain = 0.625f;
+        c.trimStartSeconds = 0.125f;
+        c.trimEndSeconds = 0.875f;
+        c.fadeInBeats = 0.5f;
+        c.fadeOutBeats = 1.5f;
+        c.loopClip = true;
+        p.arrangement.push_back(c);
+
+        const std::string path = testPath("aclip_roundtrip.ctp");
+        check(saveProject(p, path), "the project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads back");
+        check(loaded.arrangement.size() == 1, "with its one clip");
+
+        if (loaded.arrangement.size() == 1) {
+            const Clip& g = loaded.arrangement[0];
+            check(g.type == ClipType::Audio, "still an audio clip");
+            check(g.channelIndex == 5, "channel survives");
+            check(std::fabs(g.startBeat - 6.5f) < 1e-4f, "start survives");
+            check(std::fabs(g.lengthBeats - 3.25f) < 1e-4f, "length survives");
+            check(g.color == 0xFF3366CCu, "colour survives");
+            check(std::fabs(g.gain - 0.625f) < 1e-4f, "gain survives");
+            check(std::fabs(g.trimStartSeconds - 0.125f) < 1e-4f,
+                  "trim start survives");
+            check(std::fabs(g.trimEndSeconds - 0.875f) < 1e-4f,
+                  "trim end survives");
+            check(std::fabs(g.fadeInBeats - 0.5f) < 1e-4f, "fade in survives");
+            check(std::fabs(g.fadeOutBeats - 1.5f) < 1e-4f, "fade out survives");
+            check(g.loopClip, "the loop flag survives");
+            check(g.sampleId >= 0 &&
+                  loaded.samplePool.getSample(g.sampleId) != nullptr,
+                  "and it points at a sample that actually loaded");
+        }
+        std::remove(path.c_str());
+    }
+
+    // ---- Pattern clips are untouched by the new line type ----------------
+    {
+        Project p;
+        p.arrangement.clear();
+        // Three patterns, so patternIndex 2 is a real one - validation drops
+        // a pattern clip that points past the end, and rightly so.
+        while (p.patterns.size() < 3) p.patterns.push_back(Pattern());
+        Clip pc{2, 4, 1.5f, 2.0f, 0xFF00FF00u};
+        pc.transpose = -5;
+        p.arrangement.push_back(pc);
+
+        const std::string path = testPath("aclip_pattern_still.ctp");
+        check(saveProject(p, path), "a pattern-only project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+        check(loaded.arrangement.size() == 1, "keeping its clip");
+        if (loaded.arrangement.size() == 1) {
+            check(loaded.arrangement[0].type == ClipType::Pattern,
+                  "as a pattern clip");
+            check(loaded.arrangement[0].patternIndex == 2 &&
+                  loaded.arrangement[0].transpose == -5,
+                  "with its pattern and transpose intact");
+        }
+        std::remove(path.c_str());
+    }
+
+    // ---- A sample that moved is reported, not swallowed -------------------
+    {
+        Project p;
+        p.patterns.clear();
+        p.arrangement.clear();
+        const int id = p.samplePool.loadSample(wavA);
+
+        Clip c;
+        c.type = ClipType::Audio;
+        c.sampleId = id;
+        c.channelIndex = 1;
+        c.startBeat = 0.0f;
+        c.lengthBeats = 4.0f;
+        c.trimStartSeconds = 0.25f;
+        p.arrangement.push_back(c);
+
+        const std::string path = testPath("aclip_missing.ctp");
+        check(saveProject(p, path), "the project saves while the file exists");
+
+        // Now the sample goes away, as it does when a user moves a folder.
+        std::remove(wavA.c_str());
+
+        Project loaded;
+        check(loadProject(loaded, path), "the project still loads");
+        check(loaded.missingSamples.size() == 1,
+              "and says which file it could not find");
+        check(loaded.arrangement.size() == 1,
+              "the clip keeps its place on the timeline rather than being "
+              "dropped - the edit is worth more than the broken link");
+        if (loaded.arrangement.size() == 1) {
+            check(loaded.arrangement[0].sampleId == -1,
+                  "with no sample behind it");
+            check(std::fabs(loaded.arrangement[0].trimStartSeconds - 0.25f) < 1e-4f,
+                  "and its trim intact, so relinking restores the edit");
+        }
+
+        // It must also be safe to render.
+        loaded.masterLimiterEnabled = false;
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&loaded);
+        seqPtr->updateChannelConfigs();
+        seqPtr->play();
+        std::vector<float> l(256), r(256);
+        bool finite = true;
+        for (int i = 0; i < 40; ++i) {
+            seqPtr->process(l.data(), r.data(), 256);
+            for (float v : l) if (!std::isfinite(v)) finite = false;
+        }
+        check(finite, "and a clip with no sample renders silence, not NaN");
+
+        std::remove(path.c_str());
+        // Put A back for the remaining cases.
+        std::vector<float> ll(4410, 0.5f), rr(4410, 0.5f);
+        writeWavFile(wavA, ll, rr);
+    }
+
+    // ---- Ids are remapped, not assumed -----------------------------------
+    //
+    // The writer emits the pool index it had at save time. On load,
+    // loadSample() hands out whatever index is next free - so one sample
+    // that no longer exists shifts every later index by one. Without the
+    // remap, every clip after the missing file plays the WRONG sample, which
+    // looks exactly like a correct load.
+    {
+        Project p;
+        p.patterns.clear();
+        p.arrangement.clear();
+        const int gone = p.samplePool.loadSample(wavA);   // becomes id 0
+        const int kept = p.samplePool.loadSample(wavB);   // becomes id 1
+        check(gone == 0 && kept == 1, "two samples load in order");
+
+        Clip c;
+        c.type = ClipType::Audio;
+        c.sampleId = kept;                                // file id 1
+        c.channelIndex = 2;
+        c.startBeat = 0.0f;
+        c.lengthBeats = 4.0f;
+        p.arrangement.push_back(c);
+
+        const std::string path = testPath("aclip_remap.ctp");
+        check(saveProject(p, path), "the project saves both samples");
+
+        std::remove(wavA.c_str());   // the earlier one disappears
+
+        Project loaded;
+        check(loadProject(loaded, path), "it loads with one sample missing");
+        check(loaded.samplePool.count() == 1, "only one sample made it in");
+        check(loaded.arrangement.size() == 1, "and the clip is there");
+        if (loaded.arrangement.size() == 1 && loaded.samplePool.count() == 1) {
+            const Sample* s = loaded.samplePool.getSample(loaded.arrangement[0].sampleId);
+            check(s != nullptr,
+                  "the clip resolves to a real sample even though its saved "
+                  "id no longer matches the pool index");
+            check(s != nullptr && s->filepath == wavB,
+                  "and specifically to the file it was actually pointing at, "
+                  "not the one that took over its old index");
+        }
+        std::remove(path.c_str());
+        std::vector<float> ll(4410, 0.5f), rr(4410, 0.5f);
+        writeWavFile(wavA, ll, rr);
+    }
+
+    // ---- A v4 file still loads -------------------------------------------
+    {
+        Project p;
+        p.name = "older";
+        p.arrangement.clear();
+        while (p.patterns.size() < 2) p.patterns.push_back(Pattern());
+        p.arrangement.push_back(Clip{1, 2, 0.0f, 4.0f, 0xFF112233u});
+
+        const std::string path = testPath("aclip_v4.ctp");
+        check(saveProject(p, path), "write a project");
+
+        // Rewrite its header as v4, exactly as a file saved before this
+        // change would read.
+        std::string text;
+        {
+            std::ifstream in(path, std::ios::binary);
+            std::ostringstream ss;
+            ss << in.rdbuf();
+            text = ss.str();
+        }
+        const size_t v = text.find("CHIPTUNE_PROJECT v5");
+        check(v != std::string::npos, "the header says v5");
+        if (v != std::string::npos) {
+            text.replace(v, 19, "CHIPTUNE_PROJECT v4");
+            std::ofstream out(path, std::ios::binary);
+            out << text;
+        }
+
+        Project loaded;
+        check(loadProject(loaded, path), "a v4 file loads under v5");
+        check(loaded.arrangement.size() == 1, "with its arrangement");
+        if (loaded.arrangement.size() == 1) {
+            check(loaded.arrangement[0].type == ClipType::Pattern,
+                  "and its clips default to pattern clips - a file written "
+                  "before audio clips existed has none");
+        }
+        check(loaded.missingSamples.empty(),
+              "and reports nothing missing, having referenced nothing");
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation repairs hostile values --------------------------------
+    {
+        Project p;
+        p.arrangement.clear();
+        const int id = p.samplePool.loadSample(wavA);
+        check(id >= 0, "a sample to point at");
+
+        Clip bad;
+        bad.type = ClipType::Audio;
+        bad.sampleId = 900;                  // past the end of the pool
+        bad.channelIndex = 0;
+        bad.startBeat = 0.0f;
+        bad.lengthBeats = 4.0f;
+        bad.gain = 99.0f;
+        bad.trimStartSeconds = 5.0f;
+        bad.trimEndSeconds = 1.0f;           // before the start
+        bad.fadeInBeats = -3.0f;
+        bad.fadeOutBeats = 1e9f;
+        p.arrangement.push_back(bad);
+
+        Clip nanClip;
+        nanClip.type = ClipType::Audio;
+        nanClip.sampleId = id;
+        nanClip.gain = std::numeric_limits<float>::quiet_NaN();
+        nanClip.trimStartSeconds = std::numeric_limits<float>::infinity();
+        nanClip.lengthBeats = 4.0f;
+        p.arrangement.push_back(nanClip);
+
+        clampProjectToValidRanges(p);
+
+        check(p.arrangement[0].sampleId == -1,
+              "a sample id past the end of the pool becomes no sample - it "
+              "would otherwise be an out-of-bounds read in the audio thread");
+        check(p.arrangement[0].gain >= 0.0f && p.arrangement[0].gain <= 4.0f,
+              "gain is clamped");
+        check(p.arrangement[0].trimEndSeconds == 0.0f,
+              "a trim that ends before it starts becomes 'to the end'");
+        check(p.arrangement[0].fadeInBeats >= 0.0f,
+              "a negative fade becomes none");
+        check(p.arrangement[0].fadeOutBeats <= 64.0f, "a huge fade is bounded");
+        check(std::isfinite(p.arrangement[1].gain) &&
+              std::isfinite(p.arrangement[1].trimStartSeconds),
+              "NaN and infinity are replaced with real numbers");
+    }
+
+    // ---- An audio clip is not judged by a field it does not use -----------
+    //
+    // Validation drops a clip whose patternIndex points past the end of the
+    // pattern list. An audio clip plays a sample and its patternIndex is a
+    // leftover default, so applying that rule to one would throw away a
+    // recording for pointing at a pattern it never meant to play.
+    {
+        Project p;
+        p.patterns.clear();
+        p.patterns.push_back(Pattern());
+        p.arrangement.clear();
+        const int id = p.samplePool.loadSample(wavB);
+
+        Clip audio;
+        audio.type = ClipType::Audio;
+        audio.sampleId = id;
+        audio.channelIndex = 1;
+        audio.patternIndex = 40;      // nonsense, and irrelevant
+        audio.lengthBeats = 4.0f;
+        p.arrangement.push_back(audio);
+
+        Clip pattern{40, 1, 0.0f, 4.0f, 0};   // same nonsense, but it matters
+        p.arrangement.push_back(pattern);
+
+        clampProjectToValidRanges(p);
+
+        check(p.arrangement.size() == 1,
+              "exactly one of the two clips is dropped");
+        check(p.arrangement.size() == 1 &&
+              p.arrangement[0].type == ClipType::Audio,
+              "and it is the pattern clip that goes - the audio clip keeps "
+              "its place because patternIndex means nothing to it");
+
+        // A clip on a channel that does not exist still goes, either way.
+        p.arrangement.clear();
+        Clip offChannel;
+        offChannel.type = ClipType::Audio;
+        offChannel.sampleId = id;
+        offChannel.channelIndex = Project::MAX_CHANNELS + 5;
+        offChannel.lengthBeats = 4.0f;
+        p.arrangement.push_back(offChannel);
+        clampProjectToValidRanges(p);
+        check(p.arrangement.empty(),
+              "but an audio clip on a channel that does not exist is still "
+              "dropped - that one would be an out-of-bounds mix");
+    }
+
+    std::remove(wavA.c_str());
+    std::remove(wavB.c_str());
+}
+
 // ============================================================================
 // Runner
 // ============================================================================
@@ -7938,6 +8663,8 @@ int main(int argc, char** argv) {
     testRoutingPersistence();
     testChannelCap();
     testMidiChannelBounds();
+    testAudioClips();
+    testAudioClipPersistence();
     testLongRunStability();
 
     std::printf("\n==========================\n");

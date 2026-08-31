@@ -231,6 +231,13 @@ public:
                 channelSamples[ch] = m_synths[ch].process(m_state.currentTime);
             }
 
+            // Audio clips join their channel here, before the insert rack -
+            // so a recorded part gets the channel's effects, volume, pan and
+            // sends exactly like a played one, with no separate routing.
+            if (m_state.isPlaying) {
+                mixAudioClips(channelSamples, m_state.currentBeat, activeChannels);
+            }
+
             // Pass 2: Update sidechain envelopes and apply sidechain compression
             for (int ch = 0; ch < activeChannels; ++ch) {
                 auto& fx = m_synths[ch].effects();
@@ -573,6 +580,81 @@ private:
     void allNotesOff() {
         for (auto& synth : m_synths) {
             synth.allNotesOff();
+        }
+    }
+
+    /*
+     * Add every sounding audio clip into the per-channel buffer.
+     *
+     * One pass over the arrangement, not one per channel: at 32 channels
+     * the per-channel version would do the same work 32 times over. Runs on
+     * the audio thread, so it only indexes - no allocation, no locks, and
+     * the pool's capacity is reserved up front so the vector it reads
+     * cannot be reallocated underneath it.
+     */
+    void mixAudioClips(std::array<float, MAX_CHANNELS>& channelSamples,
+                       float beat, int activeChannels) {
+        if (!m_project) return;
+
+        const float bpm = (m_project->bpm > 1.0f) ? m_project->bpm : 120.0f;
+        const float secondsPerBeat = 60.0f / bpm;
+
+        for (const Clip& clip : m_project->arrangement) {
+            if (clip.type != ClipType::Audio) continue;
+            if (clip.channelIndex < 0 || clip.channelIndex >= activeChannels) continue;
+            if (beat < clip.startBeat) continue;
+            if (beat >= clip.startBeat + clip.lengthBeats) continue;
+
+            const Sample* sample = m_project->samplePool.getSample(clip.sampleId);
+            if (sample == nullptr || !sample->isLoaded) continue;
+            if (sample->audioData.empty()) continue;
+
+            const float intoClipBeats = beat - clip.startBeat;
+            float intoSampleSeconds = intoClipBeats * secondsPerBeat +
+                                      clip.trimStartSeconds;
+
+            // The trimmed region, and how the clip fills its length.
+            const float regionEnd = (clip.trimEndSeconds > clip.trimStartSeconds)
+                ? clip.trimEndSeconds : sample->lengthSeconds;
+            const float regionLength = regionEnd - clip.trimStartSeconds;
+            if (regionLength <= 0.0f) continue;
+
+            if (intoSampleSeconds >= regionEnd) {
+                if (!clip.loopClip) continue;      // played out; silence
+                const float past = intoSampleSeconds - clip.trimStartSeconds;
+                intoSampleSeconds = clip.trimStartSeconds +
+                                    std::fmod(past, regionLength);
+            }
+
+            // Linear interpolation on a fractional index. The pool decodes
+            // to 48 kHz and the engine usually runs at 44.1, so reading the
+            // raw array would be a 9% pitch error - a semitone and a half.
+            const float position = intoSampleSeconds *
+                                   static_cast<float>(sample->sampleRate);
+            if (position < 0.0f) continue;
+
+            const size_t index = static_cast<size_t>(position);
+            if (index + 1 >= sample->audioData.size()) continue;
+
+            const float fraction = position - static_cast<float>(index);
+            const float a = sample->audioData[index];
+            const float b = sample->audioData[index + 1];
+            float value = a + (b - a) * fraction;
+
+            value *= clip.gain;
+
+            // Fades, in beats so they follow the tempo like everything else.
+            if (clip.fadeInBeats > 0.0f && intoClipBeats < clip.fadeInBeats) {
+                value *= intoClipBeats / clip.fadeInBeats;
+            }
+            if (clip.fadeOutBeats > 0.0f) {
+                const float untilEnd = clip.lengthBeats - intoClipBeats;
+                if (untilEnd < clip.fadeOutBeats) {
+                    value *= (untilEnd > 0.0f) ? (untilEnd / clip.fadeOutBeats) : 0.0f;
+                }
+            }
+
+            channelSamples[static_cast<size_t>(clip.channelIndex)] += value;
         }
     }
 

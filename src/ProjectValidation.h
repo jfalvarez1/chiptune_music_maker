@@ -342,6 +342,24 @@ inline void clampProjectToValidRanges(Project& project) {
     project.masterLimiterCeiling = sanitizeFloat(project.masterLimiterCeiling, -12.0f, 0.0f, -0.3f);
     project.masterLimiterRelease = sanitizeFloat(project.masterLimiterRelease, 0.001f, 2.0f, 0.05f);
 
+    // Audio clips: a missing sample or a backwards trim must not reach the
+    // audio thread as an index into nothing.
+    for (Clip& clip : project.arrangement) {
+        if (clip.type != ClipType::Audio) continue;
+
+        if (clip.sampleId < 0 || clip.sampleId >= project.samplePool.count()) {
+            clip.sampleId = -1;     // silent, and visibly so in the UI
+        }
+        clip.gain = sanitizeFloat(clip.gain, 0.0f, 4.0f, 1.0f);
+        clip.trimStartSeconds = sanitizeFloat(clip.trimStartSeconds, 0.0f, 3600.0f, 0.0f);
+        clip.trimEndSeconds = sanitizeFloat(clip.trimEndSeconds, 0.0f, 3600.0f, 0.0f);
+        if (clip.trimEndSeconds > 0.0f && clip.trimEndSeconds <= clip.trimStartSeconds) {
+            clip.trimEndSeconds = 0.0f;   // 0 means "to the end of the sample"
+        }
+        clip.fadeInBeats = sanitizeFloat(clip.fadeInBeats, 0.0f, 64.0f, 0.0f);
+        clip.fadeOutBeats = sanitizeFloat(clip.fadeOutBeats, 0.0f, 64.0f, 0.0f);
+    }
+
     // A clip on a channel a chip-authentic project cannot reach would be
     // silent with no visible reason, so the flag is honoured here too: the
     // clip moves down rather than disappearing.
@@ -384,14 +402,22 @@ inline void clampProjectToValidRanges(Project& project) {
     // Arrangement. A clip pointing at a pattern or channel that does not exist
     // is dropped rather than clamped - silently retargeting someone's clip to
     // a different pattern would be worse than losing it.
+    //
+    // An audio clip is exempt from the pattern check: it plays a sample and
+    // its patternIndex is a leftover default that means nothing. Judging it
+    // by that field would drop a perfectly good recording for pointing at a
+    // pattern it never intended to play.
     const int patternCount = static_cast<int>(project.patterns.size());
     project.arrangement.erase(
         std::remove_if(project.arrangement.begin(), project.arrangement.end(),
                        [patternCount](const Clip& clip) {
+                           if (clip.channelIndex < 0 ||
+                               clip.channelIndex >= Project::MAX_CHANNELS) {
+                               return true;
+                           }
+                           if (clip.type == ClipType::Audio) return false;
                            return clip.patternIndex < 0 ||
-                                  clip.patternIndex >= patternCount ||
-                                  clip.channelIndex < 0 ||
-                                  clip.channelIndex >= Project::MAX_CHANNELS;
+                                  clip.patternIndex >= patternCount;
                        }),
         project.arrangement.end());
 

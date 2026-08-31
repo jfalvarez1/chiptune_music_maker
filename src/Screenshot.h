@@ -172,6 +172,11 @@ struct CaptureRequest {
     // Open the Effect Rack, which is collapsed by default.
     bool expandFxRack = false;
 
+    // Put an audio clip on the timeline. The sample is synthesised in
+    // memory rather than loaded from disk, so the shot does not depend
+    // on a fixture file existing wherever this runs.
+    bool addAudioClip = false;
+
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
 
@@ -203,6 +208,7 @@ struct CaptureRequest {
 //   --ghosts             show cross-channel ghost notes
 //   --chip-panel         open the Chip Accuracy section
 //   --fx-rack            open the Effect Rack section
+//   --audio-clip         put an audio clip on the arrangement
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -249,6 +255,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.expandChipPanel = true;
         } else if (arg == "--fx-rack") {
             request.expandFxRack = true;
+        } else if (arg == "--audio-clip") {
+            request.addAudioClip = true;
         } else if (arg == "--genre") {
             next(request.genreFocus);
         } else if (arg == "--focus") {
@@ -504,6 +512,64 @@ inline void applyCaptureState(const CaptureRequest& request,
         // Give the first channel a macro so the macro editor screenshot has
         // something in it
         project.channels[0].macros = makeMajorChordArp();
+    }
+
+    // --- An audio clip on the timeline ---
+    //
+    // The waveform drawing is the part the headless suite cannot reach:
+    // there is no window. It is also the part most likely to go wrong, since
+    // it walks screen pixels back into sample frames and could divide by
+    // zero or index off the end. The sample is built here rather than read
+    // from disk so the shot does not depend on a fixture file.
+    if (request.addAudioClip) {
+        Sample sample;
+        sample.name = "take_01.wav";
+        sample.filepath = "take_01.wav";
+        sample.sampleRate = 48000;
+
+        // Two seconds of a decaying tone with four transients in it, so the
+        // drawn envelope has visible structure rather than a flat block -
+        // a waveform that renders as a rectangle would pass a "did it draw"
+        // check while telling the user nothing.
+        const int frames = sample.sampleRate * 2;
+        sample.audioData.resize(static_cast<size_t>(frames));
+        for (int i = 0; i < frames; ++i) {
+            const float t = float(i) / float(sample.sampleRate);
+            const float intoHit = std::fmod(t, 0.5f);
+            const float envelope = std::exp(-intoHit * 9.0f);
+            sample.audioData[static_cast<size_t>(i)] =
+                0.85f * envelope * std::sin(6.28318530718f * 180.0f * t);
+        }
+        sample.lengthSeconds = float(frames) / float(sample.sampleRate);
+        sample.loopEndSeconds = sample.lengthSeconds;
+        sample.isLoaded = true;
+
+        const int id = project.samplePool.addSample(sample);
+        if (id >= 0) {
+            Clip clip;
+            clip.type = ClipType::Audio;
+            clip.sampleId = id;
+            clip.channelIndex = std::min(5, project.activeChannelCount() - 1);
+            clip.startBeat = 0.0f;
+            clip.lengthBeats = 8.0f;
+            clip.gain = 1.0f;
+            clip.fadeInBeats = 1.0f;    // so the fade triangles draw too
+            clip.fadeOutBeats = 1.5f;
+            clip.loopClip = true;
+            project.arrangement.push_back(clip);
+
+            // And one whose sample is gone, which draws the placeholder
+            // instead - the path a user hits after moving a folder, and the
+            // one most likely to dereference a null Sample.
+            Clip broken;
+            broken.type = ClipType::Audio;
+            broken.sampleId = -1;
+            broken.channelIndex = std::min(6, project.activeChannelCount() - 1);
+            broken.startBeat = 9.0f;
+            broken.lengthBeats = 4.0f;
+            project.arrangement.push_back(broken);
+            project.missingSamples.push_back("D:/moved/vocal_take.wav");
+        }
     }
 
     // Selecting a few notes makes the Note Editor populate and the selected

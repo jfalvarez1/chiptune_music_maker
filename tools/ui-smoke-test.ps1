@@ -106,6 +106,30 @@ foreach ($panel in $panels) {
     args = "--demo --view pianoroll --ghosts"
 })
 
+# Audio clips draw their own waveform, which means walking screen pixels back
+# into sample frames - the one place in the arrangement view that can divide
+# by zero or index off the end of a sample. The case also places a clip whose
+# sample is missing, which is the path that would dereference a null Sample.
+[void]$cases.Add(@{
+    name = "arrangement-audio-clip"
+    args = "--demo --view arrangement --audio-clip"
+})
+
+# The same clips at a zoom where one screen pixel spans many sample frames,
+# and at one where a single frame spans many pixels. Both ends of that
+# division have their own way of going wrong.
+[void]$cases.Add(@{
+    name = "arrangement-audio-clip-wide"
+    args = "--demo --view arrangement --audio-clip"
+    w = 2560; h = 800
+})
+
+[void]$cases.Add(@{
+    name = "arrangement-audio-clip-narrow"
+    args = "--demo --view arrangement --audio-clip"
+    w = 800; h = 600
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"

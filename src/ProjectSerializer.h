@@ -35,6 +35,7 @@
 #include <iomanip>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <cmath>
 
 namespace ChiptuneTracker {
@@ -52,7 +53,14 @@ namespace ctp {
 // is no send and a bus output of -1 is the master, and both are the
 // defaults - which is precisely what a pre-v4 file means. A project that
 // never touches routing writes no new lines at all.
-inline constexpr int FORMAT_VERSION = 4;
+// v5 added audio clips on the timeline.
+//
+// Audio clips write their own ACLIP line rather than extending CLIP: the two
+// share almost no fields, and an older reader skips a line it does not
+// recognise instead of misparsing a CLIP with unexpected trailing tokens.
+// Sample data is not stored - the file carries paths and the pool reloads
+// them, which keeps a .ctp a text file you can read.
+inline constexpr int FORMAT_VERSION = 5;
 
 // ============================================================================
 // Field tables
@@ -634,6 +642,20 @@ inline bool writeProject(std::ostream& file, const Project& project) {
         }
     }
 
+    // Samples the project references, by path. Written before the clips
+    // that point at them so a reader has the pool populated by the time it
+    // meets an ACLIP.
+    {
+        const int sampleCount = project.samplePool.count();
+        for (int id = 0; id < sampleCount; ++id) {
+            const Sample* sample = project.samplePool.getSample(id);
+            if (sample == nullptr || sample->filepath.empty()) continue;
+            file << "SAMPLE " << id << ' ' << ctp::quote(sample->filepath)
+                 << ' ' << ctp::quote(sample->name) << "\n";
+        }
+        if (sampleCount > 0) file << "\n";
+    }
+
     // Patterns
     for (const Pattern& pattern : project.patterns) {
         file << "PATTERN " << ctp::quote(pattern.name) << ' ' << pattern.length << "\n";
@@ -672,6 +694,20 @@ inline bool writeProject(std::ostream& file, const Project& project) {
         // transpose rides at the end so a pre-3.7 reader simply stops
         // before it, and a missing token below reads as 0 - the old
         // behaviour either way.
+        if (clip.type == ClipType::Audio) {
+            file << "ACLIP " << clip.sampleId << ' ' << clip.channelIndex << ' '
+                 << ctp::floatToToken(clip.startBeat) << ' '
+                 << ctp::floatToToken(clip.lengthBeats) << ' '
+                 << clip.color << ' '
+                 << ctp::floatToToken(clip.gain) << ' '
+                 << ctp::floatToToken(clip.trimStartSeconds) << ' '
+                 << ctp::floatToToken(clip.trimEndSeconds) << ' '
+                 << ctp::floatToToken(clip.fadeInBeats) << ' '
+                 << ctp::floatToToken(clip.fadeOutBeats) << ' '
+                 << (clip.loopClip ? 1 : 0) << "\n";
+            continue;
+        }
+
         file << "CLIP " << clip.patternIndex << ' ' << clip.channelIndex << ' '
              << ctp::floatToToken(clip.startBeat) << ' '
              << ctp::floatToToken(clip.lengthBeats) << ' '
@@ -709,6 +745,18 @@ inline bool readProject(std::istream& file, Project& project) {
     project.arrangement.clear();
 
     Pattern* currentPattern = nullptr;
+
+    /*
+     * File sample id -> pool sample id.
+     *
+     * These are not the same number. The writer emits the pool index it had
+     * at save time; on load, loadSample() assigns whatever index the pool
+     * hands out. One sample that no longer exists on disk shifts every later
+     * index by one, and without this map every ACLIP after the missing file
+     * would play the wrong audio - silently, since a valid index into the
+     * wrong sample looks exactly like a correct load.
+     */
+    std::unordered_map<int, int> sampleIdMap;
 
     while (std::getline(file, line)) {
         if (line.empty()) continue;
@@ -907,6 +955,48 @@ inline bool readProject(std::istream& file, Project& project) {
                 }
                 target.fxSlotCount = count;
             }
+        }
+        else if (cmd == "SAMPLE") {
+            int fileId = -1;
+            iss >> fileId;
+
+            size_t pos = 0;
+            const std::string path = ctp::unquote(line, pos);
+            const std::string name = ctp::unquote(line, pos);
+
+            // Audio is reloaded from disk, not stored in the file. A sample
+            // that has moved is reported rather than silently dropped - a
+            // clip playing silence with no explanation is worse than one
+            // that says which file went missing.
+            if (!path.empty()) {
+                const int loaded = project.samplePool.loadSample(path);
+                if (loaded < 0) {
+                    project.missingSamples.push_back(path);
+                } else {
+                    if (!name.empty()) project.samplePool.renameSample(loaded, name);
+                    sampleIdMap[fileId] = loaded;
+                }
+            }
+        }
+        else if (cmd == "ACLIP") {
+            Clip clip;
+            clip.type = ClipType::Audio;
+            int loopFlag = 0;
+            int fileSampleId = -1;
+            iss >> fileSampleId >> clip.channelIndex
+                >> clip.startBeat >> clip.lengthBeats >> clip.color
+                >> clip.gain >> clip.trimStartSeconds >> clip.trimEndSeconds
+                >> clip.fadeInBeats >> clip.fadeOutBeats >> loopFlag;
+            clip.loopClip = (loopFlag != 0);
+
+            // A clip whose sample did not load keeps its place on the
+            // timeline with sampleId -1. Dropping it would lose the edit -
+            // the trim, the fades, the position - for a file the user may
+            // simply have moved and can point us at again.
+            const auto mapped = sampleIdMap.find(fileSampleId);
+            clip.sampleId = (mapped != sampleIdMap.end()) ? mapped->second : -1;
+
+            project.arrangement.push_back(clip);
         }
         else if (cmd == "CLIP") {
             Clip clip;

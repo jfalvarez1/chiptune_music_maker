@@ -8404,10 +8404,86 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
             selectedClipIndex = -1;
         }
 
+        // An audio clip and a pattern clip are edited by different things.
+        // Transpose means nothing to a recording, and gain and fades mean
+        // nothing to a pattern reference, so the toolbar shows one set or
+        // the other rather than a row of controls half of which are dead.
+        if (selectedClipIndex >= 0 &&
+            project.arrangement[selectedClipIndex].type == ClipType::Audio) {
+            Clip& selected = project.arrangement[selectedClipIndex];
+
+            ImGui::SameLine(0, 12);
+            ImGui::SetNextItemWidth(100);
+            float gain = selected.gain;
+            if (ImGui::DragFloat("##clipgain", &gain, 0.005f, 0.0f, 4.0f, "Gain: %.2f")) {
+                g_UndoHistory.saveState(project, "Clip Gain");
+                selected.gain = std::clamp(gain, 0.0f, 4.0f);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Level of this clip, before the channel fader.");
+            }
+
+            ImGui::SameLine(0, 8);
+            ImGui::SetNextItemWidth(95);
+            float fadeIn = selected.fadeInBeats;
+            if (ImGui::DragFloat("##clipfi", &fadeIn, 0.02f, 0.0f, 64.0f, "In: %.2f b")) {
+                g_UndoHistory.saveState(project, "Clip Fade In");
+                selected.fadeInBeats = std::clamp(fadeIn, 0.0f, 64.0f);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Fade-in length, in beats - so it follows the tempo.");
+            }
+
+            ImGui::SameLine(0, 8);
+            ImGui::SetNextItemWidth(100);
+            float fadeOut = selected.fadeOutBeats;
+            if (ImGui::DragFloat("##clipfo", &fadeOut, 0.02f, 0.0f, 64.0f, "Out: %.2f b")) {
+                g_UndoHistory.saveState(project, "Clip Fade Out");
+                selected.fadeOutBeats = std::clamp(fadeOut, 0.0f, 64.0f);
+            }
+
+            ImGui::SameLine(0, 8);
+            ImGui::SetNextItemWidth(110);
+            float trimStart = selected.trimStartSeconds;
+            if (ImGui::DragFloat("##cliptrim", &trimStart, 0.005f, 0.0f, 3600.0f,
+                                 "Start: %.3f s")) {
+                g_UndoHistory.saveState(project, "Clip Trim");
+                selected.trimStartSeconds = std::max(0.0f, trimStart);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Where playback starts inside the sample.\n"
+                    "Use it to cut off silence before the first hit.");
+            }
+
+            ImGui::SameLine(0, 8);
+            bool loopClip = selected.loopClip;
+            if (ImGui::Checkbox("Loop##clip", &loopClip)) {
+                g_UndoHistory.saveState(project, "Clip Loop");
+                selected.loopClip = loopClip;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Repeat the sample to fill the clip.\n"
+                    "Off, the clip falls silent once the sample runs out.");
+            }
+
+            const Sample* s = project.samplePool.getSample(selected.sampleId);
+            if (s == nullptr) {
+                ImGui::SameLine(0, 12);
+                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "audio missing");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "The file this clip pointed at could not be found.\n"
+                        "The clip and its edits are intact - use Import Audio\n"
+                        "to point it at the file again.");
+                }
+            }
+        }
         // Per-clip transpose: the same pattern placed at 0, +8, +3, +10 is
         // a whole progression from one bassline. The pattern is untouched;
         // only this placement moves.
-        if (selectedClipIndex >= 0) {
+        else if (selectedClipIndex >= 0) {
             ImGui::SameLine(0, 12);
             ImGui::SetNextItemWidth(110);
             Clip& selected = project.arrangement[selectedClipIndex];
@@ -8432,8 +8508,93 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
         ImGui::EndDisabled();
     }
 
+    // ---- Audio in ---------------------------------------------------------
+    //
+    // The sample pool and the audio recorder both existed and had no way in;
+    // this is it. An imported file lands on the selected channel at the
+    // playhead, sized to its own length, so it is immediately in the right
+    // place rather than at beat zero on channel zero.
+    ImGui::SameLine(0, 20);
+    if (ImGui::Button("Import Audio##arr")) {
+        const std::string path = openFileDialog(
+            "Audio Files (*.wav;*.mp3;*.ogg;*.flac)\0*.wav;*.mp3;*.ogg;*.flac\0"
+            "All Files (*.*)\0*.*\0",
+            "wav");
+        if (!path.empty()) {
+            const int id = project.samplePool.loadSample(path);
+            if (id >= 0) {
+                const Sample* s = project.samplePool.getSample(id);
+                g_UndoHistory.saveState(project, "Import Audio");
+
+                // If an audio clip is selected, this relinks it - which is
+                // how a user fixes a file that moved without losing the trim
+                // and the fades they already set.
+                if (selectedClipIndex >= 0 &&
+                    selectedClipIndex < static_cast<int>(project.arrangement.size()) &&
+                    project.arrangement[selectedClipIndex].type == ClipType::Audio) {
+                    project.arrangement[selectedClipIndex].sampleId = id;
+                } else {
+                    Clip clip;
+                    clip.type = ClipType::Audio;
+                    clip.sampleId = id;
+                    clip.channelIndex = std::clamp(ui.selectedChannel, 0,
+                                                   project.activeChannelCount() - 1);
+                    clip.startBeat = std::max(0.0f,
+                        snapBeat(seq.getCurrentBeat(), effectiveSnap(ui),
+                                 project.beatsPerMeasure));
+
+                    // Sized to the audio's own length so it plays whole.
+                    const float secondsPerBeat =
+                        60.0f / ((project.bpm > 1.0f) ? project.bpm : 120.0f);
+                    const float beats = (s != nullptr && secondsPerBeat > 0.0f)
+                        ? s->lengthSeconds / secondsPerBeat : 4.0f;
+                    clip.lengthBeats = std::clamp(beats, 0.25f, 256.0f);
+
+                    project.arrangement.push_back(clip);
+                    selectedClipIndex = static_cast<int>(project.arrangement.size()) - 1;
+                }
+            } else if (std::find(project.missingSamples.begin(),
+                                 project.missingSamples.end(), path) ==
+                       project.missingSamples.end()) {
+                // A file that will not decode is reported through the same
+                // list as one that could not be found, rather than through a
+                // second mechanism that says the same thing differently.
+                project.missingSamples.push_back(path);
+            }
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Place a WAV, MP3, OGG or FLAC on the timeline as an audio clip.\n"
+            "It lands on the selected channel at the playhead and runs\n"
+            "through that channel's volume, pan, effects and sends - so a\n"
+            "recorded part can use the channel's reverb like a played one.\n\n"
+            "With an audio clip selected, this relinks that clip instead,\n"
+            "which is how you repair one whose file moved.");
+    }
+
     ImGui::SameLine(0, 20);
     ImGui::TextDisabled("Double-click to add clip | Right-click clip to delete | Drag to move");
+
+    // A file that could not be found is worth saying once, plainly, rather
+    // than leaving the user to wonder why a clip is silent.
+    if (!project.missingSamples.empty()) {
+        ImGui::SameLine(0, 16);
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%d audio file%s missing",
+                           static_cast<int>(project.missingSamples.size()),
+                           project.missingSamples.size() == 1 ? "" : "s");
+        if (ImGui::IsItemHovered()) {
+            std::string list;
+            for (const std::string& p : project.missingSamples) {
+                list += p;
+                list += "\n";
+            }
+            ImGui::SetTooltip(
+                "These files could not be found when the project loaded:\n\n%s\n"
+                "Their clips kept their place and their edits. Select one and\n"
+                "use Import Audio to point it at the file again.", list.c_str());
+        }
+    }
 
     ImGui::Separator();
 
@@ -8634,6 +8795,106 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
                 ImVec2(x + 1, y + 2),
                 ImVec2(x + w - 1, y + trackHeight - 3),
                 borderColor, 0.0f, 0, 2.0f);
+        }
+
+        if (clip.type == ClipType::Audio) {
+            /*
+             * An audio clip is drawn as its waveform, not as a coloured bar.
+             *
+             * A bar tells you a clip is there; the waveform tells you where
+             * the hits are, which is the whole reason you line a recording up
+             * against a grid. It is drawn one vertical line per screen pixel
+             * from the min/max of the samples that fall under that pixel -
+             * peak envelope, not decimation, because decimating a 48 kHz
+             * sample down to a few hundred pixels aliases transients away and
+             * a drum hit vanishes from a picture of a drum hit.
+             */
+            const Sample* sample = project.samplePool.getSample(clip.sampleId);
+            const float bodyTop = y + 2.0f;
+            const float bodyBot = y + trackHeight - 3.0f;
+            const float midY = (bodyTop + bodyBot) * 0.5f;
+            const float halfH = (bodyBot - bodyTop) * 0.5f - 1.0f;
+
+            // Only the part of the clip actually on screen.
+            const float clipLeft = std::max(x + 1.0f, canvasPos.x + headerWidth);
+            const float clipRight = std::min(x + w - 1.0f, canvasPos.x + canvasSize.x);
+
+            if (sample != nullptr && !sample->audioData.empty() && clipRight > clipLeft) {
+                const float secondsPerBeat =
+                    60.0f / ((project.bpm > 1.0f) ? project.bpm : 120.0f);
+                const float regionEnd = (clip.trimEndSeconds > clip.trimStartSeconds)
+                    ? clip.trimEndSeconds : sample->lengthSeconds;
+                const float regionLength = std::max(1e-6f,
+                                                    regionEnd - clip.trimStartSeconds);
+                const auto frameCount = static_cast<float>(sample->audioData.size());
+
+                const ImU32 waveColor = IM_COL32(15, 15, 20, 220);
+                for (float px = clipLeft; px < clipRight; px += 1.0f) {
+                    const float beatAt = (px - x) / beatWidth;
+                    float intoSample = beatAt * secondsPerBeat + clip.trimStartSeconds;
+                    if (clip.loopClip) {
+                        intoSample = clip.trimStartSeconds +
+                            std::fmod(std::max(0.0f, intoSample - clip.trimStartSeconds),
+                                      regionLength);
+                    } else if (intoSample >= regionEnd) {
+                        break;              // played out; nothing left to draw
+                    }
+
+                    const float nextBeat = (px + 1.0f - x) / beatWidth;
+                    const float span = std::max(1.0f,
+                        (nextBeat - beatAt) * secondsPerBeat *
+                        static_cast<float>(sample->sampleRate));
+
+                    const auto from = static_cast<size_t>(
+                        std::max(0.0f, intoSample * static_cast<float>(sample->sampleRate)));
+                    const auto to = static_cast<size_t>(
+                        std::min(frameCount, static_cast<float>(from) + span));
+                    if (from >= sample->audioData.size() || to <= from) continue;
+
+                    float lo = 0.0f, hi = 0.0f;
+                    for (size_t f = from; f < to; ++f) {
+                        const float v = sample->audioData[f];
+                        if (v < lo) lo = v;
+                        if (v > hi) hi = v;
+                    }
+                    drawList->AddLine(ImVec2(px, midY - hi * halfH * clip.gain),
+                                      ImVec2(px, midY - lo * halfH * clip.gain),
+                                      waveColor);
+                }
+            }
+
+            // A clip whose sample went missing is drawn as a hatched, named
+            // placeholder rather than an empty box, so the user can see the
+            // edit survived and what to relink.
+            if (sample == nullptr) {
+                drawList->AddRect(ImVec2(x + 1, y + 2),
+                                  ImVec2(x + w - 1, y + trackHeight - 3),
+                                  IM_COL32(220, 90, 90, 220), 0.0f, 0, 1.0f);
+                drawList->AddText(ImVec2(x + 4, y + 8),
+                                  IM_COL32(255, 200, 200, 255), "missing audio");
+            } else {
+                char audioLabel[96];
+                snprintf(audioLabel, sizeof(audioLabel), "%s", sample->name.c_str());
+                drawList->AddText(ImVec2(x + 4, y + 1),
+                                  IM_COL32(0, 0, 0, 180), audioLabel);
+            }
+
+            // Fade handles, drawn as the triangles they describe.
+            if (clip.fadeInBeats > 0.0f) {
+                const float fx = x + clip.fadeInBeats * beatWidth;
+                drawList->AddTriangleFilled(ImVec2(x + 1, bodyBot),
+                                            ImVec2(std::min(fx, x + w - 1), bodyTop),
+                                            ImVec2(x + 1, bodyTop),
+                                            IM_COL32(0, 0, 0, 110));
+            }
+            if (clip.fadeOutBeats > 0.0f) {
+                const float fx = x + w - clip.fadeOutBeats * beatWidth;
+                drawList->AddTriangleFilled(ImVec2(x + w - 1, bodyBot),
+                                            ImVec2(std::max(fx, x + 1), bodyTop),
+                                            ImVec2(x + w - 1, bodyTop),
+                                            IM_COL32(0, 0, 0, 110));
+            }
+            continue;
         }
 
         // Pattern name, with the transpose beside it when there is one -

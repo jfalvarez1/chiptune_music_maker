@@ -16,6 +16,7 @@
 #include "Macros.h"
 
 #include "Snap.h"
+#include "Sample.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -445,6 +446,16 @@ struct ChannelConfig {
 // ============================================================================
 // Arrangement Clip (Pattern placement on timeline)
 // ============================================================================
+// What a clip on the timeline actually is.
+//
+// Audio clips sit on a channel beside pattern clips rather than on a
+// separate track type, so they inherit that channel's volume, pan, insert
+// rack and sends. A recorded vocal gets the channel's reverb for free.
+enum class ClipType : uint8_t {
+    Pattern = 0,
+    Audio
+};
+
 struct Clip {
     int patternIndex = 0;       // Which pattern to play
     int channelIndex = 0;       // Which channel
@@ -458,6 +469,26 @@ struct Clip {
     // transpose: one bassline pattern, placed four times at 0, +8, +3, +10,
     // is a whole progression - which also relieves the 64-pattern cap.
     int transpose = 0;
+
+    // ---- Audio clips -----------------------------------------------------
+    //
+    // Only meaningful when type == Audio. Kept on Clip rather than in a
+    // separate struct so the arrangement stays one list: every existing
+    // operation - move, delete, select, the loop range, the tracker's
+    // channel resolution - keeps working on both kinds without a branch.
+    int sampleId = -1;          // index into the project's SamplePool
+    float gain = 1.0f;
+    float trimStartSeconds = 0.0f;   // where playback starts inside the sample
+    float trimEndSeconds = 0.0f;     // 0 = to the end of the sample
+    float fadeInBeats = 0.0f;
+    float fadeOutBeats = 0.0f;
+    bool loopClip = false;      // repeat the trimmed region to fill the clip
+
+    // Last, not first. Putting a new field at the front of an
+    // aggregate-initialised struct silently re-maps every Clip{...} in the
+    // codebase - the exact mistake Clip::transpose taught, and which I made
+    // again here by leading with it.
+    ClipType type = ClipType::Pattern;
 };
 
 // ============================================================================
@@ -870,6 +901,16 @@ struct Project {
     float humanizeVelocity = 0.1f;  // Humanize velocity variation (0.0 to 1.0)
 
     std::array<ChannelConfig, MAX_CHANNELS> channels;
+
+    // Audio the project references. Not serialized as data - the file
+    // carries paths and the pool reloads them, which is how every DAW does
+    // it and keeps a .ctp a text file you can read.
+    SamplePool samplePool;
+
+    // Paths the loader could not find. Surfaced rather than swallowed: a
+    // clip playing silence with no explanation is worse than one that says
+    // which file moved.
+    std::vector<std::string> missingSamples;
 
     // How many channels this project actually uses. Everything that walks
     // channels - the mixer, the tracker, the arrangement, and the audio mix

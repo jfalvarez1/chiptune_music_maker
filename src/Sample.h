@@ -55,6 +55,18 @@ class SamplePool {
 public:
     static constexpr int MAX_SAMPLES = 256;
 
+    /*
+     * The capacity is reserved once, up front, and never grows.
+     *
+     * The audio thread reads m_samples[id] while the UI thread can be
+     * loading a new sample. Without this reserve a push_back would
+     * reallocate the outer vector out from under the reader - a
+     * use-after-free in the audio callback, which is the worst place to
+     * have one. Reserving costs a few KB of headers; the audio data itself
+     * is owned by each Sample.
+     */
+    SamplePool() { m_samples.reserve(MAX_SAMPLES); }
+
     // Load a sample from file (WAV, MP3, OGG)
     int loadSample(const std::string& filepath) {
         // Check if already loaded
@@ -122,6 +134,22 @@ public:
     }
 
     // Get sample by ID
+    int count() const { return static_cast<int>(m_samples.size()); }
+
+    void renameSample(int id, const std::string& name) {
+        if (id >= 0 && id < static_cast<int>(m_samples.size())) {
+            m_samples[static_cast<size_t>(id)].name = name;
+        }
+    }
+
+    // Register audio that came from somewhere other than a file - a
+    // recording, or a test fixture. Returns the id, or -1 when full.
+    int addSample(const Sample& sample) {
+        if (static_cast<int>(m_samples.size()) >= MAX_SAMPLES) return -1;
+        m_samples.push_back(sample);
+        return static_cast<int>(m_samples.size()) - 1;
+    }
+
     const Sample* getSample(int id) const {
         if (id >= 0 && id < (int)m_samples.size()) {
             return &m_samples[id];
