@@ -221,6 +221,10 @@ inline void clampChannelToValidRanges(ChannelConfig& c, int poolSize = 0) {
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
 
+    // A response index this build does not have falls back to the first.
+    c.convolutionIR = sanitizeInt(c.convolutionIR, 0, IRLibrary::SLOTS - 1, 0);
+    c.convolutionMix = sanitizeFloat(c.convolutionMix, 0.0f, 1.0f, 0.35f);
+
     // The ring modulator and the rest of the sidechain. A frequency of zero
     // is DC, which multiplies the signal by a constant and is silence at the
     // extreme; an attack of zero divides by itself in the envelope.

@@ -49,6 +49,7 @@
 #include "InstrumentPresets.h"
 #include "SettingsAudit.h"
 #include "Reverbs.h"
+#include "Convolution.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -14635,6 +14636,362 @@ static void testEffectSettingsPersist() {
     }
 }
 
+
+// ============================================================================
+// 86. Convolution
+// ============================================================================
+static void testConvolution() {
+    beginTest("Convolution reverb");
+
+    const float rate = 44100.0f;
+
+    // ---- It equals direct convolution ---------------------------------------
+    //
+    // The one property that is arithmetic rather than opinion. Partitioned
+    // overlap-save is a rearrangement of the same sum; if it does not match
+    // a direct convolution it is simply wrong, however plausible it sounds.
+    {
+        // A short, awkward response - not a decaying tail, so a bug cannot
+        // hide under something that was going to fade anyway.
+        std::vector<float> ir(1500, 0.0f);
+        ir[0] = 1.0f;
+        ir[1] = -0.5f;
+        ir[97] = 0.8f;
+        ir[513] = -0.6f;      // deliberately across a partition boundary
+        ir[1024] = 0.4f;      // and on another
+        ir[1499] = 0.25f;
+
+        // A signal with no symmetry to be flattered by.
+        std::vector<float> input(6000, 0.0f);
+        uint32_t rng = 12345u;
+        for (size_t i = 0; i < input.size(); ++i) {
+            rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+            input[i] = (float((rng >> 16) & 0x7FFF) / 16383.5f) - 1.0f;
+        }
+
+        // Direct convolution, as the definition.
+        std::vector<float> expected(input.size(), 0.0f);
+        for (size_t n = 0; n < input.size(); ++n) {
+            float sum = 0.0f;
+            for (size_t k = 0; k < ir.size() && k <= n; ++k) {
+                sum += input[n - k] * ir[k];
+            }
+            expected[n] = sum;
+        }
+
+        auto partitioned = std::make_unique<PartitionedIR>();
+        partitioned->build(ir, rate);
+        check(partitioned->partitions() == 3,
+              "a 1500-sample response partitions into three 512-blocks (got " +
+              std::to_string(partitioned->partitions()) + ")");
+
+        auto engine = std::make_unique<ConvolutionEngine>();
+        engine->prepare(partitioned.get());
+        check(engine->active(), "and the engine attaches to it");
+        check(engine->latency() == ConvolutionEngine::BLOCK,
+              "reporting one block of latency, which is real and unavoidable");
+
+        std::vector<float> got(input.size(), 0.0f);
+        for (size_t i = 0; i < input.size(); ++i) got[i] = engine->process(input[i]);
+
+        // Compare past the reported latency, allowing for it.
+        const int latency = engine->latency();
+        float worst = 0.0f;
+        size_t worstAt = 0;
+        for (size_t i = static_cast<size_t>(latency) + 100;
+             i + static_cast<size_t>(latency) < got.size(); ++i) {
+            const float difference =
+                std::fabs(got[i + static_cast<size_t>(latency)] - expected[i]);
+            if (difference > worst) { worst = difference; worstAt = i; }
+        }
+
+        check(worst < 1e-3f,
+              "partitioned overlap-save matches direct convolution (worst "
+              "error " + std::to_string(worst) + " at sample " +
+              std::to_string(worstAt) + ") - it is the same sum rearranged, "
+              "so anything else is a bug however good it sounds");
+    }
+
+    // ---- An unattached engine costs nothing and passes nothing --------------
+    {
+        auto engine = std::make_unique<ConvolutionEngine>();
+        check(!engine->active(),
+              "an engine with no response attached is inactive");
+        check(engine->latency() == 0, "and reports no latency");
+        check(engine->process(0.5f) == 0.0f,
+              "and produces nothing rather than reading an empty buffer");
+
+        // The adapter must pass the signal through untouched in that state,
+        // or a channel with the effect off would go silent.
+        ConvolutionFx adapter;
+        adapter.target = engine.get();
+        check(adapter.process(0.5f, 0.0f) == 0.5f,
+              "and the rack adapter passes the dry signal straight through");
+    }
+
+    // ---- The built-in responses are usable ----------------------------------
+    {
+        bool allGood = true;
+        std::string bad;
+
+        for (int i = 0; i < static_cast<int>(ImpulseResponse::Count); ++i) {
+            const ImpulseResponse which = static_cast<ImpulseResponse>(i);
+            if (which == ImpulseResponse::Custom) continue;   // nothing loaded
+
+            const std::vector<float> ir = makeImpulseResponse(which, rate);
+            if (ir.size() < 1000) { allGood = false; bad = "too short"; break; }
+
+            bool finite = true;
+            double energy = 0.0;
+            for (float v : ir) {
+                if (!std::isfinite(v)) { finite = false; break; }
+                energy += double(v) * v;
+            }
+            if (!finite || energy < 1e-6) {
+                allGood = false;
+                bad = std::string(impulseResponseName(which)) +
+                      (finite ? " has no energy" : " has a non-finite sample");
+                break;
+            }
+        }
+        check(allGood,
+              "every built-in response is finite and has energy" +
+              (allGood ? std::string() : " (" + bad + ")"));
+
+        // Deterministic: the same room every run, or A/B is meaningless and
+        // these tests would be too.
+        const std::vector<float> a = makeImpulseResponse(ImpulseResponse::LargeHall, rate);
+        const std::vector<float> b = makeImpulseResponse(ImpulseResponse::LargeHall, rate);
+        check(a == b, "and the same choice always gives the same room");
+
+        const std::vector<float> hall = makeImpulseResponse(ImpulseResponse::LargeHall, rate);
+        const std::vector<float> room = makeImpulseResponse(ImpulseResponse::SmallRoom, rate);
+        check(hall.size() > room.size(),
+              "a hall is longer than a small room");
+    }
+
+    // ---- Responses are level-matched ----------------------------------------
+    {
+        // Normalised to unit energy rather than unit peak, so swapping rooms
+        // does not change the level - louder always sounds better, and an
+        // A/B where one side is louder is not a comparison.
+        double previous = -1.0;
+        bool matched = true;
+        for (int i = 0; i < static_cast<int>(ImpulseResponse::Count); ++i) {
+            const ImpulseResponse which = static_cast<ImpulseResponse>(i);
+            if (which == ImpulseResponse::Custom) continue;
+
+            const std::vector<float> ir = makeImpulseResponse(which, rate);
+            double energy = 0.0;
+            for (float v : ir) energy += double(v) * v;
+
+            if (previous >= 0.0 && std::fabs(energy - previous) > 0.05) {
+                matched = false;
+                break;
+            }
+            previous = energy;
+        }
+        check(matched,
+              "every response carries the same energy, so choosing a room "
+              "changes the room and not the volume");
+    }
+
+    // ---- The library, and lazy allocation -----------------------------------
+    {
+        auto library = std::make_unique<IRLibrary>();
+        library->rebuild(rate, {});
+
+        for (int i = 0; i < IRLibrary::SLOTS; ++i) {
+            const PartitionedIR* ir = library->get(i);
+            if (ir == nullptr) { check(false, "a library slot is null"); break; }
+        }
+        check(true, "every library slot is populated");
+
+        check(library->get(-5) != nullptr && library->get(9999) != nullptr,
+              "and an index outside the library is clamped rather than read "
+              "off the end, which the audio thread would otherwise do");
+
+        // Custom is empty until something is loaded, and an empty response
+        // must leave the engine inactive rather than half-prepared.
+        auto engine = std::make_unique<ConvolutionEngine>();
+        engine->prepare(library->get(static_cast<int>(ImpulseResponse::Custom)));
+        check(!engine->active(),
+              "the custom slot is inactive until a file is loaded");
+    }
+
+    // ---- Long-run stability --------------------------------------------------
+    {
+        auto library = std::make_unique<IRLibrary>();
+        library->rebuild(rate, {});
+
+        auto engine = std::make_unique<ConvolutionEngine>();
+        engine->prepare(library->get(static_cast<int>(ImpulseResponse::LargeHall)));
+
+        bool finite = true;
+        float peak = 0.0f;
+        for (int i = 0; i < 200000; ++i) {
+            const float t = float(i) / rate;
+            const float in = 0.7f * std::sin(6.28318530718f * 220.0f * t);
+            const float out = engine->process(in);
+            if (!std::isfinite(out)) { finite = false; break; }
+            peak = std::max(peak, std::fabs(out));
+        }
+        check(finite, "a two-second hall stays finite over five seconds of audio");
+        check(peak < 8.0f,
+              "and bounded (peak " + std::to_string(peak) + ")");
+    }
+
+    // ---- Re-attaching mid-life ------------------------------------------------
+    {
+        auto library = std::make_unique<IRLibrary>();
+        library->rebuild(rate, {});
+
+        auto engine = std::make_unique<ConvolutionEngine>();
+        engine->prepare(library->get(0));
+        for (int i = 0; i < 3000; ++i) engine->process(0.4f);
+
+        // Swapping to a response with a different partition count resizes
+        // the delay line; the old slot index must not survive it.
+        engine->prepare(library->get(static_cast<int>(ImpulseResponse::LargeHall)));
+        bool finite = true;
+        for (int i = 0; i < 20000; ++i) {
+            if (!std::isfinite(engine->process(0.4f))) { finite = false; break; }
+        }
+        check(finite,
+              "swapping the response while the tail is running leaves the "
+              "engine usable rather than indexing a resized delay line with "
+              "a stale slot");
+
+        engine->prepare(nullptr);
+        check(!engine->active() && engine->process(0.5f) == 0.0f,
+              "and detaching releases it cleanly");
+    }
+}
+
+// ============================================================================
+// 87. Convolution in a channel
+// ============================================================================
+static void testConvolutionInChannel() {
+    beginTest("Convolution in a channel");
+
+    {
+        const ChannelConfig fresh;
+        check(!fresh.convolutionEnabled,
+              "convolution is off on a new channel - nothing a 2A03 could do "
+              "ships switched on");
+    }
+
+    // ---- It reaches the audio, and costs nothing until it does --------------
+    {
+        auto render = [](bool enabled) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+
+            p.channels[0].oscillator.type = OscillatorType::Pulse;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+            p.channels[0].convolutionEnabled = enabled;
+            p.channels[0].convolutionIR = static_cast<int>(ImpulseResponse::LargeHall);
+            p.channels[0].convolutionMix = 0.7f;
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 60;
+            note.startTime = 0.0f;
+            note.duration = 0.5f;
+            note.oscillatorType = OscillatorType::Pulse;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512);
+            std::vector<float> collected;
+            for (int b = 0; b < 50; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> dry = render(false);
+        const std::vector<float> wet = render(true);
+
+        double difference = 0.0;
+        const size_t n = std::min(dry.size(), wet.size());
+        for (size_t i = 0; i < n; ++i) {
+            difference += std::fabs(double(dry[i]) - double(wet[i]));
+        }
+        check(n > 0 && difference / double(n) > 1e-4,
+              "switching convolution on changes what comes out of the channel");
+
+        bool finite = true;
+        for (float v : wet) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and the result is finite through the whole chain");
+    }
+
+    // ---- The rack knows about it -----------------------------------------------
+    {
+        EffectType parsed;
+        check(effectTypeFromId("convolution", parsed) &&
+              parsed == EffectType::Convolution,
+              "convolution has a stable token");
+        check(EFFECT_TYPE_COUNT == CLASSIC_EFFECT_COUNT,
+              "and the classic order still lists every effect exactly once");
+
+        auto chainPtr = std::make_unique<EffectsChain>();
+        check(chainPtr->effectFor(EffectType::Convolution) != nullptr,
+              "and it resolves to an adapter - a type with no arm is skipped "
+              "by the rack in complete silence");
+    }
+
+    // ---- Settings survive a save and load ---------------------------------------
+    {
+        Project p;
+        p.channels[1].convolutionEnabled = true;
+        p.channels[1].convolutionIR = static_cast<int>(ImpulseResponse::DarkChamber);
+        p.channels[1].convolutionMix = 0.62f;
+        p.arrangement.push_back(Clip{0, 1, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("convolution.ctp");
+        check(saveProject(p, path), "a convolution project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+        check(loaded.channels[1].convolutionEnabled &&
+              loaded.channels[1].convolutionIR ==
+                  static_cast<int>(ImpulseResponse::DarkChamber) &&
+              std::fabs(loaded.channels[1].convolutionMix - 0.62f) < 1e-3f,
+              "with the response and mix intact");
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation ---------------------------------------------------------------
+    {
+        Project p;
+        p.channels[0].convolutionIR = 900;
+        p.channels[0].convolutionMix = -3.0f;
+        clampProjectToValidRanges(p);
+
+        check(p.channels[0].convolutionIR >= 0 &&
+              p.channels[0].convolutionIR < IRLibrary::SLOTS,
+              "a response index past the end of the library is repaired");
+        check(p.channels[0].convolutionMix >= 0.0f, "and a negative mix is clamped");
+    }
+}
+
 // ============================================================================
 // Headless ImGui harness
 // ============================================================================
@@ -15298,6 +15655,8 @@ int main(int argc, char** argv) {
     testReverbAlgorithms();
     testReverbAlgorithmsInChannel();
     testEffectSettingsPersist();
+    testConvolution();
+    testConvolutionInChannel();
     testPanelsDrawHeadless();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();

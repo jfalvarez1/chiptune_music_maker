@@ -24,6 +24,7 @@
 #include "DrumMachine.h"
 #include "ModMatrix.h"
 #include "Reverbs.h"
+#include "Convolution.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -500,6 +501,15 @@ struct ChannelConfig {
     // Which reverb algorithm the channel's reverb slot runs. Room is the
     // original and the default, so an existing project is untouched.
     int reverbAlgorithm = 0;
+
+    // ---- Convolution ------------------------------------------------------
+    //
+    // Off by default, and the engine holds no buffers until it is on - the
+    // delay line is around 700 KB per second of impulse response, and this
+    // struct is instantiated 36 times.
+    bool convolutionEnabled = false;
+    int convolutionIR = 0;          // indexes ImpulseResponse
+    float convolutionMix = 0.35f;
 
     bool pitchShiftEnabled = false;
     float pitchShiftSemitones = 0.0f;

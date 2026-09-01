@@ -10,6 +10,7 @@
 #include "Types.h"
 #include "PitchShift.h"
 #include "Reverbs.h"
+#include "Convolution.h"
 #include <cmath>
 #include <cstring>
 #include <array>
@@ -1206,6 +1207,11 @@ enum class EffectType : uint8_t {
     FormantShift,
     AutoTune,
 
+    // Convolution (Task G3). Appended like the rest: the tokens are part of
+    // the .ctp format and the classic order is what every existing file
+    // migrates onto.
+    Convolution,
+
     Count
 };
 
@@ -1232,6 +1238,7 @@ inline const char* effectTypeId(EffectType type) {
         case EffectType::PitchShift:     return "pitchshift";
         case EffectType::FormantShift:   return "formantshift";
         case EffectType::AutoTune:       return "autotune";
+        case EffectType::Convolution:    return "convolution";
         default:                         return "?";
     }
 }
@@ -1255,6 +1262,7 @@ inline const char* effectDisplayName(EffectType type) {
         case EffectType::PitchShift:     return "Pitch Shift";
         case EffectType::FormantShift:   return "Formant Shift";
         case EffectType::AutoTune:       return "Auto-Tune";
+        case EffectType::Convolution:    return "Convolution Reverb";
         default:                         return "Unknown";
     }
 }
@@ -1436,6 +1444,37 @@ public:
     }
 };
 
+/*
+ * Convolution.
+ *
+ * The engine allocates nothing until an impulse response is attached, which
+ * is what keeps this affordable: the frequency-domain delay line is roughly
+ * 700 KB per second of response, and thirty-two channels plus four buses all
+ * holding one would be a hundred megabytes for an effect that is almost
+ * always used on a single send.
+ */
+class ConvolutionFx final : public IEffect {
+public:
+    ConvolutionEngine* target = nullptr;
+
+    // Read through a pointer rather than held here, because the adapters are
+    // private to EffectsChain and applyEffectsConfig writes the parameters.
+    const float* mix = nullptr;
+
+    const char* typeId() const override { return "convolution"; }
+    float process(float input, float time) override {
+        (void)time;
+        if (target == nullptr || !target->active()) return input;
+        const float wet = target->process(input);
+        const float amount = std::clamp((mix != nullptr) ? *mix : 0.35f, 0.0f, 1.0f);
+        return input * (1.0f - amount) + wet * amount;
+    }
+    void reset() override { if (target) target->reset(); }
+    int latencySamples() const override {
+        return target ? target->latency() : 0;
+    }
+};
+
 class ChorusFx final : public IEffect {
 public:
     Chorus* target = nullptr;
@@ -1472,6 +1511,7 @@ inline constexpr EffectType CLASSIC_EFFECT_ORDER[] = {
     EffectType::PitchShift,
     EffectType::FormantShift,
     EffectType::AutoTune,
+    EffectType::Convolution,
 };
 inline constexpr int CLASSIC_EFFECT_COUNT =
     static_cast<int>(sizeof(CLASSIC_EFFECT_ORDER) / sizeof(CLASSIC_EFFECT_ORDER[0]));
@@ -1508,6 +1548,14 @@ struct EffectsChain {
     FormantShifter formantShifter;
     AutoTune autoTune;
 
+    // Holds no buffers until an impulse response is attached.
+    ConvolutionEngine convolution;
+
+    // Which response is currently attached, so a sync can tell whether
+    // prepare() - which reallocates the whole delay line - is actually
+    // needed. Without this every UI interaction would reallocate.
+    const PartitionedIR* attachedIR = nullptr;
+
     // Enable flags. Authoritative: presets write these, the rack reads them.
     bool bitcrusherEnabled = false;
     bool distortionEnabled = false;
@@ -1531,6 +1579,8 @@ struct EffectsChain {
     bool pitchShiftEnabled = false;
     bool formantShiftEnabled = false;
     bool autoTuneEnabled = false;
+    bool convolutionEnabled = false;
+    float convolutionMix = 0.35f;
 
     int sidechainSource = -1;  // Source channel index (-1 = none)
 
@@ -1634,6 +1684,7 @@ struct EffectsChain {
             case EffectType::PitchShift:     return &pitchShiftFx;
             case EffectType::FormantShift:   return &formantShiftFx;
             case EffectType::AutoTune:       return &autoTuneFx;
+            case EffectType::Convolution:    return &convolutionFx;
             // A type with no arm here is silently skipped by the rack, with
             // no error anywhere - the effect simply never runs. That is
             // exactly what happened when these three were added, so there is
@@ -1661,6 +1712,7 @@ struct EffectsChain {
             case EffectType::PitchShift:     return pitchShiftEnabled;
             case EffectType::FormantShift:   return formantShiftEnabled;
             case EffectType::AutoTune:       return autoTuneEnabled;
+            case EffectType::Convolution:    return convolutionEnabled;
             default:                         return false;
         }
     }
@@ -1684,6 +1736,7 @@ struct EffectsChain {
             case EffectType::PitchShift:     pitchShiftEnabled = on; break;
             case EffectType::FormantShift:   formantShiftEnabled = on; break;
             case EffectType::AutoTune:       autoTuneEnabled = on; break;
+            case EffectType::Convolution:    convolutionEnabled = on; break;
             default: break;
         }
     }
@@ -1798,7 +1851,7 @@ private:
     RingModFx ringModFx; TremoloFx tremoloFx; PhaserFx phaserFx;
     FlangerFx flangerFx; ChorusFx chorusFx; DelayFx delayFx; ReverbFx reverbFx;
     PitchShiftFx pitchShiftFx; FormantShiftFx formantShiftFx;
-    AutoTuneFx autoTuneFx;
+    AutoTuneFx autoTuneFx; ConvolutionFx convolutionFx;
 
     void bindAdapters() {
         eqFx.target = &eq;
@@ -1818,6 +1871,8 @@ private:
         pitchShiftFx.target = &pitchShifter;
         formantShiftFx.target = &formantShifter;
         autoTuneFx.target = &autoTune;
+        convolutionFx.target = &convolution;
+        convolutionFx.mix = &convolutionMix;
     }
 
     void copyFrom(const EffectsChain& other) {
@@ -1845,6 +1900,11 @@ private:
         pitchShiftEnabled = other.pitchShiftEnabled;
         formantShiftEnabled = other.formantShiftEnabled;
         autoTuneEnabled = other.autoTuneEnabled;
+
+        // The mix, not the engine: an attached response and a running delay
+        // line belong to the chain they were prepared for.
+        convolutionEnabled = other.convolutionEnabled;
+        convolutionMix = other.convolutionMix;
 
         bitcrusherEnabled = other.bitcrusherEnabled;
         distortionEnabled = other.distortionEnabled;

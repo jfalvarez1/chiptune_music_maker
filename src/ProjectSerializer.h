@@ -139,6 +139,7 @@ inline constexpr FloatField<ChannelConfig> CHANNEL_FLOATS[] = {
     {"scThresh",   &ChannelConfig::sidechainThreshold},
     {"rmFreq",     &ChannelConfig::ringModFrequency},
     {"rmMix",      &ChannelConfig::ringModMix},
+    {"convMix",    &ChannelConfig::convolutionMix},
 
     {"echTime",    &ChannelConfig::echoTime},
     {"echFb",      &ChannelConfig::echoFeedback},
@@ -177,6 +178,7 @@ inline constexpr IntField<ChannelConfig> CHANNEL_INTS[] = {
     {"scSource", &ChannelConfig::sidechainSource},
     {"fmtVowel", &ChannelConfig::formantVowel},
     {"revAlgo",  &ChannelConfig::reverbAlgorithm},
+    {"convIR",   &ChannelConfig::convolutionIR},
     {"atRoot",   &ChannelConfig::autoTuneRoot},
     {"atScale",  &ChannelConfig::autoTuneScaleMask},
 };
@@ -200,6 +202,7 @@ inline constexpr BoolField<ChannelConfig> CHANNEL_BOOLS[] = {
     {"trmOn",  &ChannelConfig::tremoloEnabled},
     {"scOn",   &ChannelConfig::sidechainEnabled},
     {"rmOn",   &ChannelConfig::ringModEnabled},
+    {"convOn", &ChannelConfig::convolutionEnabled},
     {"echOn",  &ChannelConfig::echoEnabled},
     {"fenvOn", &ChannelConfig::filterEnvEnabled},
     {"eqOn",   &ChannelConfig::eqEnabled},

@@ -13,6 +13,7 @@
 #include "GranularSynth.h"
 #include "DrumMachine.h"
 #include "ModMatrix.h"
+#include "Convolution.h"
 #include "Effects.h"
 #include "Sample.h"
 #include <cmath>
@@ -305,7 +306,15 @@ inline float getDrumDecayTime(OscillatorType type) {
  * Sidechain is NOT here on purpose: it is per-channel routing rather than
  * an effect parameter, and a bus has no sidechain source.
  */
-inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain) {
+/*
+ * Sync a channel's settings into an effects chain.
+ *
+ * `library` may be null: the aux buses have no convolution, and neither does
+ * a test that is not exercising it. A null library simply leaves the engine
+ * unattached, which is the same state it starts in and costs no memory.
+ */
+inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain,
+                               const IRLibrary* library) {
     // The rack order. A count of 0 is the classic order, which is also what
     // a pre-v3 project means, so both land here identically.
     if (config.fxSlotCount <= 0) {
@@ -348,6 +357,28 @@ inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain)
     chain.ringMod.mix = config.ringModMix;
     chain.sidechain.attack = config.sidechainAttack;
     chain.sidechain.threshold = config.sidechainThreshold;
+
+    /*
+     * Convolution. The engine is attached - and therefore allocates - only
+     * when the effect is actually on, and detached when it is off so the
+     * memory goes back.
+     *
+     * prepare() is called only when the response actually changes, because
+     * it reallocates the whole frequency-domain delay line. Calling it every
+     * sync would allocate on every UI interaction.
+     */
+    chain.convolutionEnabled = config.convolutionEnabled;
+    chain.convolutionMix = config.convolutionMix;
+    {
+        const PartitionedIR* wanted = nullptr;
+        if (config.convolutionEnabled && library != nullptr) {
+            wanted = library->get(config.convolutionIR);
+        }
+        if (wanted != chain.attachedIR) {
+            chain.convolution.prepare(wanted);
+            chain.attachedIR = wanted;
+        }
+    }
 
     // The reverb algorithm goes through the setter, which re-sizes the
     // tank's delay lines. Assigning the field alone would leave the tank
@@ -480,7 +511,7 @@ public:
         // Effects. One shared path with the aux buses, so the two cannot
         // drift; sidechain stays here because it is per-channel routing
         // rather than an effect parameter.
-        applyEffectsConfig(config, m_effects);
+        applyEffectsConfig(config, m_effects, m_irLibrary);
 
         m_effects.sidechainEnabled = config.sidechainEnabled;
         m_effects.sidechainSource = config.sidechainSource;
@@ -1028,6 +1059,11 @@ public:
     // the same reason the wavetable library is one: the audio thread reads
     // it and nothing copies it.
     void setSamplePool(const SamplePool* pool) { m_samplePool = pool; }
+
+    // The shared impulse responses. A pointer for the same reason as
+    // the wavetables: the spectra are read-only and copying them per
+    // channel would be megabytes of identical data.
+    void setIRLibrary(const IRLibrary* library) { m_irLibrary = library; }
 
     const EffectsChain& effects() const { return m_effects; }
     Vibrato& vibrato() { return m_vibrato; }
@@ -3213,6 +3249,7 @@ private:
 
     const WavetableLibrary* m_wavetables = nullptr;
     const SamplePool* m_samplePool = nullptr;
+    const IRLibrary* m_irLibrary = nullptr;
 
     // Advanced on every sampler note, so repeated hits cycle through the
     // alternate takes instead of retriggering one recording. Two identical

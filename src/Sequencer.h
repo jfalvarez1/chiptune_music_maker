@@ -542,6 +542,27 @@ public:
         m_wavetables.rebuild(m_project->wavetableBanks);
     }
 
+    /*
+     * Build the impulse responses.
+     *
+     * Expensive - one FFT per 512-sample partition per response - and the
+     * responses depend only on the sample rate, so this runs once rather
+     * than on every config sync.
+     */
+    void updateImpulseResponses() {
+        m_irLibrary.rebuild(m_sampleRate, m_customIR);
+        m_irBuilt = true;
+    }
+
+    // A user-supplied impulse response, from a WAV. Rebuilds the library,
+    // so UI thread only.
+    void setCustomIR(std::vector<float> samples) {
+        m_customIR = std::move(samples);
+        updateImpulseResponses();
+    }
+
+    const IRLibrary& impulseResponses() const { return m_irLibrary; }
+
     const WavetableLibrary& wavetables() const { return m_wavetables; }
 
     void updateChannelConfigs() {
@@ -551,10 +572,12 @@ public:
             updateWavetables();
             m_wavetablesBuilt = true;
         }
+        if (!m_irBuilt) updateImpulseResponses();
 
         for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
             m_synths[ch].setWavetables(&m_wavetables);
             m_synths[ch].setSamplePool(&m_project->samplePool);
+            m_synths[ch].setIRLibrary(&m_irLibrary);
             const auto& config = m_project->channels[ch];
             // Single sync point: oscillator, envelope, filter envelope and the
             // full per-channel effects chain (see Synthesizer::setChannelConfig).
@@ -564,8 +587,11 @@ public:
         // Aux buses. Their strips are ChannelConfigs, so the same rack sync
         // the channels use configures them - one code path, not two.
         for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
+            // No convolution on the aux buses: they are already where a
+            // convolution reverb would be used FROM, and a send into a send
+            // is not a thing this mixer does.
             applyEffectsConfig(m_project->auxBuses[static_cast<size_t>(bus)].strip,
-                               m_auxChains[static_cast<size_t>(bus)]);
+                               m_auxChains[static_cast<size_t>(bus)], nullptr);
             m_auxChains[static_cast<size_t>(bus)].setSampleRate(m_sampleRate);
         }
 
@@ -1129,6 +1155,11 @@ private:
     // same tables would be five megabytes of duplicates.
     WavetableLibrary m_wavetables;
     bool m_wavetablesBuilt = false;
+
+    // Shared impulse responses, and whatever the user loaded.
+    IRLibrary m_irLibrary;
+    std::vector<float> m_customIR;
+    bool m_irBuilt = false;
 
     std::array<EffectsChain, Project::MAX_AUX_BUSES> m_auxChains;
     std::array<float, Project::MAX_AUX_BUSES> m_auxAccum{};

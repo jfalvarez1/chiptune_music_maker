@@ -11545,6 +11545,71 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::Unindent();
         }
 
+        // ---- Convolution ----------------------------------------------------
+        //
+        // An algorithmic reverb approximates a space. This one convolves with
+        // a recording of an actual space, so there is nothing to tune - the
+        // room is the data.
+        ImGui::Checkbox("Convolution Reverb", &channel.convolutionEnabled);
+        if (channel.convolutionEnabled) {
+            ImGui::Indent();
+
+            const int slots = IRLibrary::SLOTS;
+            int selected = std::clamp(channel.convolutionIR, 0, slots - 1);
+
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::BeginCombo("Space##conv",
+                    impulseResponseName(static_cast<ImpulseResponse>(selected)))) {
+                for (int i = 0; i < slots; ++i) {
+                    const bool isSelected = (i == selected);
+                    if (ImGui::Selectable(
+                            impulseResponseName(static_cast<ImpulseResponse>(i)),
+                            isSelected)) {
+                        channel.convolutionIR = i;
+                    }
+                    if (isSelected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "The built-in spaces are synthesised, which gives a\n"
+                    "convincing tail but none of the early reflections that\n"
+                    "make one real room sound different from another.\n"
+                    "Load a recorded impulse response for that.");
+            }
+
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Load IR...")) {
+                const std::string path = openFileDialog(
+                    "Impulse Responses (*.wav)\0*.wav\0All Files (*.*)\0*.*\0",
+                    "wav");
+                if (!path.empty()) {
+                    // Through the sample pool, so an IR gets the same
+                    // decoding and rate conversion as any other audio.
+                    SamplePool pool;
+                    const int id = pool.loadSample(path);
+                    const Sample* sample = pool.getSample(id);
+                    if (sample != nullptr && !sample->audioData.empty()) {
+                        seq.setCustomIR(sample->audioData);
+                        channel.convolutionIR =
+                            static_cast<int>(ImpulseResponse::Custom);
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "A recorded impulse response. Longer than two seconds is\n"
+                    "truncated - past that the cost stops being worth what\n"
+                    "the extra tail adds.");
+            }
+
+            ImGui::SliderFloat("Mix##conv", &channel.convolutionMix, 0.0f, 1.0f);
+
+            ImGui::TextDisabled("~12 ms latency on this channel.");
+            ImGui::Unindent();
+        }
+
         // Reverb
         ImGui::Checkbox("Reverb", &channel.reverbEnabled);
         if (fx.reverbEnabled) {
