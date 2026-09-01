@@ -7,6 +7,78 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.9.0] - 2026-08-31 - "Comp"
+
+Building a keeper out of several takes, finding things by name instead of by
+memorised key, and the shape of plugin hosting.
+
+### Added
+
+- **Take lanes and comping.** Record a part several times, then build the
+  keeper out of the best moments of each. Every pass around the loop becomes
+  its own lane; drag across a lane to choose it for that stretch. Punch in to
+  repair one phrase without risking the rest of the take.
+
+  The comp is an editing model, not a playback one: swiping decides which
+  take wins where, and flattening turns those choices into ordinary audio
+  clips on the arrangement. Playback never sees a comp - it sees clips -
+  which is what lets comping reuse the whole tested audio-clip path instead
+  of duplicating trimming, fades and sample-rate conversion inside a second
+  one, and it means the result stays editable afterwards like anything else.
+
+- **Command palette.** `Ctrl+P` finds any command by name. `Ctrl+/` lists
+  every shortcut, and any of them can be rebound. Shortcuts used to be both
+  fixed and unlisted, which meant the only way to learn that `Ctrl+0` resets
+  the layout was to be told.
+
+  Bindings save only where they differ from the default, so changing a
+  default in a later version still reaches everybody who never rebound that
+  command.
+
+- **Browser.** One docked place for the samples in the project, every
+  instrument and engine, the shipped presets, and the audio and project
+  files on disk - with a fuzzy filter, and drag onto a channel or onto the
+  timeline. Before this, finding something required already knowing it
+  existed.
+
+- **Convolution reverb**, with an impulse response library, and **five more
+  reverb algorithms** on the one existing slot rather than five more slots.
+
+- **Four more equalisers**: tilt, ten-band graphic, mid-side on the master
+  bus, and dynamic. Linear-phase is deliberately absent - it costs 50-100 ms
+  of latency and nothing in the mixer compensates for latency yet.
+
+- **Plugin hosting**, as far as it can honestly go. Per-channel racks for
+  VST2, VST3 and CLAP behind one interface, a scanner, and a scan cache.
+
+  **No format loader ships.** Steinberg withdrew the VST2 SDK in 2018 and it
+  cannot be redistributed; the VST3 SDK is a separate download under a dual
+  GPLv3/proprietary licence, which is a licensing decision rather than a
+  technical one; CLAP is MIT and is the one to finish first. Everything
+  around the loaders ships and is tested, and a project made where plugins do
+  load keeps every plugin, its parameters and its state when opened here.
+
+### Fixed
+
+- **45 Channel Editor effect controls never saved, and were silently
+  reverted.** They were bound to the live effects chain rather than to the
+  channel's settings, so every one of them was overwritten the next time the
+  channel was touched. Five had no setting to save into at all.
+- **The Save button's tooltip has always said `Ctrl+S`**, and nothing
+  anywhere handled it. It does now.
+- **A browser pointed at a relative path offered no way out of it** - a bare
+  folder name has no parent path, so `..` was never listed.
+- **The Take Lanes delete button sat on top of the first beat of every
+  lane.**
+
+### Changed
+
+- Project format v7, for the take lanes and the plugin racks. Both are
+  omit-if-default: a project that uses neither writes exactly the bytes it
+  wrote at v6.
+
+---
+
 ## [3.8.0] - 2026-08-31 - "Check"
 
 Two things this release is about: testing the UI without a window, and
