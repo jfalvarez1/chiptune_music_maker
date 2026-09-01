@@ -237,6 +237,13 @@ foreach ($panel in $panels) {
     args = "--demo --show shortcuts --focus `"Keyboard Shortcuts`""
 })
 
+# The Plugins panel. No format loader ships, so what this shot must show is
+# the honest empty state - the one every user of this build actually sees.
+[void]$cases.Add(@{
+    name = "plugins"
+    args = "--demo --show plugins --focus `"Plugins`""
+})
+
 # Take lanes with a comp built on them. Empty, the panel is a paragraph of
 # text; the lanes, the comp strip and the per-take highlight are all drawn
 # from beat arithmetic straight into the draw list, where a bad span divides

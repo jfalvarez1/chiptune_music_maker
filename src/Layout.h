@@ -200,6 +200,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Project Check", rightLower);
             ImGui::DockBuilderDockWindow("Take Lanes", centre);
             ImGui::DockBuilderDockWindow("Browser", leftUpper);
+            ImGui::DockBuilderDockWindow("Plugins", rightLower);
             break;
         }
 
@@ -241,6 +242,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Project Check", lowerMid);
             ImGui::DockBuilderDockWindow("Take Lanes", lowerRight);
             ImGui::DockBuilderDockWindow("Browser", lowerLeft);
+            ImGui::DockBuilderDockWindow("Plugins", lowerMid);
             break;
         }
 
@@ -276,6 +278,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Project Check", lowerRight);
             ImGui::DockBuilderDockWindow("Take Lanes", lowerLeft);
             ImGui::DockBuilderDockWindow("Browser", lowerLeft);
+            ImGui::DockBuilderDockWindow("Plugins", lowerRight);
             break;
         }
     }
@@ -318,6 +321,7 @@ inline int AdoptOrphanedWindows() {
         {"Project Check",     "Master Bus"},
         {"Take Lanes",        "Arrangement"},
         {"Browser",           "Sound Palette"},
+        {"Plugins",           "Channel Editor"},
     };
 
     int adopted = 0;

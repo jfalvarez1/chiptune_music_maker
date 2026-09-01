@@ -358,6 +358,89 @@ struct SendConfig {
 // that its own MAX_SLOTS agrees with this.
 inline constexpr int MAX_FX_SLOTS = 24;
 
+
+// ============================================================================
+// Plugins
+//
+// The plain data only. Everything that operates on it - scanning, loading,
+// the running instance - is in PluginHost.h, which cannot be included from
+// here: it needs IEffect from Effects.h, and Effects.h includes this file.
+// Same split, and for the same reason, as Take and CompGroup above.
+// ============================================================================
+enum class PluginFormat : uint8_t {
+    Unknown = 0,
+    VST2,
+    VST3,
+    CLAP,
+};
+
+inline const char* pluginFormatName(PluginFormat format) {
+    switch (format) {
+        case PluginFormat::VST2: return "VST2";
+        case PluginFormat::VST3: return "VST3";
+        case PluginFormat::CLAP: return "CLAP";
+        default:                 return "Unknown";
+    }
+}
+
+// The token written into a project file. Separate from the display name so
+// renaming one in the UI cannot silently invalidate saved projects.
+inline const char* pluginFormatToken(PluginFormat format) {
+    switch (format) {
+        case PluginFormat::VST2: return "vst2";
+        case PluginFormat::VST3: return "vst3";
+        case PluginFormat::CLAP: return "clap";
+        default:                 return "unknown";
+    }
+}
+
+inline PluginFormat pluginFormatFromToken(const std::string& token) {
+    if (token == "vst2") return PluginFormat::VST2;
+    if (token == "vst3") return PluginFormat::VST3;
+    if (token == "clap") return PluginFormat::CLAP;
+    return PluginFormat::Unknown;
+}
+
+/*
+ * A plugin in a channel's chain, as the project stores it.
+ *
+ * Holds everything needed to find the plugin again AND everything needed to
+ * keep its settings when it cannot be found. A plugin lives outside the
+ * project, so it can always be missing: a project opened on a machine
+ * without it keeps the slot, the parameter values and the opaque state, so
+ * putting the plugin back restores the sound rather than an empty slot.
+ *
+ * The same rule as a moved sample, and for the same reason - silently
+ * dropping it throws away work the user cannot get back.
+ */
+struct PluginSlot {
+    PluginFormat format = PluginFormat::Unknown;
+
+    /*
+     * Both, because either can change on its own: a project moved between
+     * machines keeps the uid while the path changes, and a plugin updated
+     * in place keeps the path while the uid occasionally does not.
+     */
+    std::string path;
+    std::string uid;
+
+    std::string name;       // so the UI can name it while it is missing
+
+    bool enabled = true;
+    bool bypassed = false;
+
+    // Normalised 0..1, index-aligned with the plugin's own parameters.
+    std::vector<float> parameterValues;
+
+    // The plugin's own opaque state. Usually more than its parameters - a
+    // sampler's loaded file, a synth's wavetable - so restoring only the
+    // parameters would silently lose it.
+    std::string state;
+
+    bool empty() const { return path.empty() && uid.empty(); }
+};
+
+
 struct ChannelConfig {
     std::string name = "Channel";
     OscillatorConfig oscillator;
@@ -570,6 +653,34 @@ struct ChannelConfig {
     // is the kind of thing that has to be opt-in per channel rather than
     // imposed on a project that is only chiptune-adjacent.
     bool quantizeVolume4Bit = false;
+
+    /*
+     * Hosted plugins on this channel, in order, after the built-in rack.
+     *
+     * A vector rather than a fixed array because the overwhelmingly common
+     * case is none at all, and 32 channels' worth of fixed plugin slots
+     * would cost every project that never uses one.
+     *
+     * LAST, and every future member must be too.
+     *
+     * The default channels below are initialised positionally:
+     *
+     *     channels[0] = {"Pulse 1", {OscillatorType::Pulse}, {}, 0.8f, -0.3f};
+     *                     name      oscillator              env  vol   pan
+     *
+     * Putting this after `oscillator` shifted all of that along by one, so
+     * the envelope was built from `0.8f` - attack 0.8, decay 0, sustain 0 -
+     * on every default channel. It compiled without a warning, because an
+     * Envelope is four floats and a float is a valid first one.
+     *
+     * The symptoms were a save/load round trip that stopped being a fixed
+     * point and a retrigger effect that stopped chopping notes: two tests
+     * with nothing to do with plugins, and nothing pointing at this line.
+     *
+     * The same lesson as Clip::transpose, ClipType, and the OscillatorType
+     * enum. Append; never insert.
+     */
+    std::vector<PluginSlot> plugins;
 };
 
 // ============================================================================
@@ -1717,6 +1828,7 @@ struct UIState {
     // somebody who already knows what they are doing.
     bool showBrowser = false;
     bool showShortcuts = false;
+    bool showPlugins = false;
 
     /*
      * Where per-user settings live - key bindings among them.

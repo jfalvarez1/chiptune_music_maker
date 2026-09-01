@@ -16899,6 +16899,906 @@ static void testCommandPaletteAndBrowser() {
     browserState() = BrowserState();
 }
 
+
+// ============================================================================
+// 96. Plugin hosting
+//
+// The seam is exercised by registering a loader, exactly as a real format
+// would - so scan, load, instantiate, process, automate, save and reload
+// are all driven end to end without any SDK present.
+// ============================================================================
+
+/*
+ * A plugin, for testing.
+ *
+ * Deliberately a real one: it has parameters, opaque state, and it changes
+ * the audio. A test double that returns its input would pass every
+ * structural check while proving nothing about whether a hosted plugin is
+ * actually heard.
+ */
+class TestGainPlugin final : public IPluginInstance {
+public:
+    explicit TestGainPlugin(const PluginDescriptor& descriptor)
+        : m_descriptor(descriptor) {
+        PluginParameter gain;
+        gain.name = "Gain";
+        gain.label = "x";
+        gain.id = 1;
+        gain.defaultValue = 0.5f;
+        gain.value = 0.5f;
+        m_parameters.push_back(gain);
+
+        PluginParameter invert;
+        invert.name = "Invert";
+        invert.id = 2;
+        invert.stepCount = 2;
+        m_parameters.push_back(invert);
+    }
+
+    const char* typeId() const override { return "testgain"; }
+    const PluginDescriptor& descriptor() const override { return m_descriptor; }
+
+    int parameterCount() const override {
+        return static_cast<int>(m_parameters.size());
+    }
+    const PluginParameter& parameter(int index) const override {
+        return m_parameters[static_cast<size_t>(
+            std::clamp(index, 0, int(m_parameters.size()) - 1))];
+    }
+
+    void setParameter(int index, float normalised) override {
+        if (index < 0 || index >= static_cast<int>(m_parameters.size())) return;
+        m_parameters[static_cast<size_t>(index)].value =
+            std::clamp(normalised, 0.0f, 1.0f);
+        m_queue.push(index, normalised);
+    }
+
+    void setSampleRate(float sampleRate) override { m_sampleRate = sampleRate; }
+    int latencySamples() const override { return 0; }
+
+    void processStereo(float* left, float* right, int frames) override {
+        // Drain first, as a real plugin does: a parameter moved between
+        // blocks must take effect at the start of the next one.
+        ParameterChangeQueue::Change change;
+        while (m_queue.pop(change)) ++m_applied;
+
+        const float gain = m_parameters[0].value * 2.0f;
+        const float sign = m_parameters[1].value >= 0.5f ? -1.0f : 1.0f;
+
+        for (int i = 0; i < frames; ++i) {
+            left[i] *= gain * sign;
+            if (right != left) right[i] *= gain * sign;
+        }
+        ++m_blocks;
+    }
+
+    // A blob that is not the parameters, so restoring only the parameters
+    // is visibly not the same as restoring the state.
+    bool saveState(std::string& out) const override {
+        out = "secret:" + std::to_string(m_secret);
+        return true;
+    }
+    bool loadState(const std::string& state) override {
+        const size_t colon = state.find(':');
+        if (colon == std::string::npos) return false;
+        m_secret = std::atoi(state.c_str() + colon + 1);
+        return true;
+    }
+
+    int secret() const { return m_secret; }
+    void setSecret(int value) { m_secret = value; }
+    int blocks() const { return m_blocks; }
+    int applied() const { return m_applied; }
+    float sampleRate() const { return m_sampleRate; }
+
+private:
+    PluginDescriptor m_descriptor;
+    std::vector<PluginParameter> m_parameters;
+    ParameterChangeQueue m_queue;
+    float m_sampleRate = 44100.0f;
+    int m_secret = 0;
+    int m_blocks = 0;
+    int m_applied = 0;
+};
+
+// Registers the test format on a registry, the way a real loader would.
+static void registerTestPluginFormat(PluginFormatRegistry& registry) {
+    registry.registerFormat(
+        PluginFormat::CLAP,
+        [](const PluginDescriptor& descriptor, float sampleRate,
+           PluginLoadError& error) -> std::unique_ptr<IPluginInstance> {
+            // A file whose name says so refuses to start, so the error path
+            // is a real one rather than an untaken branch.
+            if (descriptor.path.find("broken") != std::string::npos) {
+                error = PluginLoadError::InitialisationFailed;
+                return nullptr;
+            }
+            auto instance = std::make_unique<TestGainPlugin>(descriptor);
+            instance->setSampleRate(sampleRate);
+            return instance;
+        },
+        [](const std::string& path, PluginDescriptor& out) {
+            if (path.find("notaplugin") != std::string::npos) return false;
+            out.name = std::filesystem::path(path).stem().string();
+            out.vendor = "Test Vendor";
+            out.version = "1.0";
+            out.uid = "test." + out.name;
+            return true;
+        });
+}
+
+static void testPluginHosting() {
+    beginTest("Plugin hosting");
+
+    // ---- Formats ------------------------------------------------------------
+    {
+        const PluginFormat FORMATS[] = {PluginFormat::VST2, PluginFormat::VST3,
+                                        PluginFormat::CLAP,
+                                        PluginFormat::Unknown};
+        for (PluginFormat format : FORMATS) {
+            check(pluginFormatFromToken(pluginFormatToken(format)) == format,
+                  std::string("Format token round-trips: ") +
+                      pluginFormatName(format));
+        }
+        check(pluginFormatFromToken("something-new") == PluginFormat::Unknown,
+              "An unknown format token reads as Unknown, not as a real format");
+
+        check(pluginFormatFromPath("a/b/Thing.vst3") == PluginFormat::VST3,
+              ".vst3 is recognised");
+        check(pluginFormatFromPath("Thing.CLAP") == PluginFormat::CLAP,
+              "Extension matching ignores case");
+        check(pluginFormatFromPath("Thing.dll") == PluginFormat::VST2,
+              ".dll is treated as VST2");
+        check(pluginFormatFromPath("Thing.txt") == PluginFormat::Unknown,
+              "Anything else is not a plugin");
+    }
+
+    // ---- The parameter queue -------------------------------------------------
+    //
+    // The audio thread reads this while the UI writes it. What must hold is
+    // the order, and which end is dropped when it overflows.
+    {
+        ParameterChangeQueue queue;
+        check(queue.pending() == 0, "A new queue is empty");
+
+        ParameterChangeQueue::Change change;
+        check(!queue.pop(change), "Popping an empty queue yields nothing");
+
+        queue.push(3, 0.25f);
+        queue.push(4, 0.75f);
+        check(queue.pending() == 2, "Two changes are pending");
+
+        check(queue.pop(change), "The first change comes back");
+        check(change.index == 3 && std::fabs(change.value - 0.25f) < 1e-6f,
+              "Changes come back in the order they went in");
+        check(queue.pop(change) && change.index == 4, "Then the second");
+        check(!queue.pop(change), "And then nothing");
+
+        /*
+         * Overflow drops the OLDEST.
+         *
+         * For a parameter the newest value is the only one that matters:
+         * dropping the newest would leave the plugin stuck at a stale value
+         * for as long as the user kept moving the knob, which is exactly
+         * backwards.
+         */
+        queue.clear();
+        const size_t overshoot = ParameterChangeQueue::CAPACITY + 50;
+        for (size_t i = 0; i < overshoot; ++i) {
+            queue.push(static_cast<int>(i), float(i));
+        }
+        check(queue.dropped() > 0, "Overflow is counted");
+        check(queue.pending() <= ParameterChangeQueue::CAPACITY,
+              "The queue never holds more than its capacity");
+
+        // Drain to the end; the last value pushed must be the last one out.
+        ParameterChangeQueue::Change last;
+        int drained = 0;
+        while (queue.pop(change)) { last = change; ++drained; }
+        check(last.index == static_cast<int>(overshoot - 1),
+              "The newest change survives an overflow");
+        check(drained > 0, "The queue drained");
+
+        queue.push(1, 0.5f);
+        queue.clear();
+        check(queue.pending() == 0, "clear() empties the queue");
+    }
+
+    // ---- Scanning -------------------------------------------------------------
+    {
+        const std::string root = "plugin-scan-test";
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+
+        // A VST3 on Windows is a directory with the binary inside it; a CLAP
+        // is a plain file. A scan that cannot tell them apart lists the
+        // bundle's contents as separate plugins.
+        std::filesystem::create_directories(root + "/Reverb.vst3/Contents/x86_64-win",
+                                            error);
+        std::filesystem::create_directories(root + "/nested/deeper", error);
+
+        auto touch = [&](const std::string& relative) {
+            std::ofstream file(root + "/" + relative);
+            file << "not really a plugin";
+        };
+        touch("Reverb.vst3/Contents/x86_64-win/Reverb.vst3");
+        touch("Compressor.clap");
+        touch("Legacy.dll");
+        touch("readme.txt");
+        touch("nested/deeper/Buried.clap");
+
+        PluginFormatRegistry registry;
+        ScanResult result;
+        scanPluginDirectory(root, registry, result);
+
+        // With nothing registered, files are still listed under their
+        // filenames - an empty list would read as "you have no plugins"
+        // rather than "this build cannot host them".
+        int claps = 0, vst3s = 0, dlls = 0;
+        bool sawBundleInterior = false;
+        for (const PluginDescriptor& plugin : result.found) {
+            if (plugin.format == PluginFormat::CLAP) ++claps;
+            if (plugin.format == PluginFormat::VST3) ++vst3s;
+            if (plugin.format == PluginFormat::VST2) ++dlls;
+            if (plugin.path.find("Contents") != std::string::npos) {
+                sawBundleInterior = true;
+            }
+        }
+        check(claps == 2, "Both .clap files were found, including the nested one");
+        check(vst3s == 1, "The .vst3 bundle was found once");
+        check(dlls == 1, "The .dll was found");
+        check(!sawBundleInterior,
+              "The scan did not descend into the .vst3 bundle and list it twice");
+
+        bool sawText = false;
+        for (const PluginDescriptor& plugin : result.found) {
+            if (plugin.path.find("readme") != std::string::npos) sawText = true;
+        }
+        check(!sawText, "A file that is not a plugin was skipped");
+
+        // With a probe registered, the real name comes from the plugin and
+        // a file the probe rejects is dropped rather than listed.
+        touch("notaplugin.clap");
+        registerTestPluginFormat(registry);
+
+        ScanResult probed;
+        scanPluginDirectory(root, registry, probed);
+
+        bool namedByProbe = false, sawRejected = false;
+        for (const PluginDescriptor& plugin : probed.found) {
+            if (plugin.format != PluginFormat::CLAP) continue;
+            if (plugin.vendor == "Test Vendor") namedByProbe = true;
+            if (plugin.path.find("notaplugin") != std::string::npos) {
+                sawRejected = true;
+            }
+        }
+        check(namedByProbe, "The probe supplied the plugin's real details");
+        check(!sawRejected, "A file the probe rejected is not listed");
+        check(probed.rejected > 0, "The rejection was counted");
+
+        // Missing directories are counted, not thrown.
+        ScanResult missing;
+        scanPluginDirectory(root + "/no-such-directory", registry, missing);
+        check(missing.found.empty(), "Scanning a missing directory finds nothing");
+        check(missing.directoriesMissing == 1, "The missing directory is counted");
+
+        // Ordering must be stable, or the list reshuffles between launches.
+        const ScanResult sorted =
+            scanPluginDirectories({root}, registry);
+        bool inOrder = true;
+        for (size_t i = 1; i < sorted.found.size(); ++i) {
+            if (sorted.found[i].name < sorted.found[i - 1].name) inOrder = false;
+        }
+        check(inOrder, "Scan results are sorted by name");
+
+        // ---- The cache --------------------------------------------------------
+        {
+            const std::string cachePath = "plugin-cache-test.ini";
+
+            std::vector<PluginDescriptor> toSave = sorted.found;
+            // A name containing a tab would corrupt a tab-separated line.
+            if (!toSave.empty()) toSave[0].name = "Has\tA\tTab";
+
+            check(savePluginCache(toSave, cachePath), "The cache saves");
+
+            std::vector<PluginDescriptor> loaded;
+            check(loadPluginCache(loaded, cachePath), "The cache loads");
+            check(loaded.size() == toSave.size(),
+                  "Every entry came back: " + std::to_string(loaded.size()) +
+                      " of " + std::to_string(toSave.size()));
+
+            if (!loaded.empty() && !toSave.empty()) {
+                check(loaded[0].name.find('\t') == std::string::npos,
+                      "A tab in a name did not corrupt the line");
+                check(loaded[0].path == toSave[0].path,
+                      "The path survived the round trip");
+                check(loaded[0].format == toSave[0].format,
+                      "The format survived the round trip");
+                check(loaded[0].uid == toSave[0].uid,
+                      "The uid survived the round trip");
+            }
+
+            // A line from another version is skipped, not half-read.
+            {
+                std::ofstream file(cachePath, std::ios::app);
+                file << "clap\tonly-two-fields\n";
+                file << "# a comment\n";
+                file << "\n";
+            }
+            std::vector<PluginDescriptor> mixed;
+            check(loadPluginCache(mixed, cachePath), "A mixed cache loads");
+            check(mixed.size() == toSave.size(),
+                  "A short line was skipped rather than half-read");
+
+            check(!loadPluginCache(loaded, "no-such-cache-anywhere.ini"),
+                  "A missing cache is reported, not thrown");
+
+            // ---- Validation ---------------------------------------------------
+            //
+            // The cache is a convenience and never a source of truth: the
+            // whole point of caching things outside the project is that
+            // they move.
+            std::vector<PluginDescriptor> toCheck = loaded;
+
+            PluginDescriptor gone;
+            gone.format = PluginFormat::CLAP;
+            gone.path = root + "/deleted-since-the-scan.clap";
+            toCheck.push_back(gone);
+
+            int stale = 0;
+            std::vector<PluginDescriptor> good = validateCache(toCheck, &stale);
+            check(stale >= 1, "A plugin that is gone is counted stale");
+            bool keptGone = false;
+            for (const PluginDescriptor& plugin : good) {
+                if (plugin.path == gone.path) keptGone = true;
+            }
+            check(!keptGone, "A plugin that is gone is dropped from the list");
+
+            // A plugin updated in place keeps its path, so size is checked
+            // too - a cached name from the old version would be wrong.
+            std::vector<PluginDescriptor> resized;
+            for (const PluginDescriptor& plugin : good) {
+                if (plugin.format != PluginFormat::CLAP) continue;
+                PluginDescriptor changed = plugin;
+                changed.fileSize = plugin.fileSize + 1000;
+                resized.push_back(changed);
+                break;
+            }
+            if (!resized.empty()) {
+                int resizedStale = 0;
+                const std::vector<PluginDescriptor> after =
+                    validateCache(resized, &resizedStale);
+                check(after.empty() && resizedStale == 1,
+                      "A plugin whose file changed size is treated as stale");
+            }
+
+            std::remove(cachePath.c_str());
+        }
+
+        // ---- Loading ------------------------------------------------------------
+        {
+            PluginFormatRegistry loaders;
+            PluginLoadError error = PluginLoadError::Ok;
+
+            PluginDescriptor descriptor;
+            descriptor.format = PluginFormat::CLAP;
+            descriptor.path = root + "/Compressor.clap";
+            descriptor.name = "Compressor";
+            descriptor.uid = "test.Compressor";
+
+            // Nothing registered yet: this build cannot host it, which is a
+            // different thing from the file being missing.
+            check(loaders.create(descriptor, 44100.0f, error) == nullptr,
+                  "Nothing loads without a registered format");
+            check(error == PluginLoadError::SdkNotBuilt,
+                  "An unregistered format reports that support was not built in");
+
+            // A file that is not there is reported as such, whatever the
+            // format's loader would have said.
+            registerTestPluginFormat(loaders);
+            PluginDescriptor moved = descriptor;
+            moved.path = root + "/moved-away.clap";
+            check(loaders.create(moved, 44100.0f, error) == nullptr,
+                  "A missing file does not load");
+            check(error == PluginLoadError::FileMissing,
+                  "A missing file is reported as missing, not as a load failure");
+
+            PluginDescriptor nonsense;
+            check(loaders.create(nonsense, 44100.0f, error) == nullptr,
+                  "An empty descriptor does not load");
+            check(error == PluginLoadError::FormatUnsupported,
+                  "An empty descriptor is reported as unsupported");
+
+            // A loader that refuses.
+            touch("broken.clap");
+            PluginDescriptor broken = descriptor;
+            broken.path = root + "/broken.clap";
+            check(loaders.create(broken, 44100.0f, error) == nullptr,
+                  "A plugin that refuses to start does not load");
+            check(error == PluginLoadError::InitialisationFailed,
+                  "A refusal is reported as one");
+
+            // And one that works.
+            std::unique_ptr<IPluginInstance> instance =
+                loaders.create(descriptor, 48000.0f, error);
+            check(instance != nullptr, "A registered format loads");
+            check(error == PluginLoadError::Ok, "A successful load reports Ok");
+
+            if (instance != nullptr) {
+                check(instance->parameterCount() == 2,
+                      "The plugin's parameters are visible");
+                check(instance->parameter(0).name == "Gain",
+                      "A parameter has its name");
+                check(instance->descriptor().path == descriptor.path,
+                      "The instance knows where it came from");
+
+                auto* gain = static_cast<TestGainPlugin*>(instance.get());
+                check(std::fabs(gain->sampleRate() - 48000.0f) < 1.0f,
+                      "The sample rate reached the plugin");
+
+                // The audio actually changes - the whole point.
+                std::vector<float> left(64, 0.5f), right(64, 0.5f);
+                instance->setParameter(0, 1.0f);      // gain x2
+                instance->processStereo(left.data(), right.data(), 64);
+                check(std::fabs(left[0] - 1.0f) < 1e-5f,
+                      "The plugin changed the audio");
+                check(gain->applied() > 0,
+                      "The parameter change was drained on the audio side");
+
+                // Every error text says something a person can act on.
+                const PluginLoadError ERRORS[] = {
+                    PluginLoadError::Ok, PluginLoadError::FileMissing,
+                    PluginLoadError::FormatUnsupported,
+                    PluginLoadError::SdkNotBuilt,
+                    PluginLoadError::EntryPointMissing,
+                    PluginLoadError::WrongArchitecture,
+                    PluginLoadError::InitialisationFailed};
+                for (PluginLoadError value : ERRORS) {
+                    check(std::strlen(pluginLoadErrorText(value)) > 0,
+                          "Every load error has something to say");
+                }
+            }
+        }
+
+        // ---- Slots, and a plugin that is not there ---------------------------
+        {
+            PluginManager manager;
+            PluginFormatRegistry loaders;
+            registerTestPluginFormat(loaders);
+            manager.setRegistry(&loaders);
+
+            const ScanResult found = scanPluginDirectories({root}, loaders);
+            check(!found.found.empty(), "The manager has something to work with");
+
+            // Matching: uid first, path as the fallback. Either can change
+            // on its own, so one alone is not enough.
+            PluginSlot slot;
+            slot.format = PluginFormat::CLAP;
+            slot.uid = "test.Compressor";
+            slot.path = "D:/a/completely/different/place/Compressor.clap";
+            check(findPluginForSlot(slot, found.found) >= 0,
+                  "A moved plugin is found by its uid");
+
+            PluginSlot byPath;
+            byPath.format = PluginFormat::CLAP;
+            byPath.uid = "an.id.that.changed";
+            byPath.path = root + "/Compressor.clap";
+            check(findPluginForSlot(byPath, found.found) >= 0,
+                  "A plugin whose id changed is found by its path");
+
+            PluginSlot nowhere;
+            nowhere.format = PluginFormat::CLAP;
+            nowhere.uid = "not.installed.here";
+            nowhere.path = "D:/nowhere/Absent.clap";
+            check(findPluginForSlot(nowhere, found.found) < 0,
+                  "A plugin that is not installed is not found");
+
+            // Instantiating restores state AND parameters, in that order:
+            // a plugin's opaque state usually sets its parameters too, so
+            // applying it afterwards would undo the saved values.
+            PluginSlot saved;
+            saved.format = PluginFormat::CLAP;
+            saved.uid = "test.Compressor";
+            saved.path = root + "/Compressor.clap";
+            saved.name = "Compressor";
+            saved.parameterValues = {0.9f, 1.0f};
+            saved.state = "secret:4242";
+
+            PluginLoadError error = PluginLoadError::Ok;
+            std::unique_ptr<IPluginInstance> restored =
+                manager.instantiate(saved, 44100.0f, error);
+            check(restored != nullptr, "A saved slot comes back to life");
+            if (restored != nullptr) {
+                auto* gain = static_cast<TestGainPlugin*>(restored.get());
+                check(gain->secret() == 4242,
+                      "The plugin's opaque state was restored");
+                check(std::fabs(restored->parameter(0).value - 0.9f) < 1e-5f,
+                      "The saved parameter value was restored after the state");
+
+                // And capturing it again produces the same slot.
+                const PluginSlot captured = PluginManager::captureSlot(*restored);
+                check(captured.uid == saved.uid, "Capture keeps the uid");
+                check(captured.parameterValues.size() == 2,
+                      "Capture takes every parameter");
+                check(std::fabs(captured.parameterValues[0] - 0.9f) < 1e-5f,
+                      "Capture takes the current values");
+                check(captured.state == "secret:4242",
+                      "Capture takes the opaque state");
+            }
+
+            // A slot pointing nowhere fails with a reason, and the reason
+            // is the one that tells the user to go looking for the file.
+            std::unique_ptr<IPluginInstance> absent =
+                manager.instantiate(nowhere, 44100.0f, error);
+            check(absent == nullptr, "A plugin that is not there does not load");
+            check(error == PluginLoadError::FileMissing,
+                  "And says the file is missing");
+
+            PluginSlot blank;
+            check(manager.instantiate(blank, 44100.0f, error) == nullptr,
+                  "An empty slot does not load");
+
+            // ---- The chain --------------------------------------------------
+            {
+                PluginChain chain;
+                chain.setSampleRate(44100.0f);
+                check(!chain.active(), "A new chain is inactive");
+                check(chain.latencySamples() == 0,
+                      "An inactive chain adds no latency");
+                check(std::fabs(chain.processSample(0.5f) - 0.5f) < 1e-6f,
+                      "An inactive chain passes audio through unchanged");
+
+                std::vector<PluginSlot> slots;
+                slots.push_back(saved);
+                slots.push_back(nowhere);   // one that cannot be found
+
+                std::vector<PluginLoadError> errors;
+                const int loaded = chain.build(slots, manager, &errors);
+                check(loaded == 1, "One of the two plugins loaded");
+                check(chain.active(), "A chain with a plugin is active");
+                check(chain.size() == 2,
+                      "The missing plugin kept its place in the chain");
+                check(chain.at(0) != nullptr, "The first slot loaded");
+                check(chain.at(1) == nullptr, "The second did not");
+                check(errors.size() == 2 && errors[1] != PluginLoadError::Ok,
+                      "The failure was reported per slot");
+
+                check(chain.latencySamples() == PluginChain::BLOCK,
+                      "An active chain reports its block of latency");
+
+                /*
+                 * Audio through the chain.
+                 *
+                 * What must hold is that it is delayed by exactly one block
+                 * and then processed - a chain that returned its input
+                 * would pass a "does it run" check while the plugin was
+                 * never heard.
+                 */
+                // Both, explicitly: the slot was saved with Invert on, and
+                // leaving it there would make this assert a sign flip it
+                // never meant to be testing.
+                chain.at(0)->setParameter(0, 1.0f);   // gain x2
+                chain.at(0)->setParameter(1, 0.0f);   // not inverted
+
+                std::vector<float> out;
+                for (int i = 0; i < PluginChain::BLOCK * 3; ++i) {
+                    out.push_back(chain.processSample(0.25f));
+                }
+
+                bool firstBlockSilent = true;
+                for (int i = 0; i < PluginChain::BLOCK; ++i) {
+                    if (std::fabs(out[size_t(i)]) > 1e-6f) firstBlockSilent = false;
+                }
+                check(firstBlockSilent,
+                      "The first block is the delay, not the signal");
+                check(std::fabs(out[PluginChain::BLOCK + 10] - 0.5f) < 1e-4f,
+                      "After one block of delay the plugin's gain is heard, got " +
+                          std::to_string(out[PluginChain::BLOCK + 10]));
+
+                // Bypass leaves the delay in place but stops the processing,
+                // so bypassing does not also shift the channel in time.
+                chain.setBypassed(0, true);
+                std::vector<float> bypassed;
+                for (int i = 0; i < PluginChain::BLOCK * 3; ++i) {
+                    bypassed.push_back(chain.processSample(0.25f));
+                }
+                check(std::fabs(bypassed[PluginChain::BLOCK + 10] - 0.25f) < 1e-4f,
+                      "Bypass passes the signal through unchanged");
+                check(chain.latencySamples() == PluginChain::BLOCK,
+                      "Bypass does not change the latency");
+
+                chain.clear();
+                check(!chain.active(), "A cleared chain is inactive");
+                check(chain.size() == 0, "A cleared chain holds nothing");
+            }
+
+            // ---- Through the sequencer ------------------------------------------
+            //
+            // The one that proves it is wired in: a plugin on a channel has
+            // to change what comes out of the mixer.
+            {
+                auto projectPtr = std::make_unique<Project>();
+                auto seqPtr = std::make_unique<Sequencer>();
+                Project& project = *projectPtr;
+                Sequencer& seq = *seqPtr;
+
+                seq.setSampleRate(44100.0f);
+                seq.setProject(&project);
+
+                PluginSlot inverting = saved;
+                inverting.parameterValues = {0.5f, 1.0f};   // gain x1, inverted
+                inverting.state.clear();
+                project.channels[0].plugins.push_back(inverting);
+
+                std::vector<std::string> problems;
+                seq.rebuildPluginChains(manager, &problems);
+                check(problems.empty(),
+                      "The chain rebuilt with no problems to report");
+                check(seq.pluginChain(0).active(),
+                      "Channel 0 has a live plugin chain");
+                check(seq.maxPluginLatencySamples() == PluginChain::BLOCK,
+                      "The sequencer reports the plugin latency");
+
+                // A channel without one must be untouched.
+                check(!seq.pluginChain(1).active(),
+                      "A channel with no plugins has no chain");
+
+                // And a project with none clears them again, rather than
+                // leaving the last project's plugins running.
+                project.channels[0].plugins.clear();
+                seq.rebuildPluginChains(manager, &problems);
+                check(!seq.pluginChain(0).active(),
+                      "Removing the plugin clears the chain");
+            }
+        }
+
+        std::filesystem::remove_all(root, error);
+    }
+
+    // ---- The project file ------------------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+
+        PluginSlot slot;
+        slot.format = PluginFormat::VST3;
+        slot.path = "C:/Program Files/Common Files/VST3/Big Reverb.vst3";
+        slot.uid = "ABCDEF0123456789";
+        slot.name = "Big Reverb";
+        slot.enabled = true;
+        slot.bypassed = true;
+        slot.parameterValues = {0.0f, 0.25f, 1.0f, 0.6f};
+        slot.state = std::string("binary\0state\x01\x02", 15);
+
+        project.channels[2].plugins.push_back(slot);
+
+        PluginSlot second;
+        second.format = PluginFormat::CLAP;
+        second.path = "D:/clap/Thing.clap";
+        second.uid = "thing";
+        second.name = "Thing";
+        project.channels[2].plugins.push_back(second);
+
+        const std::string path = "plugin-project-test.ctp";
+        check(saveProject(project, path), "A project with plugins saves");
+
+        auto reloadedPtr = std::make_unique<Project>();
+        Project& reloaded = *reloadedPtr;
+        check(loadProject(reloaded, path), "It loads again");
+
+        const std::vector<PluginSlot>& plugins = reloaded.channels[2].plugins;
+        check(plugins.size() == 2, "Both plugins came back, got " +
+                                       std::to_string(plugins.size()));
+
+        if (plugins.size() == 2) {
+            check(plugins[0].format == PluginFormat::VST3, "The format came back");
+            check(plugins[0].path == slot.path,
+                  "A path with spaces in it came back intact");
+            check(plugins[0].uid == slot.uid, "The uid came back");
+            check(plugins[0].name == slot.name, "The name came back");
+            check(plugins[0].bypassed, "The bypass flag came back");
+            check(plugins[0].parameterValues.size() == 4,
+                  "Every parameter value came back");
+            check(std::fabs(plugins[0].parameterValues[1] - 0.25f) < 1e-4f,
+                  "The parameter values are the ones that were saved");
+            check(plugins[0].state == slot.state,
+                  "The opaque state survived, bytes and all");
+            check(plugins[1].uid == "thing", "The second plugin came back too");
+            check(plugins[1].state.empty(),
+                  "A plugin with no state has none rather than a stray byte");
+        }
+
+        // Order matters: an insert rack is a chain.
+        if (plugins.size() == 2) {
+            check(plugins[0].uid == slot.uid && plugins[1].uid == second.uid,
+                  "The plugins came back in the order they were in");
+        }
+
+        // A project with no plugins must write no PLUGIN lines at all, so
+        // the format bump costs nothing to anybody who never loads one.
+        {
+            auto plainPtr = std::make_unique<Project>();
+            const std::string plainPath = "plugin-project-none.ctp";
+            check(saveProject(*plainPtr, plainPath), "A plain project saves");
+
+            std::ifstream file(plainPath);
+            std::string body((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+            check(body.find("PLUGIN ") == std::string::npos,
+                  "A project with no plugins writes no PLUGIN lines");
+            std::remove(plainPath.c_str());
+        }
+
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation --------------------------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+
+        // A slot that can never be matched to anything is a row in the UI
+        // that does nothing forever.
+        PluginSlot orphan;
+        orphan.format = PluginFormat::CLAP;
+        project.channels[0].plugins.push_back(orphan);
+
+        PluginSlot real;
+        real.format = PluginFormat::CLAP;
+        real.path = "D:/x.clap";
+        real.uid = "x";
+        real.parameterValues = {std::numeric_limits<float>::quiet_NaN(),
+                                -5.0f, 17.0f, 0.5f};
+        project.channels[0].plugins.push_back(real);
+
+        clampProjectToValidRanges(project);
+
+        const std::vector<PluginSlot>& plugins = project.channels[0].plugins;
+        check(plugins.size() == 1, "The unmatched slot was removed");
+        if (!plugins.empty()) {
+            check(std::isfinite(plugins[0].parameterValues[0]),
+                  "A NaN parameter was replaced");
+            for (float value : plugins[0].parameterValues) {
+                check(value >= 0.0f && value <= 1.0f,
+                      "Every parameter is inside its normalised range");
+            }
+            check(!plugins[0].name.empty(),
+                  "A slot with no name is named after its file");
+        }
+    }
+}
+
+
+// ============================================================================
+// 97. The Plugins panel
+// ============================================================================
+static void testPluginsPanel() {
+    beginTest("Plugins panel (headless GUI)");
+
+    auto uiPtr = std::make_unique<HeadlessUI>();
+    auto projectPtr = std::make_unique<Project>();
+    auto seqPtr = std::make_unique<Sequencer>();
+    UIState ui;
+
+    Project& project = *projectPtr;
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&project);
+
+    ui.showPlugins = true;
+
+    // ---- Nothing scanned, nothing loaded ------------------------------------
+    //
+    // What every user of this build sees, since no format loader ships.
+    {
+        auto result = uiPtr->frames(3, [&] { DrawPluginsPanel(project, ui, seq); });
+        check(frameIsClean(result),
+              "Plugins panel with nothing draws cleanly: " + result.firstProblem);
+        check(result.vertexCount > 0, "It draws its explanation");
+    }
+
+    // ---- A rack with a plugin that cannot be loaded ---------------------------
+    //
+    // The important one. A slot whose plugin is missing must still draw,
+    // still be named, and still say its settings are kept - an empty row
+    // would read as the work being gone when it is all still in the file.
+    {
+        PluginSlot missing;
+        missing.format = PluginFormat::VST3;
+        missing.path = "D:/not/installed/Fancy Reverb.vst3";
+        missing.uid = "fancy";
+        missing.name = "Fancy Reverb";
+        missing.parameterValues = {0.2f, 0.4f, 0.6f};
+        project.channels[0].plugins.push_back(missing);
+
+        ApplyPluginChanges(project, seq);
+
+        auto result = uiPtr->frames(3, [&] { DrawPluginsPanel(project, ui, seq); });
+        check(frameIsClean(result),
+              "A missing plugin draws cleanly: " + result.firstProblem);
+
+        check(project.channels[0].plugins.size() == 1,
+              "A plugin that could not be loaded stays in the project");
+        check(project.channels[0].plugins[0].parameterValues.size() == 3,
+              "And keeps its saved parameter values");
+        check(!pluginPanelState().problems.empty(),
+              "The panel was told why it could not load");
+    }
+
+    // ---- With a plugin that does load ------------------------------------------
+    {
+        const std::string root = "plugin-panel-test";
+        std::error_code error;
+        std::filesystem::create_directories(root, error);
+        {
+            std::ofstream file(root + "/Panel Gain.clap");
+            file << "x";
+        }
+
+        static PluginFormatRegistry panelFormats;
+        panelFormats.clear();
+        registerTestPluginFormat(panelFormats);
+        pluginManager().setRegistry(&panelFormats);
+        pluginManager().setSearchPaths({root});
+        const ScanResult scan = pluginManager().scan();
+        check(!scan.found.empty(), "The panel's manager found a plugin");
+
+        project.channels[0].plugins.clear();
+
+        PluginSlot slot;
+        slot.format = PluginFormat::CLAP;
+        slot.path = root + "/Panel Gain.clap";
+        slot.uid = "test.Panel Gain";
+        slot.name = "Panel Gain";
+        project.channels[0].plugins.push_back(slot);
+
+        ApplyPluginChanges(project, seq);
+        check(seq.pluginChain(0).at(0) != nullptr,
+              "The panel's plugin actually loaded");
+        check(pluginPanelState().problems.empty(),
+              "Nothing to report when it loads");
+
+        auto result = uiPtr->frames(3, [&] { DrawPluginsPanel(project, ui, seq); });
+        check(frameIsClean(result),
+              "A loaded plugin draws cleanly: " + result.firstProblem);
+
+        // The parameter tree is behind a TreeNode, which is closed by
+        // default - open it so the sliders are drawn too, since that is
+        // where an ID collision or a NaN would live.
+        uiPtr->frames(1, [&] {
+            ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+            DrawPluginsPanel(project, ui, seq);
+        });
+        auto opened = uiPtr->frames(2, [&] {
+            ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+            DrawPluginsPanel(project, ui, seq);
+        });
+        check(frameIsClean(opened),
+              "The parameter list draws cleanly: " + opened.firstProblem);
+
+        // A search that matches nothing, which is the empty-list path.
+        snprintf(pluginPanelState().search, sizeof(pluginPanelState().search),
+                 "zzzzzz");
+        auto filtered = uiPtr->frames(2, [&] { DrawPluginsPanel(project, ui, seq); });
+        check(frameIsClean(filtered),
+              "A search matching nothing draws cleanly");
+        pluginPanelState().search[0] = '\0';
+
+        // Closed means not drawn.
+        ui.showPlugins = false;
+        auto closed = uiPtr->frames(2, [&] { DrawPluginsPanel(project, ui, seq); });
+        check(frameIsClean(closed), "A closed Plugins panel draws cleanly");
+
+        // Leave the globals as they were found.
+        project.channels[0].plugins.clear();
+        ApplyPluginChanges(project, seq);
+        pluginManager().setRegistry(nullptr);
+        pluginManager().setSearchPaths({});
+        pluginPanelState() = PluginPanelState();
+        std::filesystem::remove_all(root, error);
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -17177,6 +18077,7 @@ static void testPanelsDrawHeadless() {
         {"Take Lanes",     [](Project& p, UIState& u, Sequencer& s) { DrawTakeLanes(p, u, s); }},
         {"Browser",        [](Project& p, UIState& u, Sequencer& s) { u.showBrowser = true; DrawBrowser(p, u, s); }},
         {"Shortcuts",      [](Project& p, UIState& u, Sequencer& s) { u.showShortcuts = true; DrawShortcutsPanel(p, u, s); }},
+        {"Plugins",        [](Project& p, UIState& u, Sequencer& s) { u.showPlugins = true; DrawPluginsPanel(p, u, s); }},
     };
 
     for (const Panel& panel : PANELS) {
@@ -17642,6 +18543,8 @@ int main(int argc, char** argv) {
     testActionRegistry();
     testBrowserModel();
     testCommandPaletteAndBrowser();
+    testPluginHosting();
+    testPluginsPanel();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

@@ -308,6 +308,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     ChiptuneTracker::actionRegistry().loadBindings(
         ChiptuneTracker::keybindingsPath(uiState.settingsDirectory));
 
+    /*
+     * The plugin list from the last scan.
+     *
+     * Loaded rather than rescanned: a scan opens hundreds of files, and
+     * doing it on every launch is how a DAW earns a reputation for taking a
+     * minute to start. Entries are checked against disk as they load, so a
+     * plugin uninstalled since does not appear in the list.
+     */
+    ChiptuneTracker::pluginManager().loadCache(
+        ChiptuneTracker::pluginCachePath(uiState.settingsDirectory));
+
     bool showWelcome = false;
 
     // Starting the lesson means starting a genuinely fresh project - its
@@ -1037,6 +1048,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // palette draws last of the three so it sits over whatever it was
         // opened from.
         ChiptuneTracker::DrawBrowser(project, uiState, sequencer);
+        ChiptuneTracker::DrawPluginsPanel(project, uiState, sequencer);
         ChiptuneTracker::DrawShortcutsPanel(project, uiState, sequencer);
         ChiptuneTracker::DrawCommandPalette(project, uiState, sequencer);
 

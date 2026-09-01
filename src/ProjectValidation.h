@@ -16,6 +16,8 @@
  * MIDI import, undo history, a future network or plugin path).
  */
 
+#include <filesystem>   // naming a plugin slot after its file when it has no name
+
 #include "Types.h"
 #include "Effects.h"
 #include "Routing.h"
@@ -475,6 +477,36 @@ inline void clampProjectToValidRanges(Project& project) {
         }
     }
     sortRegions(project.regions);
+
+    /*
+     * Plugin slots.
+     *
+     * A slot with neither a path nor a uid can never be matched to
+     * anything, so it is a row in the UI that does nothing forever. The
+     * parameter list is capped for the same reason the reader caps it: a
+     * corrupted count must not become an allocation.
+     */
+    for (ChannelConfig& channel : project.channels) {
+        channel.plugins.erase(
+            std::remove_if(channel.plugins.begin(), channel.plugins.end(),
+                           [](const PluginSlot& plugin) { return plugin.empty(); }),
+            channel.plugins.end());
+
+        if (channel.plugins.size() > 16) channel.plugins.resize(16);
+
+        for (PluginSlot& plugin : channel.plugins) {
+            if (plugin.parameterValues.size() > 4096) {
+                plugin.parameterValues.resize(4096);
+            }
+            for (float& value : plugin.parameterValues) {
+                if (!std::isfinite(value)) value = 0.0f;
+                value = std::clamp(value, 0.0f, 1.0f);
+            }
+            if (plugin.name.empty()) {
+                plugin.name = std::filesystem::path(plugin.path).stem().string();
+            }
+        }
+    }
 
     // Take lanes. A segment naming a take that is gone would index off the
     // end of the vector during flattening.

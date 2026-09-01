@@ -125,6 +125,37 @@ worth knowing about before changing behaviour elsewhere:
 | `src/Genres.h` | Which palette sections, tools and engines each genre focus puts in front of you. |
 | `src/Version.h` | The version, once. It was written twice and the two disagreed for two releases. |
 
+## Plugin hosting
+
+`src/PluginHost.h` hosts VST2, VST3 and CLAP behind one interface. A hosted
+plugin is an `IEffect` like any built-in — `processBlock()` and
+`latencySamples()` exist on that interface for exactly this reason, since a
+plugin is block-native and reports its own latency while a built-in is
+neither.
+
+**No format loader ships.** Everything else does, and is tested: discovery,
+the scan cache, the descriptor and parameter model, the lock-free parameter
+queue, instantiation, the audio path, project persistence, and the
+missing-plugin path. A loader is *registered* rather than compiled in, so
+the tests register one and drive the whole path end to end.
+
+| Format | What is needed to finish it |
+|---|---|
+| CLAP | Vendor the MIT headers, write the loader, test against a real `.clap`. The only one with no licensing question — do this one first. |
+| VST3 | Steinberg's SDK is a separate download under a dual GPLv3/proprietary licence. Vendoring it is a licensing decision, not a technical one. |
+| VST2 | Steinberg withdrew the SDK in 2018. It cannot be legally obtained or redistributed. A VST2 loader cannot ship. |
+
+Two things shape the design and should survive any change to it:
+
+- **A plugin lives outside the project, so it can always be missing.** A
+  project opened where the plugin is not installed keeps the slot, the
+  parameter values and the plugin's opaque state, and says so. Silently
+  dropping it would throw away work the user cannot get back — the same
+  rule as a moved sample.
+- **A plugin insert delays its channel by one block, and that is reported,
+  not hidden.** Nothing compensates for it yet; a channel that is quietly
+  late is a phase problem the user cannot see or fix.
+
 ## Testing
 
 See [TEST_PLAN.md](TEST_PLAN.md).

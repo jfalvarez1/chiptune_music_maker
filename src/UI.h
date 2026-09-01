@@ -19,6 +19,7 @@
 #include "SettingsAudit.h"
 #include "TakeLanes.h"
 #include "Browser.h"
+#include "PluginHost.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -5561,6 +5562,15 @@ inline const char* oscillatorTypeName(OscillatorType type) {
     return OSC_NAMES[index];
 }
 
+/*
+ * Declared here, defined with the Plugins panel further down.
+ *
+ * The File commands need it - loading a project has to rebuild the running
+ * plugin instances, or the new project's racks are drawn from its data
+ * while the old project's plugins are still the ones making sound.
+ */
+inline void ApplyPluginChanges(Project& project, Sequencer& seq);
+
 // ============================================================================
 // Commands
 //
@@ -5660,6 +5670,7 @@ inline void registerDefaultActions(ActionRegistry& registry) {
             c.ui->projectFilePath.clear();
             g_UndoHistory.clear();
             c.seq->updateChannelConfigs();
+            ApplyPluginChanges(*c.project, *c.seq);
         });
 
     add("file.save", "Save Project", "File",
@@ -5699,6 +5710,7 @@ inline void registerDefaultActions(ActionRegistry& registry) {
             c.ui->selectedNoteIndices.clear();
             g_UndoHistory.clear();
             c.seq->updateChannelConfigs();
+            ApplyPluginChanges(*c.project, *c.seq);
         },
         /*opensDialog=*/true);
 
@@ -5806,6 +5818,14 @@ inline void registerDefaultActions(ActionRegistry& registry) {
     add("help.shortcuts", "Keyboard Shortcuts", "Help",
         "See and change every key", key(ImGuiKey_Slash, true),
         [](ActionContext& c) { c.ui->showShortcuts = !c.ui->showShortcuts; });
+
+    add("panel.plugins", "Plugins", "Panels",
+        "Hosted VST and CLAP plugins on this channel", Shortcut(),
+        [](ActionContext& c) { c.ui->showPlugins = !c.ui->showPlugins; });
+
+    add("panel.plugins", "Plugins", "Panels",
+        "Hosted VST and CLAP plugins on this channel", Shortcut(),
+        [](ActionContext& c) { c.ui->showPlugins = !c.ui->showPlugins; });
 
     add("help.browser", "Browser", "Help",
         "Samples, instruments, presets and files", key(ImGuiKey_B, true),
@@ -6504,6 +6524,276 @@ inline void DrawBrowser(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::End();
 }
 
+
+// ============================================================================
+// Plugins
+//
+// The rack of hosted plugins on the selected channel, and the list of what
+// is installed. See PluginHost.h for what this build can and cannot host -
+// no format loader ships, so the list is honest about finding plugins it
+// cannot open rather than pretending they are not there.
+// ============================================================================
+
+static PluginManager g_Plugins;
+
+inline PluginManager& pluginManager() { return g_Plugins; }
+
+struct PluginPanelState {
+    bool scanning = false;
+    std::string lastScanSummary;
+    std::vector<std::string> problems;   // from the last chain rebuild
+    int selectedAvailable = -1;
+    char search[64] = {};
+};
+
+static PluginPanelState g_PluginPanel;
+
+inline PluginPanelState& pluginPanelState() { return g_PluginPanel; }
+
+/*
+ * Rebuild the audio-side chains after the rack changes.
+ *
+ * Always through here, never by editing project.channels[..].plugins and
+ * hoping: the running instances are what makes sound, and a rack edited
+ * without a rebuild is a change the user made and cannot hear.
+ */
+inline void ApplyPluginChanges(Project& project, Sequencer& seq) {
+    seq.rebuildPluginChains(g_Plugins, &g_PluginPanel.problems);
+}
+
+inline void DrawPluginsPanel(Project& project, UIState& ui, Sequencer& seq) {
+    if (!ui.showPlugins) return;
+
+    ImGui::SetNextWindowSize(ImVec2(460, 520), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Plugins", &ui.showPlugins)) {
+        ImGui::End();
+        return;
+    }
+
+    PluginPanelState& state = g_PluginPanel;
+    const int channel = std::clamp(ui.selectedChannel, 0, Project::MAX_CHANNELS - 1);
+    ChannelConfig& config = project.channels[static_cast<size_t>(channel)];
+
+    /*
+     * What this build can actually do.
+     *
+     * Said once, at the top, rather than discovered by loading a plugin and
+     * getting an error: somebody with a folder full of VST3s deserves to
+     * know before they go looking.
+     */
+    {
+        std::string hosted;
+        const PluginFormat FORMATS[] = {PluginFormat::VST2, PluginFormat::VST3,
+                                        PluginFormat::CLAP};
+        for (PluginFormat format : FORMATS) {
+            if (!g_Plugins.registry().supports(format)) continue;
+            if (!hosted.empty()) hosted += ", ";
+            hosted += pluginFormatName(format);
+        }
+
+        if (hosted.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+                               "This build cannot load plugins.");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Scanning still works, and a project keeps its plugins and\n"
+                    "their settings - so a project made elsewhere opens here\n"
+                    "without losing them. See docs/ARCHITECTURE.md.");
+            }
+        } else {
+            ImGui::Text("Hosting: %s", hosted.c_str());
+        }
+    }
+
+    ImGui::Separator();
+
+    // ---- The rack on this channel --------------------------------------------
+    ImGui::Text("%s", config.name.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d plugin%s)", int(config.plugins.size()),
+                        config.plugins.size() == 1 ? "" : "s");
+
+    if (config.plugins.empty()) {
+        ImGui::TextWrapped(
+            "No plugins on this channel. Choose one below and press Add.");
+    }
+
+    int removeAt = -1;
+    for (size_t i = 0; i < config.plugins.size(); ++i) {
+        PluginSlot& slot = config.plugins[i];
+        ImGui::PushID(static_cast<int>(2200 + i));
+
+        PluginChain& chain = seq.pluginChain(channel);
+        IPluginInstance* instance = chain.at(static_cast<int>(i));
+
+        if (ImGui::Checkbox("##enabled", &slot.enabled)) {
+            ApplyPluginChanges(project, seq);
+        }
+        ImGui::SameLine();
+
+        // A slot whose plugin is not loaded is drawn differently and says
+        // so: an empty-looking row would read as the settings being gone,
+        // when in fact they are all still in the project.
+        if (instance == nullptr) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f), "%s",
+                               slot.name.empty() ? "(unnamed)" : slot.name.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("- not loaded");
+        } else {
+            ImGui::Text("%s", slot.name.c_str());
+        }
+
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+        if (ImGui::SmallButton(slot.bypassed ? "byp" : "on")) {
+            slot.bypassed = !slot.bypassed;
+            chain.setBypassed(static_cast<int>(i), slot.bypassed);
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x")) removeAt = static_cast<int>(i);
+
+        // The parameters, from the running plugin. Only from a running one:
+        // the saved values alone have no names or ranges to draw.
+        if (instance != nullptr && instance->parameterCount() > 0) {
+            if (ImGui::TreeNode("Parameters")) {
+                for (int p = 0; p < instance->parameterCount(); ++p) {
+                    const PluginParameter& parameter = instance->parameter(p);
+                    float value = parameter.value;
+
+                    ImGui::PushID(p);
+                    ImGui::SetNextItemWidth(-90.0f);
+                    if (ImGui::SliderFloat(parameter.name.c_str(), &value,
+                                           0.0f, 1.0f, "%.3f")) {
+                        instance->setParameter(p, value);
+
+                        // Written back to the project as it moves, so
+                        // closing without touching anything else still
+                        // saves what was heard.
+                        if (slot.parameterValues.size() <=
+                            static_cast<size_t>(p)) {
+                            slot.parameterValues.resize(
+                                static_cast<size_t>(instance->parameterCount()),
+                                0.0f);
+                        }
+                        slot.parameterValues[static_cast<size_t>(p)] = value;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
+            }
+        } else if (instance == nullptr && !slot.parameterValues.empty()) {
+            ImGui::TextDisabled("   %d saved parameter%s kept",
+                                int(slot.parameterValues.size()),
+                                slot.parameterValues.size() == 1 ? "" : "s");
+        }
+
+        ImGui::PopID();
+    }
+
+    if (removeAt >= 0) {
+        g_UndoHistory.saveState(project, "Remove Plugin");
+        config.plugins.erase(config.plugins.begin() + removeAt);
+        ApplyPluginChanges(project, seq);
+    }
+
+    // Anything that could not be loaded, said plainly.
+    if (!state.problems.empty()) {
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Could not load:");
+        for (const std::string& problem : state.problems) {
+            ImGui::TextWrapped("%s", problem.c_str());
+        }
+    }
+
+    ImGui::Separator();
+
+    // ---- What is installed ------------------------------------------------------
+    if (ImGui::Button("Scan for plugins")) {
+        const ScanResult result = g_Plugins.scan();
+
+        char summary[192];
+        snprintf(summary, sizeof(summary),
+                 "%d found, %d files looked at, %d folders missing",
+                 int(result.found.size()), result.filesExamined,
+                 result.directoriesMissing);
+        state.lastScanSummary = summary;
+
+        g_Plugins.saveCache(pluginCachePath(ui.settingsDirectory));
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Looks in the standard plugin folders for this system.");
+    }
+
+    if (!state.lastScanSummary.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", state.lastScanSummary.c_str());
+    }
+
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##pluginsearch", "Search installed...",
+                             state.search, sizeof(state.search));
+
+    ImGui::BeginChild("##installed", ImVec2(0, 150), true);
+    if (!g_Plugins.scanned()) {
+        ImGui::TextDisabled("Not scanned yet.");
+    } else if (g_Plugins.available().empty()) {
+        ImGui::TextWrapped("Nothing found in the standard plugin folders.");
+    }
+
+    const std::string query = state.search;
+    for (size_t i = 0; i < g_Plugins.available().size(); ++i) {
+        const PluginDescriptor& plugin = g_Plugins.available()[i];
+        if (!query.empty() && fuzzyScore(query, plugin.name) < 0) continue;
+
+        ImGui::PushID(static_cast<int>(2400 + i));
+        const bool selected = (state.selectedAvailable == static_cast<int>(i));
+        if (ImGui::Selectable(plugin.name.c_str(), selected)) {
+            state.selectedAvailable = static_cast<int>(i);
+        }
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 50.0f);
+        ImGui::TextDisabled("%s", pluginFormatName(plugin.format));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", plugin.path.c_str());
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    const bool canAdd = state.selectedAvailable >= 0 &&
+                        state.selectedAvailable <
+                            static_cast<int>(g_Plugins.available().size());
+    if (!canAdd) ImGui::BeginDisabled();
+    if (ImGui::Button("Add to channel", ImVec2(-1, 0))) {
+        const PluginDescriptor& plugin =
+            g_Plugins.available()[static_cast<size_t>(state.selectedAvailable)];
+
+        g_UndoHistory.saveState(project, "Add Plugin");
+
+        PluginSlot slot;
+        slot.format = plugin.format;
+        slot.path = plugin.path;
+        slot.uid = plugin.uid;
+        slot.name = plugin.name;
+        config.plugins.push_back(slot);
+
+        ApplyPluginChanges(project, seq);
+    }
+    if (!canAdd) ImGui::EndDisabled();
+
+    // A plugin insert delays its channel by a block. Said rather than
+    // hidden: nothing compensates for it yet, and a channel that is quietly
+    // late is a phase problem the user cannot see.
+    const int latency = seq.maxPluginLatencySamples();
+    if (latency > 0) {
+        ImGui::TextDisabled("Plugin latency: %d samples on the busiest channel",
+                            latency);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "A channel with plugins runs this far behind one without.\n"
+                "Nothing compensates for it yet.");
+        }
+    }
+
+    ImGui::End();
+}
+
 // ============================================================================
 // File Menu Bar
 // ============================================================================
@@ -6539,6 +6829,7 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
                 ui.selectedNoteIndices.clear();
                 g_UndoHistory.clear();
                 seq.updateChannelConfigs();
+                ApplyPluginChanges(project, seq);
             }
         }
     }

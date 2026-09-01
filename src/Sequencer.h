@@ -14,6 +14,7 @@
 #include "NoteEvents.h"
 #include "Synthesizer.h"
 #include "MasterEffects.h"
+#include "PluginHost.h"
 #include "SpectrumAnalyzer.h"
 #include "MIDIInput.h"
 #include <array>
@@ -249,6 +250,23 @@ public:
             std::array<float, MAX_CHANNELS> channelSamples = {};
             for (int ch = 0; ch < activeChannels; ++ch) {
                 channelSamples[ch] = m_synths[ch].process(m_state.currentTime);
+
+                /*
+                 * Hosted plugins, after the channel's own voice.
+                 *
+                 * active() is false unless something actually loaded, so a
+                 * project with no plugins - which is every project in a
+                 * build with no format loader - pays one predictable branch
+                 * per channel and nothing else.
+                 *
+                 * The chain buffers to its block size internally and
+                 * therefore delays this channel; see PluginChain, which
+                 * reports that latency rather than hiding it.
+                 */
+                if (m_pluginChains[ch].active()) {
+                    channelSamples[ch] =
+                        m_pluginChains[ch].processSample(channelSamples[ch]);
+                }
             }
 
             // Audio clips join their channel here, before the insert rack -
@@ -502,6 +520,67 @@ public:
     // ========================================================================
     // Master Effects Access
     // ========================================================================
+    /*
+     * Rebuild every channel's plugin chain from the project. UI thread only.
+     *
+     * Called when a project is loaded and when a plugin is added or removed
+     * - never from the audio callback, which must not open a file.
+     *
+     * Reports which slots failed, so the UI can say a plugin is missing
+     * rather than showing an empty rack and letting the user conclude their
+     * settings are gone.
+     */
+    void rebuildPluginChains(PluginManager& manager,
+                             std::vector<std::string>* problemsOut = nullptr) {
+        if (problemsOut != nullptr) problemsOut->clear();
+        if (m_project == nullptr) return;
+
+        for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            const ChannelConfig& config = m_project->channels[static_cast<size_t>(ch)];
+
+            if (config.plugins.empty()) {
+                m_pluginChains[ch].clear();
+                continue;
+            }
+
+            m_pluginChains[ch].setSampleRate(m_sampleRate);
+
+            std::vector<PluginLoadError> errors;
+            m_pluginChains[ch].build(config.plugins, manager, &errors);
+
+            if (problemsOut == nullptr) continue;
+            for (size_t i = 0; i < errors.size(); ++i) {
+                if (errors[i] == PluginLoadError::Ok) continue;
+                problemsOut->push_back(
+                    config.name + ": " +
+                    (i < config.plugins.size() ? config.plugins[i].name
+                                               : std::string("plugin")) +
+                    " - " + pluginLoadErrorText(errors[i]));
+            }
+        }
+    }
+
+    PluginChain& pluginChain(int channel) {
+        return m_pluginChains[static_cast<size_t>(
+            std::clamp(channel, 0, MAX_CHANNELS - 1))];
+    }
+
+    /*
+     * The largest plugin delay on any channel.
+     *
+     * Reported so the UI can say so. Nothing compensates for it yet - the
+     * mixer has no delay line on the channels that do not have plugins -
+     * and claiming otherwise would be worse than saying plainly that a
+     * channel with an insert runs a block late.
+     */
+    int maxPluginLatencySamples() const {
+        int worst = 0;
+        for (const PluginChain& chain : m_pluginChains) {
+            worst = std::max(worst, chain.latencySamples());
+        }
+        return worst;
+    }
+
     MasterEffects& getMasterEffects() {
         return m_masterEffects;
     }
@@ -1174,6 +1253,16 @@ private:
     bool m_chipFilterReady = false;
 
     std::array<Synthesizer, MAX_CHANNELS> m_synths;
+
+    /*
+     * One hosted-plugin chain per channel.
+     *
+     * Held here rather than on the Synthesizer because a plugin runs on
+     * blocks and a Synthesizer is per-sample, and because a chain owns
+     * heap-allocated instances that a Synthesizer - which is copied - must
+     * not.
+     */
+    std::array<PluginChain, MAX_CHANNELS> m_pluginChains;
 
     // Decaying peak level per channel, for the mixer meters
     std::array<float, MAX_CHANNELS> m_channelPeaks = {};

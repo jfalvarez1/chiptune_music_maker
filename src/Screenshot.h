@@ -218,7 +218,7 @@ struct CaptureRequest {
 //   --view <name>        pianoroll|tracker|arrangement|mixer|pad
 //   --workspace <name>   compose|sounddesign|mix
 //   --show <name>        macros|spectrum|midi|automation|wavetable|
-//                        browser|shortcuts|palette   (repeatable)
+//                        browser|shortcuts|palette|plugins   (repeatable)
 //   --loop <a> <b>       set a loop range on the arrangement ruler
 //   --snap <name>        off|bar|1/2|1/4|1/8|1/16|1/32|1/4T|1/8T|1/16T
 //   --ghosts             show cross-channel ghost notes
@@ -453,6 +453,7 @@ inline void applyCaptureState(const CaptureRequest& request,
         if (window == "wavetable") ui.showWavetableEditor = true;
         if (window == "browser")   ui.showBrowser = true;
         if (window == "shortcuts") ui.showShortcuts = true;
+        if (window == "plugins")   ui.showPlugins = true;
 
         // The palette is opened rather than flagged, because opening it is
         // what focuses its search box - a screenshot of it without the

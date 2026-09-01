@@ -134,6 +134,19 @@ else. A clip whose file has moved keeps its place and its edits and says so.
 
 ![Audio clips](docs/images/audio-clips.png)
 
+### Plugins
+
+Per-channel racks for hosted VST and CLAP plugins, with a scanner that finds
+what is installed and remembers it between launches.
+
+**This build cannot load plugins yet** — none of the three SDKs ships with
+it. What works today is everything around that: scanning, the rack, and the
+project format. A project made where plugins *do* load keeps every plugin,
+its parameters and its state when opened here, and gives them back intact —
+so nothing is lost by moving a project between machines.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what each format needs.
+
 ### Browser and command palette
 
 One place to find what you have — the samples in the project, every

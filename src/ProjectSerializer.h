@@ -67,7 +67,17 @@ namespace ctp {
 // writes exactly the bytes it wrote at v5, so the bump costs nothing to
 // anyone who never touches the feature. A v5 reader meeting a TEMPO line
 // skips a line it does not know rather than misparsing one it does.
-inline constexpr int FORMAT_VERSION = 6;
+// v7 added hosted plugin slots on a channel.
+//
+// Omit-if-default like the rest: a project with no plugins writes exactly
+// the bytes it wrote at v6, so the bump costs nothing to anybody who never
+// loads one. A v6 reader meeting a PLUGIN line skips a line it does not
+// know rather than misparsing one it does.
+//
+// The plugin's own opaque state is written as hex rather than raw bytes,
+// because a .ctp is a text file you can read and a binary blob in the
+// middle of one would end it at the first stray newline.
+inline constexpr int FORMAT_VERSION = 7;
 
 // ============================================================================
 // Field tables
@@ -672,6 +682,46 @@ inline bool writeProject(std::ostream& file, const Project& project) {
          * all - which failed every field of the round trip at once,
          * including the oscillator type that has nothing to do with FM.
          */
+        /*
+         * Hosted plugins, one line each.
+         *
+         * The path, the uid and the plugin's own state are all written -
+         * not just the path - because a plugin lives outside the project
+         * and can always be missing. A project opened on a machine without
+         * it must keep enough to restore the sound when it comes back;
+         * writing only a path would lose every parameter the moment the
+         * plugin was not found.
+         */
+        for (const PluginSlot& plugin : c.plugins) {
+            if (plugin.empty()) continue;
+
+            file << "PLUGIN " << ch << ' '
+                 << pluginFormatToken(plugin.format) << ' '
+                 << (plugin.enabled ? 1 : 0) << ' '
+                 << (plugin.bypassed ? 1 : 0) << ' '
+                 << ctp::quote(plugin.path) << ' '
+                 << ctp::quote(plugin.uid) << ' '
+                 << ctp::quote(plugin.name) << ' '
+                 << plugin.parameterValues.size();
+
+            for (float value : plugin.parameterValues) {
+                file << ' ' << ctp::floatToToken(value);
+            }
+
+            // Hex, and last on the line, so a reader that stops early still
+            // gets every field before it.
+            file << ' ';
+            if (plugin.state.empty()) {
+                file << '-';
+            } else {
+                static const char* HEX = "0123456789abcdef";
+                for (unsigned char byte : plugin.state) {
+                    file << HEX[byte >> 4] << HEX[byte & 0x0F];
+                }
+            }
+            file << "\n";
+        }
+
         if (c.oscillator.type == OscillatorType::FMSynth) {
             const FMPatch& fm = c.oscillator.fm;
             file << "FM " << ch << ' ' << ctp::floatToToken(fm.index) << ' '
@@ -1388,6 +1438,68 @@ inline bool readProject(std::istream& file, Project& project) {
                     >> zone.roundRobinGroup;
                 zone.loop = (loop != 0);
                 s.addZone(zone);
+            }
+        }
+        else if (cmd == "PLUGIN") {
+            int ch = -1;
+            std::string formatToken;
+            int enabled = 1, bypassed = 0;
+            iss >> ch >> formatToken >> enabled >> bypassed;
+
+            if (ch >= 0 && ch < Project::MAX_CHANNELS) {
+                PluginSlot plugin;
+                plugin.format = pluginFormatFromToken(formatToken);
+                plugin.enabled = (enabled != 0);
+                plugin.bypassed = (bypassed != 0);
+
+                /*
+                 * The three quoted fields, then the rest.
+                 *
+                 * A path may contain spaces and very nearly always does on
+                 * Windows, so they cannot come off the stream by token.
+                 */
+                size_t pos = 0;
+                plugin.path = ctp::unquote(line, pos);
+                plugin.uid = ctp::unquote(line, pos);
+                plugin.name = ctp::unquote(line, pos);
+
+                std::istringstream rest(line.substr(std::min(pos, line.size())));
+                size_t count = 0;
+                rest >> count;
+
+                // Bounded: a corrupted count must not ask for a billion
+                // floats before the read of each one fails.
+                count = std::min<size_t>(count, 4096);
+                for (size_t i = 0; i < count; ++i) {
+                    float value = 0.0f;
+                    if (!(rest >> value)) break;
+                    plugin.parameterValues.push_back(value);
+                }
+
+                // The opaque state, hex, last on the line. "-" means none.
+                std::string hex;
+                if (rest >> hex && hex != "-") {
+                    auto nibble = [](char c) -> int {
+                        if (c >= '0' && c <= '9') return c - '0';
+                        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                        return -1;
+                    };
+                    plugin.state.reserve(hex.size() / 2);
+                    for (size_t i = 0; i + 1 < hex.size(); i += 2) {
+                        const int high = nibble(hex[i]);
+                        const int low = nibble(hex[i + 1]);
+                        // A bad character means the blob is not what was
+                        // written; keeping half of it would hand the plugin
+                        // a truncated state, so it is dropped entirely.
+                        if (high < 0 || low < 0) { plugin.state.clear(); break; }
+                        plugin.state += static_cast<char>((high << 4) | low);
+                    }
+                }
+
+                if (!plugin.empty()) {
+                    project.channels[static_cast<size_t>(ch)].plugins.push_back(plugin);
+                }
             }
         }
         else if (cmd == "FM") {
