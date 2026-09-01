@@ -135,6 +135,10 @@ inline constexpr FloatField<ChannelConfig> CHANNEL_FLOATS[] = {
 
     {"scAmount",   &ChannelConfig::sidechainAmount},
     {"scRelease",  &ChannelConfig::sidechainRelease},
+    {"scAttack",   &ChannelConfig::sidechainAttack},
+    {"scThresh",   &ChannelConfig::sidechainThreshold},
+    {"rmFreq",     &ChannelConfig::ringModFrequency},
+    {"rmMix",      &ChannelConfig::ringModMix},
 
     {"echTime",    &ChannelConfig::echoTime},
     {"echFb",      &ChannelConfig::echoFeedback},
@@ -195,6 +199,7 @@ inline constexpr BoolField<ChannelConfig> CHANNEL_BOOLS[] = {
     {"flOn",   &ChannelConfig::flangerEnabled},
     {"trmOn",  &ChannelConfig::tremoloEnabled},
     {"scOn",   &ChannelConfig::sidechainEnabled},
+    {"rmOn",   &ChannelConfig::ringModEnabled},
     {"echOn",  &ChannelConfig::echoEnabled},
     {"fenvOn", &ChannelConfig::filterEnvEnabled},
     {"eqOn",   &ChannelConfig::eqEnabled},

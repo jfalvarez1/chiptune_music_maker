@@ -338,6 +338,17 @@ inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain)
     // coefficients, so setting these fields alone left the filter running at
     // whatever setSampleRate last computed - the 1000 Hz default - and the
     // cutoff and resonance controls did nothing at all.
+    // ---- Ring modulator and the rest of the sidechain --------------------
+    //
+    // These had controls in the Channel Editor and no config fields, so they
+    // were written straight to the live chain: never saved, and overwritten
+    // by this very function the next time anything called it.
+    chain.ringModEnabled = config.ringModEnabled;
+    chain.ringMod.frequency = config.ringModFrequency;
+    chain.ringMod.mix = config.ringModMix;
+    chain.sidechain.attack = config.sidechainAttack;
+    chain.sidechain.threshold = config.sidechainThreshold;
+
     // The reverb algorithm goes through the setter, which re-sizes the
     // tank's delay lines. Assigning the field alone would leave the tank
     // configured for whatever algorithm it last prepared.

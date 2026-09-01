@@ -442,6 +442,19 @@ struct ChannelConfig {
     float sidechainAmount = 0.6f;
     float sidechainRelease = 0.15f;
 
+    // Attack and threshold had controls in the Channel Editor and nowhere to
+    // be stored, so they were written to the live chain and lost on save.
+    // Defaults match Sidechain's own, so a project that never touched them
+    // is unchanged.
+    float sidechainAttack = 0.005f;
+    float sidechainThreshold = 0.3f;
+
+    // The ring modulator had no config at all - not even an enable flag -
+    // despite having three controls in the editor.
+    bool ringModEnabled = false;
+    float ringModFrequency = 200.0f;
+    float ringModMix = 0.5f;
+
     // Channel-level Echo (applies to all notes on this channel)
     bool echoEnabled = false;
     float echoTime = 0.25f;         // Echo delay time (seconds)

@@ -14435,6 +14435,206 @@ static void testReverbAlgorithmsInChannel() {
     }
 }
 
+
+// ============================================================================
+// 85. Effect settings persist and survive a sync
+// ============================================================================
+static void testEffectSettingsPersist() {
+    beginTest("Effect settings persist");
+
+    /*
+     * Every effect field the Channel Editor can edit, with a distinctive
+     * value. Table-driven rather than written out twice, so a field cannot
+     * be set here and checked nowhere - which is the shape of the bug this
+     * exists to catch.
+     */
+    struct FloatField { const char* name; float ChannelConfig::* member; float value; };
+    static const FloatField FLOATS[] = {
+        {"bitDepth",            &ChannelConfig::bitDepth,            6.5f},
+        {"sampleRateDiv",       &ChannelConfig::sampleRateDiv,       3.25f},
+        {"chorusRate",          &ChannelConfig::chorusRate,          1.75f},
+        {"chorusDepth",         &ChannelConfig::chorusDepth,         0.42f},
+        {"chorusMix",           &ChannelConfig::chorusMix,           0.36f},
+        {"delayTime",           &ChannelConfig::delayTime,           0.185f},
+        {"delayFeedback",       &ChannelConfig::delayFeedback,       0.47f},
+        {"delayMix",            &ChannelConfig::delayMix,            0.29f},
+        {"distortionDrive",     &ChannelConfig::distortionDrive,     3.5f},
+        {"distortionMix",       &ChannelConfig::distortionMix,       0.62f},
+        {"filterCutoff",        &ChannelConfig::filterCutoff,        1234.0f},
+        {"filterResonance",     &ChannelConfig::filterResonance,     0.55f},
+        {"phaserRate",          &ChannelConfig::phaserRate,          0.85f},
+        {"phaserDepth",         &ChannelConfig::phaserDepth,         0.44f},
+        {"phaserFeedback",      &ChannelConfig::phaserFeedback,      0.33f},
+        {"reverbRoomSize",      &ChannelConfig::reverbRoomSize,      0.82f},
+        {"reverbDamping",       &ChannelConfig::reverbDamping,       0.27f},
+        {"reverbMix",           &ChannelConfig::reverbMix,           0.41f},
+        {"ringModFrequency",    &ChannelConfig::ringModFrequency,    432.0f},
+        {"ringModMix",          &ChannelConfig::ringModMix,          0.38f},
+        {"sidechainAmount",     &ChannelConfig::sidechainAmount,     0.71f},
+        {"sidechainRelease",    &ChannelConfig::sidechainRelease,    0.22f},
+        {"sidechainAttack",     &ChannelConfig::sidechainAttack,     0.012f},
+        {"sidechainThreshold",  &ChannelConfig::sidechainThreshold,  0.44f},
+        {"stereoWidenerWidth",  &ChannelConfig::stereoWidenerWidth,  0.66f},
+        {"stereoWidenerHaas",   &ChannelConfig::stereoWidenerHaas,   0.018f},
+        {"stereoWidenerMix",    &ChannelConfig::stereoWidenerMix,    0.53f},
+        {"tapeDrive",           &ChannelConfig::tapeDrive,           2.4f},
+        {"tapeWarmth",          &ChannelConfig::tapeWarmth,          0.58f},
+        {"tapeCompression",     &ChannelConfig::tapeCompression,     0.35f},
+        {"tapeMix",             &ChannelConfig::tapeMix,             0.64f},
+        {"tremoloRate",         &ChannelConfig::tremoloRate,         5.5f},
+        {"tremoloDepth",        &ChannelConfig::tremoloDepth,        0.48f},
+    };
+
+    struct BoolField { const char* name; bool ChannelConfig::* member; };
+    static const BoolField BOOLS[] = {
+        {"bitcrusherEnabled",     &ChannelConfig::bitcrusherEnabled},
+        {"chorusEnabled",         &ChannelConfig::chorusEnabled},
+        {"delayEnabled",          &ChannelConfig::delayEnabled},
+        {"distortionEnabled",     &ChannelConfig::distortionEnabled},
+        {"filterEnabled",         &ChannelConfig::filterEnabled},
+        {"phaserEnabled",         &ChannelConfig::phaserEnabled},
+        {"reverbEnabled",         &ChannelConfig::reverbEnabled},
+        {"ringModEnabled",        &ChannelConfig::ringModEnabled},
+        {"sidechainEnabled",      &ChannelConfig::sidechainEnabled},
+        {"stereoWidenerEnabled",  &ChannelConfig::stereoWidenerEnabled},
+        {"tapeSaturationEnabled", &ChannelConfig::tapeSaturationEnabled},
+        {"tremoloEnabled",        &ChannelConfig::tremoloEnabled},
+    };
+
+    auto configure = [&](Project& p, int ch) {
+        ChannelConfig& c = p.channels[static_cast<size_t>(ch)];
+        for (const FloatField& field : FLOATS) c.*(field.member) = field.value;
+        for (const BoolField& field : BOOLS) c.*(field.member) = true;
+        p.arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0});
+    };
+
+    // ---- They survive a save and load ---------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        configure(*p, 3);
+
+        const std::string path = testPath("effect_persistence.ctp");
+        check(saveProject(*p, path), "a project with every effect set saves");
+
+        auto loaded = std::make_unique<Project>();
+        check(loadProject(*loaded, path), "and loads");
+
+        const ChannelConfig& got = loaded->channels[3];
+        bool allSurvived = true;
+        std::string lost;
+
+        for (const FloatField& field : FLOATS) {
+            if (std::fabs(got.*(field.member) - field.value) > 1e-3f) {
+                allSurvived = false;
+                lost = std::string(field.name) + " came back as " +
+                       std::to_string(got.*(field.member)) + ", set to " +
+                       std::to_string(field.value);
+                break;
+            }
+        }
+        check(allSurvived,
+              "every effect parameter survives a round trip" +
+              (allSurvived ? std::string() : " (" + lost + ")"));
+
+        bool allFlags = true;
+        std::string lostFlag;
+        for (const BoolField& field : BOOLS) {
+            if (!(got.*(field.member))) {
+                allFlags = false;
+                lostFlag = field.name;
+                break;
+            }
+        }
+        check(allFlags,
+              "and so does every enable flag" +
+              (allFlags ? std::string() : " (" + lostFlag + " came back off)"));
+
+        std::remove(path.c_str());
+    }
+
+    // ---- They survive a config sync ------------------------------------------
+    //
+    // This is the half that actually bit. The controls wrote into the live
+    // chain, and updateChannelConfigs() - which runs whenever any unrelated
+    // control is touched - copies the config OVER the chain. So the user set
+    // a reverb, changed the oscillator type, and the reverb reset.
+    {
+        auto p = std::make_unique<Project>();
+        configure(*p, 2);
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(p.get());
+        seqPtr->updateChannelConfigs();
+
+        const EffectsChain& chain = seqPtr->channelEffects(2);
+
+        check(chain.reverbEnabled && chain.delayEnabled && chain.ringModEnabled &&
+              chain.tremoloEnabled && chain.sidechainEnabled,
+              "the enable flags reach the engine");
+        check(std::fabs(chain.reverb.roomSize - 0.82f) < 1e-3f,
+              "and so do the parameters");
+        check(std::fabs(chain.ringMod.frequency - 432.0f) < 1e-2f,
+              "including the ring modulator, which had no config field at "
+              "all before this and could therefore never be saved");
+        check(std::fabs(chain.sidechain.attack - 0.012f) < 1e-4f &&
+              std::fabs(chain.sidechain.threshold - 0.44f) < 1e-3f,
+              "and the sidechain's attack and threshold, likewise");
+
+        // Sync again - the values must not drift or reset.
+        seqPtr->updateChannelConfigs();
+        check(std::fabs(seqPtr->channelEffects(2).reverb.roomSize - 0.82f) < 1e-3f,
+              "a second sync leaves them where they were, which is the "
+              "property the old binding did not have");
+    }
+
+    // ---- The config is what the engine follows -------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->channels[0].reverbEnabled = true;
+        p->channels[0].reverbRoomSize = 0.2f;
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(p.get());
+        seqPtr->updateChannelConfigs();
+        check(std::fabs(seqPtr->channelEffects(0).reverb.roomSize - 0.2f) < 1e-3f,
+              "the engine starts where the project says");
+
+        // Change the project the way the editor now does, and sync one
+        // channel the way the panel does at the end of its frame.
+        p->channels[0].reverbRoomSize = 0.9f;
+        seqPtr->getSynth(0).setChannelConfig(p->channels[0]);
+        check(std::fabs(seqPtr->channelEffects(0).reverb.roomSize - 0.9f) < 1e-3f,
+              "and follows the project when it changes - one sync at the end "
+              "of the panel rather than a call bolted onto each of the "
+              "forty-five controls, because a list of forty-five grows a "
+              "forty-sixth without one");
+    }
+
+    // ---- Validation covers the new fields --------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->channels[0].ringModFrequency = -50.0f;
+        p->channels[0].ringModMix = 40.0f;
+        p->channels[0].sidechainAttack = 0.0f;
+        p->channels[0].sidechainThreshold =
+            std::numeric_limits<float>::quiet_NaN();
+
+        clampProjectToValidRanges(*p);
+
+        check(p->channels[0].ringModFrequency > 0.0f,
+              "a ring-mod frequency of zero or below is repaired - at DC it "
+              "multiplies the signal by a constant");
+        check(p->channels[0].ringModMix <= 1.0f, "and an absurd mix is clamped");
+        check(p->channels[0].sidechainAttack > 0.0f,
+              "a zero sidechain attack cannot divide by itself in the envelope");
+        check(std::isfinite(p->channels[0].sidechainThreshold),
+              "and a NaN threshold is replaced");
+    }
+}
+
 // ============================================================================
 // Headless ImGui harness
 // ============================================================================
@@ -15097,6 +15297,7 @@ int main(int argc, char** argv) {
     testShippedContentIsClean();
     testReverbAlgorithms();
     testReverbAlgorithmsInChannel();
+    testEffectSettingsPersist();
     testPanelsDrawHeadless();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();

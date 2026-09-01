@@ -221,6 +221,14 @@ inline void clampChannelToValidRanges(ChannelConfig& c, int poolSize = 0) {
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
 
+    // The ring modulator and the rest of the sidechain. A frequency of zero
+    // is DC, which multiplies the signal by a constant and is silence at the
+    // extreme; an attack of zero divides by itself in the envelope.
+    c.ringModFrequency = sanitizeFloat(c.ringModFrequency, 0.1f, 20000.0f, 200.0f);
+    c.ringModMix = sanitizeFloat(c.ringModMix, 0.0f, 1.0f, 0.5f);
+    c.sidechainAttack = sanitizeFloat(c.sidechainAttack, 0.0001f, 2.0f, 0.005f);
+    c.sidechainThreshold = sanitizeFloat(c.sidechainThreshold, 0.0f, 1.0f, 0.3f);
+
     // An algorithm this build does not have falls back to Room rather than
     // wrapping onto whichever one happens to sit at that index.
     c.reverbAlgorithm = sanitizeInt(c.reverbAlgorithm, 0,

@@ -11463,90 +11463,90 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         auto& fx = seq.getSynth(ui.selectedChannel).effects();
 
         // Bitcrusher
-        ImGui::Checkbox("Bitcrusher", &fx.bitcrusherEnabled);
+        ImGui::Checkbox("Bitcrusher", &channel.bitcrusherEnabled);
         if (fx.bitcrusherEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Bit Depth", &fx.bitcrusher.bitDepth, 1.0f, 16.0f);
-            ImGui::SliderFloat("Sample Rate Div", &fx.bitcrusher.sampleRateReduction, 1.0f, 32.0f);
+            ImGui::SliderFloat("Bit Depth", &channel.bitDepth, 1.0f, 16.0f);
+            ImGui::SliderFloat("Sample Rate Div", &channel.sampleRateDiv, 1.0f, 32.0f);
             ImGui::Unindent();
         }
 
         // Distortion
-        ImGui::Checkbox("Distortion", &fx.distortionEnabled);
+        ImGui::Checkbox("Distortion", &channel.distortionEnabled);
         if (fx.distortionEnabled) {
             ImGui::Indent();
             const char* distTypes[] = {"Tanh", "Hard Clip", "Foldback", "Asymmetric"};
             int distType = static_cast<int>(fx.distortion.type);
             ImGui::Combo("Type##dist", &distType, distTypes, IM_ARRAYSIZE(distTypes));
             fx.distortion.type = static_cast<DistortionType>(distType);
-            ImGui::SliderFloat("Drive##dist", &fx.distortion.drive, 1.0f, 10.0f);
-            ImGui::SliderFloat("Mix##dist", &fx.distortion.mix, 0.0f, 1.0f);
+            ImGui::SliderFloat("Drive##dist", &channel.distortionDrive, 1.0f, 10.0f);
+            ImGui::SliderFloat("Mix##dist", &channel.distortionMix, 0.0f, 1.0f);
             ImGui::Unindent();
         }
 
         // Filter
-        ImGui::Checkbox("Filter", &fx.filterEnabled);
+        ImGui::Checkbox("Filter", &channel.filterEnabled);
         if (fx.filterEnabled) {
             ImGui::Indent();
             const char* filterTypes[] = {"Low Pass", "High Pass", "Band Pass"};
             int filterType = static_cast<int>(fx.filter.type);
             ImGui::Combo("Type##filter", &filterType, filterTypes, IM_ARRAYSIZE(filterTypes));
             fx.filter.type = static_cast<FilterType>(filterType);
-            ImGui::SliderFloat("Cutoff##filter", &fx.filter.cutoff, 20.0f, 10000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic);
-            ImGui::SliderFloat("Resonance##filter", &fx.filter.resonance, 0.0f, 1.0f);
+            ImGui::SliderFloat("Cutoff##filter", &channel.filterCutoff, 20.0f, 10000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic);
+            ImGui::SliderFloat("Resonance##filter", &channel.filterResonance, 0.0f, 1.0f);
             ImGui::Unindent();
         }
 
         // Delay
-        ImGui::Checkbox("Delay", &fx.delayEnabled);
+        ImGui::Checkbox("Delay", &channel.delayEnabled);
         if (fx.delayEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Time##delay", &fx.delay.delayTime, 0.01f, 1.0f, "%.3f s");
-            ImGui::SliderFloat("Feedback##delay", &fx.delay.feedback, 0.0f, 0.95f);
-            ImGui::SliderFloat("Mix##delay", &fx.delay.mix, 0.0f, 1.0f);
+            ImGui::SliderFloat("Time##delay", &channel.delayTime, 0.01f, 1.0f, "%.3f s");
+            ImGui::SliderFloat("Feedback##delay", &channel.delayFeedback, 0.0f, 0.95f);
+            ImGui::SliderFloat("Mix##delay", &channel.delayMix, 0.0f, 1.0f);
             ImGui::Unindent();
         }
 
         // Chorus
-        ImGui::Checkbox("Chorus", &fx.chorusEnabled);
+        ImGui::Checkbox("Chorus", &channel.chorusEnabled);
         if (fx.chorusEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Rate##chorus", &fx.chorus.rate, 0.1f, 5.0f, "%.2f Hz");
-            ImGui::SliderFloat("Depth##chorus", &fx.chorus.depth, 0.0f, 0.02f);
-            ImGui::SliderFloat("Mix##chorus", &fx.chorus.mix, 0.0f, 1.0f);
+            ImGui::SliderFloat("Rate##chorus", &channel.chorusRate, 0.1f, 5.0f, "%.2f Hz");
+            ImGui::SliderFloat("Depth##chorus", &channel.chorusDepth, 0.0f, 0.02f);
+            ImGui::SliderFloat("Mix##chorus", &channel.chorusMix, 0.0f, 1.0f);
             ImGui::Unindent();
         }
 
         // Phaser
-        ImGui::Checkbox("Phaser", &fx.phaserEnabled);
+        ImGui::Checkbox("Phaser", &channel.phaserEnabled);
         if (fx.phaserEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Rate##phaser", &fx.phaser.rate, 0.1f, 2.0f, "%.2f Hz");
-            ImGui::SliderFloat("Depth##phaser", &fx.phaser.depth, 0.0f, 1.0f);
-            ImGui::SliderFloat("Feedback##phaser", &fx.phaser.feedback, 0.0f, 0.95f);
+            ImGui::SliderFloat("Rate##phaser", &channel.phaserRate, 0.1f, 2.0f, "%.2f Hz");
+            ImGui::SliderFloat("Depth##phaser", &channel.phaserDepth, 0.0f, 1.0f);
+            ImGui::SliderFloat("Feedback##phaser", &channel.phaserFeedback, 0.0f, 0.95f);
             ImGui::Unindent();
         }
 
         // Tremolo
-        ImGui::Checkbox("Tremolo", &fx.tremoloEnabled);
+        ImGui::Checkbox("Tremolo", &channel.tremoloEnabled);
         if (fx.tremoloEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Rate##trem", &fx.tremolo.rate, 0.5f, 20.0f, "%.1f Hz");
-            ImGui::SliderFloat("Depth##trem", &fx.tremolo.depth, 0.0f, 1.0f);
+            ImGui::SliderFloat("Rate##trem", &channel.tremoloRate, 0.5f, 20.0f, "%.1f Hz");
+            ImGui::SliderFloat("Depth##trem", &channel.tremoloDepth, 0.0f, 1.0f);
             ImGui::Unindent();
         }
 
         // Ring Mod
-        ImGui::Checkbox("Ring Modulator", &fx.ringModEnabled);
+        ImGui::Checkbox("Ring Modulator", &channel.ringModEnabled);
         if (fx.ringModEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Freq##ring", &fx.ringMod.frequency, 20.0f, 2000.0f, "%.0f Hz");
-            ImGui::SliderFloat("Mix##ring", &fx.ringMod.mix, 0.0f, 1.0f);
+            ImGui::SliderFloat("Freq##ring", &channel.ringModFrequency, 20.0f, 2000.0f, "%.0f Hz");
+            ImGui::SliderFloat("Mix##ring", &channel.ringModMix, 0.0f, 1.0f);
             ImGui::Unindent();
         }
 
         // Reverb
-        ImGui::Checkbox("Reverb", &fx.reverbEnabled);
+        ImGui::Checkbox("Reverb", &channel.reverbEnabled);
         if (fx.reverbEnabled) {
             ImGui::Indent();
 
@@ -11584,11 +11584,11 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::TextDisabled("%s", reverbAlgorithmBlurb(
                 static_cast<ReverbAlgorithm>(algorithm)));
 
-            ImGui::SliderFloat("Room Size##rev", &fx.reverb.roomSize, 0.1f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Room Size##rev", &channel.reverbRoomSize, 0.1f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size of the virtual room (larger = longer decay)");
-            ImGui::SliderFloat("Damping##rev", &fx.reverb.damping, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Damping##rev", &channel.reverbDamping, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("High frequency absorption (higher = darker reverb)");
-            ImGui::SliderFloat("Mix##rev", &fx.reverb.mix, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Mix##rev", &channel.reverbMix, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wet/dry mix (0 = dry only, 1 = wet only)");
 
             // Quick presets for reverb
@@ -11621,14 +11621,14 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         }
 
         // Stereo Widener (for lush synthwave pads - classic 80s wide sound)
-        ImGui::Checkbox("Stereo Widener", &fx.stereoWidenerEnabled);
+        ImGui::Checkbox("Stereo Widener", &channel.stereoWidenerEnabled);
         if (fx.stereoWidenerEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Width##sw", &fx.stereoWidener.width, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Width##sw", &channel.stereoWidenerWidth, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stereo width (0 = mono, 1 = ultra wide)");
-            ImGui::SliderFloat("Haas Delay##sw", &fx.stereoWidener.haasDelay, 0.005f, 0.035f, "%.3f sec");
+            ImGui::SliderFloat("Haas Delay##sw", &channel.stereoWidenerHaas, 0.005f, 0.035f, "%.3f sec");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Haas effect delay (10-30ms creates stereo perception)");
-            ImGui::SliderFloat("Mix##sw", &fx.stereoWidener.mix, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Mix##sw", &channel.stereoWidenerMix, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wet/dry mix");
 
             // Quick presets for stereo widener
@@ -11655,16 +11655,16 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         }
 
         // Tape Saturation (warm analog character - classic 80s tape sound)
-        ImGui::Checkbox("Tape Saturation", &fx.tapeSaturationEnabled);
+        ImGui::Checkbox("Tape Saturation", &channel.tapeSaturationEnabled);
         if (fx.tapeSaturationEnabled) {
             ImGui::Indent();
-            ImGui::SliderFloat("Drive##tape", &fx.tapeSaturation.drive, 1.0f, 3.0f, "%.2f");
+            ImGui::SliderFloat("Drive##tape", &channel.tapeDrive, 1.0f, 3.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Saturation amount (1 = clean, 3 = heavily saturated)");
-            ImGui::SliderFloat("Warmth##tape", &fx.tapeSaturation.warmth, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Warmth##tape", &channel.tapeWarmth, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("High frequency roll-off (higher = darker, warmer)");
-            ImGui::SliderFloat("Compression##tape", &fx.tapeSaturation.compression, 0.0f, 0.8f, "%.2f");
+            ImGui::SliderFloat("Compression##tape", &channel.tapeCompression, 0.0f, 0.8f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Soft compression (tape limiting characteristic)");
-            ImGui::SliderFloat("Mix##tape", &fx.tapeSaturation.mix, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Mix##tape", &channel.tapeMix, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wet/dry mix");
 
             // Quick presets for tape saturation
@@ -11696,7 +11696,7 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         // Sidechain Compression (for that classic EDM pumping effect)
         ImGui::Separator();
         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Sidechain Compression");
-        ImGui::Checkbox("Enable Sidechain", &fx.sidechainEnabled);
+        ImGui::Checkbox("Enable Sidechain", &channel.sidechainEnabled);
         if (fx.sidechainEnabled) {
             ImGui::Indent();
 
@@ -11712,16 +11712,16 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
                 ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Warning: Source is same as target!");
             }
 
-            ImGui::SliderFloat("Threshold##sc", &fx.sidechain.threshold, 0.01f, 0.9f, "%.2f");
+            ImGui::SliderFloat("Threshold##sc", &channel.sidechainThreshold, 0.01f, 0.9f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Level at which ducking starts");
 
-            ImGui::SliderFloat("Amount##sc", &fx.sidechain.amount, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Amount##sc", &channel.sidechainAmount, 0.0f, 1.0f, "%.2f");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much to duck (1.0 = full silence)");
 
-            ImGui::SliderFloat("Attack##sc", &fx.sidechain.attack, 0.001f, 0.1f, "%.3f s");
+            ImGui::SliderFloat("Attack##sc", &channel.sidechainAttack, 0.001f, 0.1f, "%.3f s");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the duck kicks in");
 
-            ImGui::SliderFloat("Release##sc", &fx.sidechain.release, 0.05f, 1.0f, "%.2f s");
+            ImGui::SliderFloat("Release##sc", &channel.sidechainRelease, 0.05f, 1.0f, "%.2f s");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fast the volume returns");
 
             // Visual feedback - show current gain reduction
@@ -11763,6 +11763,28 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
 
             ImGui::Unindent();
         }
+    }
+
+    /*
+     * Push this channel's settings into its synth, once, at the end.
+     *
+     * The effect controls above used to write straight into the live chain,
+     * which meant none of them was saved and all of them were reverted the
+     * next time anything called updateChannelConfigs(). They write to the
+     * project now, which fixes both - but the engine still has to be told.
+     *
+     * One sync here rather than a call bolted onto each of the forty-five
+     * controls: a list of forty-five is a list that grows a forty-sixth
+     * without one, and that control then appears to do nothing until
+     * something else happens to sync. This cannot be forgotten.
+     *
+     * It is only the selected channel, not all thirty-two, and in the steady
+     * state it copies fields and allocates nothing - the reverb tank only
+     * re-prepares when the algorithm actually changes.
+     */
+    if (ui.selectedChannel >= 0 && ui.selectedChannel < Project::MAX_CHANNELS) {
+        seq.getSynth(ui.selectedChannel)
+           .setChannelConfig(project.channels[ui.selectedChannel]);
     }
 
     ImGui::End();
