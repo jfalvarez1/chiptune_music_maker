@@ -1012,6 +1012,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // something else.
         ChiptuneTracker::DrawProjectCheck(project, uiState, sequencer);
 
+        // Take lanes. The poll drains the microphone into the take in
+        // progress and splits it at every loop wrap, so it runs whether or
+        // not the panel is visible.
+        ChiptuneTracker::PollTakeRecording(project, sequencer.getCurrentBeat());
+        ChiptuneTracker::DrawTakeLanes(project, uiState, sequencer);
+
         // A docked window sits behind whatever shares its tab group, so a
         // capture of one needs it brought to the front. Repeated for the
         // first few frames because the dock layout is still settling.

@@ -17,6 +17,7 @@
 #include "VoicePanel.h"
 #include "InstrumentPresets.h"
 #include "SettingsAudit.h"
+#include "TakeLanes.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -8672,6 +8673,434 @@ inline void DrawProjectCheck(Project& project, UIState& ui, Sequencer& seq) {
     }
 
     ImGui::End();
+}
+
+
+// ============================================================================
+// Take Lanes
+//
+// Record a part several times, then build the keeper out of the best moments
+// of each by swiping across the lanes.
+//
+// The comp is an editing model: swiping changes which take wins where, and
+// flattening turns those choices into ordinary audio clips on the
+// arrangement. Playback never sees a comp - it sees clips - which is what
+// lets comping reuse the whole tested audio-clip path rather than
+// duplicating trimming, fades and sample-rate conversion inside a second one.
+// ============================================================================
+struct TakeLanesState {
+    int selectedGroup = -1;
+
+    // Loop recording. Each pass around the loop closes the current take and
+    // starts another, which is the entire point of it.
+    bool recording = false;
+    bool loopStack = true;
+    float takeStartBeat = 0.0f;
+    float lastBeat = 0.0f;
+    std::vector<float> pending;     // audio captured for the take in progress
+
+    // Punch: record only inside this range, so a good take can be repaired
+    // in one place without risking the rest of it.
+    bool punchEnabled = false;
+    float punchIn = 0.0f;
+    float punchOut = 4.0f;
+
+    // Swipe state.
+    bool swiping = false;
+    int swipeTake = -1;
+    float swipeAnchor = 0.0f;
+};
+
+static TakeLanesState g_TakeLanes;
+
+inline TakeLanesState& takeLanesState() { return g_TakeLanes; }
+
+/*
+ * Close the take in progress and put its audio into the pool.
+ *
+ * Called at every loop wrap and when recording stops. Returns the take index
+ * or -1 if there was nothing worth keeping - a pass with almost no audio is
+ * a false start, and adding it would fill the lanes with silence.
+ */
+inline int commitPendingTake(Project& project, CompGroup& group,
+                             TakeLanesState& state, int sampleRate,
+                             float endBeat) {
+    if (state.pending.size() < static_cast<size_t>(sampleRate) / 20) {
+        state.pending.clear();
+        return -1;
+    }
+
+    Sample sample;
+    sample.name = "Take " + std::to_string(group.takes.size() + 1);
+    sample.sampleRate = sampleRate;
+    sample.audioData = std::move(state.pending);
+    sample.lengthSeconds = static_cast<float>(sample.audioData.size()) /
+                           static_cast<float>(std::max(1, sampleRate));
+    sample.isLoaded = true;
+    state.pending.clear();
+
+    const int id = project.samplePool.addSample(sample);
+    if (id < 0) return -1;
+
+    const float length = std::max(0.05f, endBeat - state.takeStartBeat);
+    return comp::addTake(group, id, state.takeStartBeat, length, "");
+}
+
+inline void DrawTakeLanes(Project& project, UIState& ui, Sequencer& seq) {
+    ImGui::SetNextWindowPos(ImVec2(300, 300), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(680, 320), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Take Lanes");
+
+    TakeLanesState& state = g_TakeLanes;
+
+    // ---- Group selection ---------------------------------------------------
+    if (project.compGroups.empty()) {
+        ImGui::TextWrapped(
+            "Record a part several times, then build the keeper out of the "
+            "best moments of each.\n\n"
+            "Each pass becomes a lane. Drag across a lane to choose it for "
+            "that stretch; the result is written to the arrangement as "
+            "ordinary audio clips, so you can trim and fade them afterwards "
+            "like anything else.");
+        ImGui::Separator();
+
+        if (ImGui::Button("New comp on this channel", ImVec2(-1, 30))) {
+            g_UndoHistory.saveState(project, "New Comp");
+            CompGroup group;
+            group.channelIndex = std::clamp(ui.selectedChannel, 0,
+                                            Project::MAX_CHANNELS - 1);
+            group.name = project.channels[static_cast<size_t>(group.channelIndex)].name +
+                         " comp";
+            group.startBeat = 0.0f;
+            group.lengthBeats = 16.0f;
+            project.compGroups.push_back(group);
+            state.selectedGroup = static_cast<int>(project.compGroups.size()) - 1;
+        }
+        ImGui::End();
+        return;
+    }
+
+    if (state.selectedGroup < 0 ||
+        state.selectedGroup >= static_cast<int>(project.compGroups.size())) {
+        state.selectedGroup = 0;
+    }
+
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo("##compgroup",
+            project.compGroups[static_cast<size_t>(state.selectedGroup)].name.c_str())) {
+        for (size_t i = 0; i < project.compGroups.size(); ++i) {
+            const bool selected = (static_cast<int>(i) == state.selectedGroup);
+            if (ImGui::Selectable(project.compGroups[i].name.c_str(), selected)) {
+                state.selectedGroup = static_cast<int>(i);
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+
+    CompGroup& group = project.compGroups[static_cast<size_t>(state.selectedGroup)];
+
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Comp")) {
+        g_UndoHistory.saveState(project, "New Comp");
+        CompGroup fresh;
+        fresh.channelIndex = std::clamp(ui.selectedChannel, 0,
+                                        Project::MAX_CHANNELS - 1);
+        fresh.name = "Comp " + std::to_string(project.compGroups.size() + 1);
+        project.compGroups.push_back(fresh);
+        state.selectedGroup = static_cast<int>(project.compGroups.size()) - 1;
+    }
+
+    ImGui::SameLine();
+    ImGui::Text("on %s",
+                project.channels[static_cast<size_t>(
+                    std::clamp(group.channelIndex, 0, Project::MAX_CHANNELS - 1))]
+                    .name.c_str());
+
+    // ---- Recording ----------------------------------------------------------
+    {
+        VoiceCaptureDevice& device = g_VoiceDevice;
+
+        if (!state.recording) {
+            if (ImGui::Button("Record Take", ImVec2(120, 26))) {
+                if (!device.running()) {
+                    const VoiceCaptureDevice::DeviceInfo* input = nullptr;
+                    if (g_Voice.selectedDevice >= 0 &&
+                        g_Voice.selectedDevice <
+                            static_cast<int>(g_Voice.devices.size())) {
+                        input = &g_Voice.devices[
+                            static_cast<size_t>(g_Voice.selectedDevice)];
+                    }
+                    device.start(input);
+                }
+                if (device.running()) {
+                    state.recording = true;
+                    state.pending.clear();
+                    state.takeStartBeat = seq.getCurrentBeat();
+                    state.lastBeat = state.takeStartBeat;
+                }
+            }
+        } else {
+            if (ImGui::Button("Stop", ImVec2(120, 26))) {
+                g_UndoHistory.saveState(project, "Record Take");
+                commitPendingTake(project, group, state, device.sampleRate(),
+                                  seq.getCurrentBeat());
+                comp::flattenAll(project);
+                state.recording = false;
+            }
+        }
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Stack loops", &state.loopStack);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Every pass around the loop becomes its own lane, so you can\n"
+                "keep playing and comp afterwards. This is what loop\n"
+                "recording is for.");
+        }
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Punch", &state.punchEnabled);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Record only inside a range, so a good take can be repaired\n"
+                "in one place without risking the rest of it.");
+        }
+        if (state.punchEnabled) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180);
+            ImGui::DragFloatRange2("##punch", &state.punchIn, &state.punchOut,
+                                   0.25f, 0.0f, 100000.0f, "in %.1f", "out %.1f");
+        }
+
+        if (state.recording) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "REC  %.1f",
+                               seq.getCurrentBeat());
+        }
+    }
+
+    ImGui::Separator();
+
+    // ---- The lanes ------------------------------------------------------------
+    const ImVec2 canvas = ImGui::GetCursorScreenPos();
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+
+    // Wide enough for the mute button, the name field and the delete button
+    // together - at 130 the delete button sat on top of the first beat of
+    // every lane.
+    const float headerWidth = 154.0f;
+    const float laneHeight = 26.0f;
+    const float compHeight = 22.0f;
+    const float gridLeft = canvas.x + headerWidth;
+    const float gridRight = canvas.x + available.x;
+    const float span = std::max(1.0f, group.lengthBeats);
+
+    auto beatToX = [&](float beat) {
+        return gridLeft + (beat - group.startBeat) / span * (gridRight - gridLeft);
+    };
+    auto xToBeat = [&](float x) {
+        return group.startBeat +
+               (x - gridLeft) / std::max(1.0f, gridRight - gridLeft) * span;
+    };
+
+    // The comp strip: what actually plays.
+    draw->AddRectFilled(ImVec2(gridLeft, canvas.y),
+                        ImVec2(gridRight, canvas.y + compHeight),
+                        IM_COL32(24, 24, 30, 255));
+    draw->AddText(ImVec2(canvas.x + 4, canvas.y + 3),
+                  IM_COL32(200, 200, 215, 255), "Comp");
+
+    for (const CompSegment& segment : group.segments) {
+        if (segment.takeIndex < 0) continue;
+        const float x0 = beatToX(segment.startBeat);
+        const float x1 = beatToX(segment.endBeat);
+        draw->AddRectFilled(ImVec2(x0 + 1, canvas.y + 2),
+                            ImVec2(x1 - 1, canvas.y + compHeight - 2),
+                            channelColor(segment.takeIndex));
+    }
+
+    // One row per take.
+    const float lanesTop = canvas.y + compHeight + 4.0f;
+    for (size_t t = 0; t < group.takes.size(); ++t) {
+        Take& take = group.takes[t];
+        const float y = lanesTop + static_cast<float>(t) * laneHeight;
+
+        ImGui::PushID(static_cast<int>(1500 + t));
+
+        draw->AddRectFilled(ImVec2(gridLeft, y),
+                            ImVec2(gridRight, y + laneHeight - 2.0f),
+                            take.muted ? IM_COL32(28, 28, 32, 255)
+                                       : IM_COL32(38, 38, 46, 255));
+
+        // The take's own extent, so a punched-in pass is visibly shorter.
+        const float takeX0 = beatToX(take.startBeat);
+        const float takeX1 = beatToX(take.endBeat());
+        const ImU32 colour = take.muted ? IM_COL32(70, 70, 80, 255)
+                                        : channelColor(static_cast<int>(t));
+        draw->AddRectFilled(ImVec2(takeX0 + 1, y + 3),
+                            ImVec2(takeX1 - 1, y + laneHeight - 5.0f),
+                            (colour & 0x00FFFFFFu) | 0x60000000u);
+
+        // Where this take is the one being used.
+        for (const CompSegment& segment : group.segments) {
+            if (segment.takeIndex != static_cast<int>(t)) continue;
+            draw->AddRectFilled(ImVec2(beatToX(segment.startBeat) + 1, y + 3),
+                                ImVec2(beatToX(segment.endBeat) - 1,
+                                       y + laneHeight - 5.0f),
+                                colour);
+        }
+
+        // The header: name, mute, and how much of the comp it won.
+        ImGui::SetCursorScreenPos(ImVec2(canvas.x + 2, y + 3));
+        if (ImGui::SmallButton(take.muted ? "M##mute" : "m##mute")) {
+            g_UndoHistory.saveState(project, "Mute Take");
+            take.muted = !take.muted;
+            comp::flattenAll(project);
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        char nameBuffer[48];
+        snprintf(nameBuffer, sizeof(nameBuffer), "%s", take.name.c_str());
+        if (ImGui::InputText("##takename", nameBuffer, sizeof(nameBuffer))) {
+            take.name = nameBuffer;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x##take")) {
+            g_UndoHistory.saveState(project, "Delete Take");
+            comp::removeTake(group, static_cast<int>(t));
+            comp::flattenAll(project);
+            ImGui::PopID();
+            break;
+        }
+
+        ImGui::PopID();
+    }
+
+    /*
+     * Bar lines and the playhead, over the top of the lanes.
+     *
+     * Drawn last and translucent so they read as a grid rather than
+     * repainting the segment colours. Without them the lanes are coloured
+     * bars against a flat background, and there is no way to tell where in
+     * the music a swipe actually landed - which is the one thing you need
+     * to know while comping.
+     */
+    {
+        const float gridBottom = lanesTop +
+            static_cast<float>(group.takes.size()) * laneHeight;
+        const int beatsPerBar = std::max(1, project.meterAt(group.startBeat).numerator);
+
+        for (int beat = 0; beat <= static_cast<int>(std::ceil(span)); ++beat) {
+            const float x = beatToX(group.startBeat + static_cast<float>(beat));
+            if (x < gridLeft || x > gridRight) continue;
+            const bool bar = (beat % beatsPerBar) == 0;
+            draw->AddLine(ImVec2(x, canvas.y), ImVec2(x, gridBottom),
+                          bar ? IM_COL32(200, 200, 220, 90)
+                              : IM_COL32(160, 160, 180, 34),
+                          bar ? 1.5f : 1.0f);
+        }
+
+        // Where playback is, so a lane can be judged against what is heard.
+        const float playhead = seq.getCurrentBeat();
+        if (playhead >= group.startBeat && playhead <= group.startBeat + span) {
+            const float x = beatToX(playhead);
+            draw->AddLine(ImVec2(x, canvas.y), ImVec2(x, gridBottom),
+                          IM_COL32(255, 230, 120, 220), 2.0f);
+        }
+    }
+
+    // ---- Swiping ---------------------------------------------------------------
+    //
+    // Drag across a lane to choose that take for the stretch you dragged.
+    // This is the one gesture comping actually is.
+    {
+        const float lanesBottom = lanesTop +
+            static_cast<float>(group.takes.size()) * laneHeight;
+
+        ImGui::SetCursorScreenPos(ImVec2(gridLeft, lanesTop));
+        ImGui::InvisibleButton("##swipe",
+                               ImVec2(std::max(1.0f, gridRight - gridLeft),
+                                      std::max(1.0f, lanesBottom - lanesTop)));
+
+        const ImVec2 mouse = ImGui::GetMousePos();
+
+        if (ImGui::IsItemActive() && !state.swiping) {
+            const int lane = static_cast<int>((mouse.y - lanesTop) / laneHeight);
+            if (lane >= 0 && lane < static_cast<int>(group.takes.size())) {
+                state.swiping = true;
+                state.swipeTake = lane;
+                state.swipeAnchor = xToBeat(mouse.x);
+                g_UndoHistory.saveState(project, "Comp Swipe");
+            }
+        }
+
+        if (state.swiping) {
+            const float to = xToBeat(mouse.x);
+            const float x0 = beatToX(std::min(state.swipeAnchor, to));
+            const float x1 = beatToX(std::max(state.swipeAnchor, to));
+            draw->AddRect(ImVec2(x0, lanesTop), ImVec2(x1, lanesBottom),
+                          IM_COL32(255, 255, 255, 200), 0.0f, 0, 2.0f);
+
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                comp::chooseTake(group, state.swipeAnchor, to, state.swipeTake);
+                comp::flattenAll(project);
+                state.swiping = false;
+                state.swipeTake = -1;
+            }
+        }
+    }
+
+    ImGui::End();
+}
+
+/*
+ * Drain the microphone into the take in progress, and split at loop wraps.
+ *
+ * Called every frame from the main loop, next to the voice panel's own poll -
+ * a ring nobody reads fills up and starts dropping audio, and a take
+ * silently truncated because the panel was behind another tab is worse than
+ * one that never recorded.
+ *
+ * Takes the beat rather than the sequencer because that is the only thing it
+ * needs from one, and a wrap is then something a test can simply hand it.
+ */
+inline void PollTakeRecording(Project& project, float beat) {
+    TakeLanesState& state = g_TakeLanes;
+    if (!state.recording) return;
+    if (state.selectedGroup < 0 ||
+        state.selectedGroup >= static_cast<int>(project.compGroups.size())) {
+        return;
+    }
+
+    CompGroup& group = project.compGroups[static_cast<size_t>(state.selectedGroup)];
+
+    // Only inside the punch range, if one is set.
+    if (comp::insidePunch(beat, state.punchEnabled, state.punchIn, state.punchOut)) {
+        static std::vector<float> scratch(4096);
+        size_t got = 0;
+        while ((got = g_VoiceDevice.ring().read(scratch.data(), scratch.size())) > 0) {
+            state.pending.insert(state.pending.end(), scratch.data(),
+                                 scratch.data() + got);
+            if (got < scratch.size()) break;
+        }
+    }
+
+    /*
+     * A loop wrap ends the pass.
+     *
+     * Detected by the playhead going backwards, which is what a wrap looks
+     * like from here - the sequencer does not announce it. Each pass becomes
+     * its own lane, which is the entire point of loop recording.
+     */
+    if (state.loopStack && beat < state.lastBeat - 1e-3f) {
+        commitPendingTake(project, group, state, g_VoiceDevice.sampleRate(),
+                          state.lastBeat);
+        comp::flattenAll(project);
+        state.takeStartBeat = beat;
+    }
+    state.lastBeat = beat;
 }
 
 inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {

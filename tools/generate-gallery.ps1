@@ -78,6 +78,7 @@ $shots = @(
     # The timeline: audio clips drawn as waveforms, and the structure strip.
     @{ name = "audio-clips";     args = "--demo --theme cyberpunk --view arrangement --audio-clip" }
     @{ name = "song-structure";  args = "--demo --theme cyberpunk --view arrangement --structure --loop 8 24" }
+    @{ name = "take-lanes";      args = "--demo --theme stock --comp --focus `"Take Lanes`"" }
 
     # Voice to notes, and the check panel with real findings in it.
     @{ name = "voice-to-notes";  args = "--demo --theme stock --focus `"Voice to Notes`"" }

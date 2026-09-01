@@ -22,6 +22,7 @@
 
 #include "Types.h"
 #include "Macros.h"
+#include "TakeLanes.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -189,6 +190,7 @@ struct CaptureRequest {
     // Deliberately broken settings, so the Project Check panel has real
     // findings in it rather than its empty-state paragraph.
     bool addConflicts = false;
+    bool addComp = false;
 
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
@@ -226,6 +228,7 @@ struct CaptureRequest {
 //   --instrument <name>  fm|wavetable|sampler|granular|drummodel|
 //                        modmatrix|pitchtime
 //   --conflicts          settings that trip the Project Check panel
+//   --comp               a take-lane comp built from four passes
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -280,6 +283,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             next(request.instrument);
         } else if (arg == "--conflicts") {
             request.addConflicts = true;
+        } else if (arg == "--comp") {
+            request.addComp = true;
         } else if (arg == "--genre") {
             next(request.genreFocus);
         } else if (arg == "--focus") {
@@ -614,6 +619,56 @@ inline void applyCaptureState(const CaptureRequest& request,
         project.auxBuses[0].muted = true;
         project.channels[3].muted = true;                // Note
         project.missingSamples.push_back("D:/moved/vocal_take.wav");
+    }
+
+
+    /*
+     * Take lanes with four passes on them.
+     *
+     * The lane geometry is drawn straight into the draw list from beat
+     * arithmetic, which is the part with no headless reach: an empty panel
+     * draws its explanation paragraph and proves nothing about the lanes,
+     * the comp strip, or the highlight showing which take won where.
+     */
+    if (request.addComp) {
+        CompGroup group;
+        group.channelIndex = 0;
+        group.name = "Lead comp";
+        group.startBeat = 0.0f;
+        group.lengthBeats = 16.0f;
+
+        for (int t = 0; t < 4; ++t) {
+            Sample sample;
+            sample.name = "Take " + std::to_string(t + 1);
+            sample.sampleRate = 48000;
+
+            // Each pass a different pitch, so the lanes are visibly
+            // different takes rather than four copies of one.
+            const int frames = sample.sampleRate * 2;
+            sample.audioData.resize(static_cast<size_t>(frames));
+            const float hz = 165.0f * std::pow(1.06f, float(t));
+            for (int i = 0; i < frames; ++i) {
+                const float time = float(i) / float(sample.sampleRate);
+                const float envelope = std::exp(-std::fmod(time, 0.5f) * 6.0f);
+                sample.audioData[static_cast<size_t>(i)] =
+                    0.8f * envelope * std::sin(6.28318530718f * hz * time);
+            }
+            sample.lengthSeconds = float(frames) / float(sample.sampleRate);
+            sample.isLoaded = true;
+
+            const int id = project.samplePool.addSample(sample);
+            comp::addTake(group, id, 0.0f, 16.0f, sample.name);
+        }
+
+        // A comp somebody actually built: four swipes across four takes,
+        // so the strip is striped rather than one flat colour.
+        comp::chooseTake(group, 0.0f, 4.0f, 0);
+        comp::chooseTake(group, 4.0f, 7.5f, 2);
+        comp::chooseTake(group, 7.5f, 12.0f, 1);
+        comp::chooseTake(group, 12.0f, 16.0f, 3);
+
+        project.compGroups.push_back(group);
+        comp::flattenAll(project);
     }
 
     // --- Song structure ---

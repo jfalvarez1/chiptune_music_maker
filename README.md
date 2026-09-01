@@ -134,6 +134,18 @@ else. A clip whose file has moved keeps its place and its edits and says so.
 
 ![Audio clips](docs/images/audio-clips.png)
 
+### Take lanes
+
+Record a part several times, then build the keeper out of the best moments
+of each. Every pass around the loop becomes its own lane; drag across a lane
+to choose it for that stretch. Punch in to repair one phrase without risking
+the rest of the take.
+
+What you comp becomes ordinary audio clips on the arrangement, so you can
+trim, fade and move the result afterwards like anything else.
+
+![Take lanes](docs/images/take-lanes.png)
+
 ### Song structure
 
 Tempo and time-signature changes, markers and regions. Bar lines follow the

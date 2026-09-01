@@ -219,6 +219,15 @@ foreach ($panel in $panels) {
     args = "--demo --focus `"Project Check`""
 })
 
+# Take lanes with a comp built on them. Empty, the panel is a paragraph of
+# text; the lanes, the comp strip and the per-take highlight are all drawn
+# from beat arithmetic straight into the draw list, where a bad span divides
+# by zero and nothing appears.
+[void]$cases.Add(@{
+    name = "take-lanes"
+    args = "--demo --comp --focus `"Take Lanes`""
+})
+
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"

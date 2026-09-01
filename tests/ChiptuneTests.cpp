@@ -51,6 +51,7 @@
 #include "Reverbs.h"
 #include "Convolution.h"
 #include "EqualizerSuite.h"
+#include "TakeLanes.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -15469,6 +15470,530 @@ static void testEqualisersInChannel() {
     }
 }
 
+
+// ============================================================================
+// 90. Take lanes and comping
+// ============================================================================
+static void testTakeLanes() {
+    beginTest("Take lanes and comping");
+
+    // The segment list, as a compact string, so a test can assert the whole
+    // shape at once rather than field by field.
+    auto shapeOf = [](const CompGroup& group) {
+        std::string out;
+        for (const CompSegment& segment : group.segments) {
+            out += "[" + std::to_string(static_cast<int>(segment.startBeat)) + "," +
+                   std::to_string(static_cast<int>(segment.endBeat)) + ")=" +
+                   std::to_string(segment.takeIndex) + " ";
+        }
+        return out;
+    };
+
+    // ---- A new take wins over what it covers --------------------------------
+    {
+        CompGroup group;
+        group.lengthBeats = 16.0f;
+
+        const int first = comp::addTake(group, 0, 0.0f, 16.0f, "");
+        check(first == 0, "the first take goes in");
+        check(comp::takeAt(group, 8.0f) == 0,
+              "and is chosen across its span - you record because you want "
+              "to hear the new one");
+
+        const int second = comp::addTake(group, 1, 0.0f, 16.0f, "");
+        check(second == 1, "a second take goes in");
+        check(comp::takeAt(group, 8.0f) == 1,
+              "and takes over, with the first still there one click away");
+    }
+
+    // ---- The swipe --------------------------------------------------------------
+    {
+        CompGroup group;
+        group.lengthBeats = 16.0f;
+        comp::addTake(group, 0, 0.0f, 16.0f, "");
+        comp::addTake(group, 1, 0.0f, 16.0f, "");
+
+        // Swipe take 0 across the middle. The two ends of take 1 must
+        // survive - that is what makes it feel like painting rather than a
+        // series of destructive edits.
+        comp::chooseTake(group, 4.0f, 8.0f, 0);
+
+        check(comp::takeAt(group, 2.0f) == 1, "before the swipe, take 1");
+        check(comp::takeAt(group, 6.0f) == 0, "inside it, take 0");
+        check(comp::takeAt(group, 12.0f) == 1, "and after it, take 1 again");
+        check(group.segments.size() == 3,
+              "leaving exactly three segments (" + shapeOf(group) + ")");
+    }
+
+    {
+        // A swipe covering everything collapses to one segment.
+        CompGroup group;
+        group.lengthBeats = 16.0f;
+        comp::addTake(group, 0, 0.0f, 16.0f, "");
+        comp::addTake(group, 1, 0.0f, 16.0f, "");
+        comp::chooseTake(group, 4.0f, 8.0f, 0);
+        comp::chooseTake(group, 0.0f, 16.0f, 1);
+
+        check(group.segments.size() == 1,
+              "a swipe over the whole span collapses to one segment (" +
+              shapeOf(group) + ")");
+    }
+
+    {
+        // Adjacent runs of the same take MERGE. Without this every swipe
+        // leaves another boundary, the list grows all session, and
+        // flattening emits a clip per fragment.
+        CompGroup group;
+        group.lengthBeats = 16.0f;
+        comp::addTake(group, 0, 0.0f, 16.0f, "");
+        comp::addTake(group, 1, 0.0f, 16.0f, "");
+
+        for (int i = 0; i < 8; ++i) {
+            comp::chooseTake(group, float(i) * 2.0f, float(i) * 2.0f + 2.0f, 0);
+        }
+        check(group.segments.size() == 1,
+              "eight adjacent swipes of the same take merge into one segment "
+              "(" + shapeOf(group) + ") - otherwise a comp that is one take "
+              "start to finish flattens into fifty clips that happen to abut");
+    }
+
+    {
+        // Overlapping swipes must not leave overlapping segments.
+        CompGroup group;
+        group.lengthBeats = 16.0f;
+        comp::addTake(group, 0, 0.0f, 16.0f, "");
+        comp::addTake(group, 1, 0.0f, 16.0f, "");
+        comp::addTake(group, 2, 0.0f, 16.0f, "");
+
+        comp::chooseTake(group, 2.0f, 10.0f, 0);
+        comp::chooseTake(group, 6.0f, 14.0f, 1);
+        comp::chooseTake(group, 4.0f, 8.0f, 2);
+
+        bool ordered = true;
+        for (size_t i = 1; i < group.segments.size(); ++i) {
+            if (group.segments[i].startBeat < group.segments[i - 1].endBeat - 1e-4f) {
+                ordered = false;
+                break;
+            }
+        }
+        check(ordered,
+              "overlapping swipes leave no overlapping segments (" +
+              shapeOf(group) + ")");
+
+        check(comp::takeAt(group, 5.0f) == 2 && comp::takeAt(group, 9.0f) == 1,
+              "and the last swipe wins where it landed");
+    }
+
+    {
+        // A backwards swipe is the same as a forwards one - a drag can end
+        // to the left of where it started.
+        CompGroup group;
+        group.lengthBeats = 16.0f;
+        comp::addTake(group, 0, 0.0f, 16.0f, "");
+        comp::addTake(group, 1, 0.0f, 16.0f, "");
+        comp::chooseTake(group, 12.0f, 4.0f, 0);
+        check(comp::takeAt(group, 8.0f) == 0,
+              "a swipe dragged right to left works like one dragged left to "
+              "right");
+
+        // And a zero-length one does nothing rather than inserting an empty
+        // segment.
+        const size_t before = group.segments.size();
+        comp::chooseTake(group, 5.0f, 5.0f, 1);
+        check(group.segments.size() == before,
+              "and a zero-length swipe is ignored");
+    }
+
+    // ---- Removing a take renumbers the segments -------------------------------
+    {
+        CompGroup group;
+        group.lengthBeats = 16.0f;
+        comp::addTake(group, 10, 0.0f, 16.0f, "A");
+        comp::addTake(group, 11, 0.0f, 16.0f, "B");
+        comp::addTake(group, 12, 0.0f, 16.0f, "C");
+
+        comp::chooseTake(group, 0.0f, 5.0f, 0);
+        comp::chooseTake(group, 5.0f, 10.0f, 1);
+        comp::chooseTake(group, 10.0f, 16.0f, 2);
+
+        comp::removeTake(group, 1);      // remove B
+
+        check(group.takes.size() == 2, "the take is gone");
+        check(comp::takeAt(group, 2.0f) == 0,
+              "segments below the removed index are untouched");
+        check(comp::takeAt(group, 7.0f) == -1,
+              "segments that used it become holes rather than pointing at a "
+              "take that no longer exists");
+        check(comp::takeAt(group, 12.0f) == 1,
+              "and segments above it shift down - getting this wrong does "
+              "not crash, it silently plays the wrong take");
+        check(group.takes[1].name == "C", "which is the take it now refers to");
+    }
+
+    // ---- Coverage ------------------------------------------------------------
+    {
+        CompGroup group;
+        group.lengthBeats = 16.0f;
+        comp::addTake(group, 0, 0.0f, 16.0f, "");
+        comp::addTake(group, 1, 0.0f, 16.0f, "");
+        comp::chooseTake(group, 0.0f, 4.0f, 0);
+
+        check(std::fabs(comp::takeCoverage(group, 0) - 4.0f) < 1e-3f,
+              "coverage reports how much of the comp a take actually won");
+        check(std::fabs(comp::takeCoverage(group, 1) - 12.0f) < 1e-3f,
+              "for every take");
+    }
+
+    // ---- Punch ---------------------------------------------------------------
+    {
+        check(comp::insidePunch(5.0f, false, 8.0f, 12.0f),
+              "with punch off, every beat records");
+        check(!comp::insidePunch(5.0f, true, 8.0f, 12.0f),
+              "with it on, a beat before the range does not");
+        check(comp::insidePunch(9.0f, true, 8.0f, 12.0f),
+              "and one inside does");
+        check(!comp::insidePunch(12.0f, true, 8.0f, 12.0f),
+              "the end is exclusive, so a punch that ends at 12 does not "
+              "record beat 12 - two punches meeting at a beat must not both "
+              "claim it");
+        check(comp::insidePunch(5.0f, true, 8.0f, 8.0f),
+              "and an empty range punches nothing rather than everything");
+    }
+}
+
+// ============================================================================
+// 91. Comps flatten into clips
+// ============================================================================
+static void testCompFlattening() {
+    beginTest("Comps flatten into clips");
+
+    auto makeProject = [](int takes) {
+        auto p = std::make_unique<Project>();
+        p->bpm = 120.0f;               // one beat is half a second
+        p->arrangement.clear();
+
+        for (int i = 0; i < takes; ++i) {
+            Sample sample;
+            sample.name = "take" + std::to_string(i);
+            sample.sampleRate = 48000;
+            sample.audioData.assign(48000 * 8, 0.25f);
+            sample.lengthSeconds = 8.0f;
+            sample.isLoaded = true;
+            p->samplePool.addSample(sample);
+        }
+
+        CompGroup group;
+        group.channelIndex = 2;
+        group.startBeat = 0.0f;
+        group.lengthBeats = 16.0f;
+        for (int i = 0; i < takes; ++i) {
+            comp::addTake(group, i, 0.0f, 16.0f, "");
+        }
+        p->compGroups.push_back(group);
+        return p;
+    };
+
+    // ---- One take across the span becomes one clip -----------------------------
+    {
+        auto p = makeProject(1);
+        const int emitted = comp::flattenAll(*p);
+
+        check(emitted == 1, "a single-take comp flattens to one clip");
+        check(p->arrangement.size() == 1, "and that is all that is there");
+        if (p->arrangement.size() == 1) {
+            const Clip& clip = p->arrangement[0];
+            check(clip.type == ClipType::Audio, "as an audio clip");
+            check(clip.channelIndex == 2, "on the comp's channel");
+            check(std::fabs(clip.lengthBeats - 16.0f) < 1e-3f,
+                  "covering the whole comp");
+            check(clip.compGroup == 0,
+                  "and tagged with the group that made it, so re-flattening "
+                  "can replace its own output");
+        }
+    }
+
+    // ---- Re-flattening replaces rather than accumulates --------------------------
+    {
+        auto p = makeProject(2);
+        comp::flattenAll(*p);
+        const size_t first = p->arrangement.size();
+
+        comp::flattenAll(*p);
+        comp::flattenAll(*p);
+        check(p->arrangement.size() == first,
+              "flattening three times leaves the same number of clips - a "
+              "swipe re-flattens, and accumulating would fill the timeline");
+    }
+
+    // ---- Hand-placed clips are left alone ----------------------------------------
+    {
+        auto p = makeProject(1);
+        Clip byHand{0, 5, 0.0f, 4.0f, 0};
+        p->patterns.clear();
+        p->patterns.push_back(Pattern());
+        p->arrangement.push_back(byHand);
+
+        comp::flattenAll(*p);
+        comp::flattenAll(*p);
+
+        int handPlaced = 0;
+        for (const Clip& clip : p->arrangement) {
+            if (clip.compGroup < 0) ++handPlaced;
+        }
+        check(handPlaced == 1,
+              "flattening does not touch clips it did not make - it removes "
+              "only what carries its own group index");
+    }
+
+    // ---- The trim offset, which is the classic comping bug ------------------------
+    {
+        auto p = makeProject(2);
+        CompGroup& group = p->compGroups[0];
+
+        // Take 1 across the whole span, then take 0 swiped over beats 8-12.
+        comp::chooseTake(group, 0.0f, 16.0f, 1);
+        comp::chooseTake(group, 8.0f, 12.0f, 0);
+        comp::flattenAll(*p);
+
+        const Clip* middle = nullptr;
+        for (const Clip& clip : p->arrangement) {
+            if (std::fabs(clip.startBeat - 8.0f) < 1e-3f) middle = &clip;
+        }
+        check(middle != nullptr, "the swiped span produced a clip");
+
+        if (middle != nullptr) {
+            // The take started at beat 0, the segment starts at beat 8, and
+            // at 120 bpm a beat is half a second - so playback must begin
+            // four seconds into the recording. Getting this wrong means
+            // every segment plays from the top of its take, and the comp is
+            // in time with nothing.
+            check(std::fabs(middle->trimStartSeconds - 4.0f) < 1e-3f,
+                  "and starts four seconds into its take, not at the top of "
+                  "it (got " + std::to_string(middle->trimStartSeconds) + ")");
+            check(std::fabs(middle->trimEndSeconds - 6.0f) < 1e-3f,
+                  "ending where the segment ends");
+        }
+    }
+
+    // ---- Joins are crossfaded ------------------------------------------------------
+    {
+        auto p = makeProject(2);
+        CompGroup& group = p->compGroups[0];
+        comp::chooseTake(group, 0.0f, 16.0f, 1);
+        comp::chooseTake(group, 8.0f, 12.0f, 0);
+        comp::flattenAll(*p);
+
+        int faded = 0;
+        for (const Clip& clip : p->arrangement) {
+            if (clip.fadeInBeats > 0.0f || clip.fadeOutBeats > 0.0f) ++faded;
+        }
+        check(faded >= 2,
+              "internal joins carry a short crossfade - butting two takes "
+              "together at a zero crossing they do not share is a click, and "
+              "a click at every comp point is what gives an amateur comp away");
+
+        // But not at the very outside edges, which are not joins.
+        const Clip* first = nullptr;
+        for (const Clip& clip : p->arrangement) {
+            if (std::fabs(clip.startBeat) < 1e-3f) first = &clip;
+        }
+        check(first != nullptr && first->fadeInBeats == 0.0f,
+              "and the start of the comp is not faded, because it is not a "
+              "join");
+    }
+
+    // ---- Muted takes and holes -------------------------------------------------------
+    {
+        auto p = makeProject(2);
+        CompGroup& group = p->compGroups[0];
+        comp::chooseTake(group, 0.0f, 16.0f, 0);
+        group.takes[0].muted = true;
+        comp::flattenAll(*p);
+        check(p->arrangement.empty(),
+              "a muted take produces no clips - it is kept, and never chosen");
+
+        group.takes[0].muted = false;
+        comp::chooseTake(group, 4.0f, 8.0f, -1);
+        comp::flattenAll(*p);
+
+        bool anyOverHole = false;
+        for (const Clip& clip : p->arrangement) {
+            if (clip.startBeat < 8.0f && clip.startBeat + clip.lengthBeats > 4.0f &&
+                clip.startBeat >= 4.0f) {
+                anyOverHole = true;
+            }
+        }
+        check(!anyOverHole,
+              "and a deliberate hole stays silent rather than falling back "
+              "to some other take");
+    }
+
+    // ---- A punched-in take only covers what it recorded --------------------------------
+    {
+        auto p = makeProject(1);
+        CompGroup& group = p->compGroups[0];
+
+        // A repair pass covering only beats 4 to 8.
+        Sample patch;
+        patch.name = "punch";
+        patch.sampleRate = 48000;
+        patch.audioData.assign(48000 * 2, 0.5f);
+        patch.lengthSeconds = 2.0f;
+        patch.isLoaded = true;
+        const int patchId = p->samplePool.addSample(patch);
+
+        const int punched = comp::addTake(group, patchId, 4.0f, 4.0f, "Punch");
+        comp::flattenAll(*p);
+
+        const Clip* punchClip = nullptr;
+        for (const Clip& clip : p->arrangement) {
+            if (clip.sampleId == patchId) punchClip = &clip;
+        }
+        check(punchClip != nullptr, "the punched take produced a clip");
+        check(punchClip != nullptr &&
+              std::fabs(punchClip->startBeat - 4.0f) < 1e-3f &&
+              std::fabs(punchClip->lengthBeats - 4.0f) < 1e-3f,
+              "covering only what it recorded, not the whole comp");
+        check(punched >= 0, "and it was added");
+    }
+
+    // ---- The flattened comp actually sounds --------------------------------------------
+    {
+        auto p = makeProject(1);
+        p->masterLimiterEnabled = false;
+        p->masterCompressorEnabled = false;
+        p->masterEQEnabled = false;
+        p->masterVolume = 0.8f;
+        p->channels[2].volume = 0.8f;
+        p->channels[2].pan = 0.0f;
+        comp::flattenAll(*p);
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(p.get());
+        seqPtr->updateChannelConfigs();
+        seqPtr->updateMasterEffects();
+        seqPtr->play();
+
+        std::vector<float> l(512), r(512);
+        double energy = 0.0;
+        for (int b = 0; b < 30; ++b) {
+            seqPtr->process(l.data(), r.data(), 512);
+            if (b >= 4) for (float v : l) energy += double(v) * v;
+        }
+        check(energy > 1e-4,
+              "a flattened comp plays through the ordinary audio-clip path - "
+              "which is the entire reason comping flattens rather than being "
+              "resolved in the mixer");
+    }
+
+    // ---- It survives a save and load ------------------------------------------------------
+    {
+        auto p = makeProject(3);
+        CompGroup& group = p->compGroups[0];
+        group.name = "Lead vocal";
+        comp::chooseTake(group, 0.0f, 6.0f, 0);
+        comp::chooseTake(group, 6.0f, 11.0f, 2);
+        comp::chooseTake(group, 11.0f, 16.0f, 1);
+        group.takes[1].muted = true;
+        group.takes[2].name = "The good one";
+        comp::flattenAll(*p);
+
+        const size_t clipCount = p->arrangement.size();
+
+        const std::string path = testPath("comp.ctp");
+        check(saveProject(*p, path), "a comped project saves");
+
+        auto loaded = std::make_unique<Project>();
+        check(loadProject(*loaded, path), "and loads");
+
+        check(loaded->compGroups.size() == 1, "with its comp group");
+        if (!loaded->compGroups.empty()) {
+            const CompGroup& got = loaded->compGroups[0];
+            check(got.name == "Lead vocal" && got.channelIndex == 2,
+                  "its name and channel");
+            check(got.takes.size() == 3, "all three takes");
+            check(got.takes.size() == 3 && got.takes[1].muted,
+                  "including which are muted");
+            check(got.takes.size() == 3 && got.takes[2].name == "The good one",
+                  "and their names");
+            check(got.segments.size() == 3,
+                  "and the comp itself (" + std::to_string(got.segments.size()) +
+                  " segments)");
+            check(comp::takeAt(got, 8.0f) == 2,
+                  "resolving to the same takes it did before");
+        }
+
+        check(loaded->arrangement.size() == clipCount,
+              "and the flattened clips come back too - re-flattening on load "
+              "would be equivalent but would discard any hand-editing done "
+              "to them");
+
+        int tagged = 0;
+        for (const Clip& clip : loaded->arrangement) {
+            if (clip.compGroup == 0) ++tagged;
+        }
+        check(tagged == static_cast<int>(clipCount),
+              "still tagged with their group");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- A project with no comps writes nothing ------------------------------------------
+    {
+        Project plain;
+        const std::string path = testPath("comp_absent.ctp");
+        check(saveProject(plain, path), "a project with no comps saves");
+
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        const std::string text = ss.str();
+        check(text.find("COMP ") == std::string::npos &&
+              text.find("TAKE ") == std::string::npos,
+              "and writes no comp lines");
+        std::remove(path.c_str());
+    }
+
+    // ---- Validation ---------------------------------------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        CompGroup group;
+        group.channelIndex = 900;
+        group.lengthBeats = -5.0f;
+
+        Take take;
+        take.sampleId = 500;                 // past the end of the pool
+        take.lengthBeats = 0.0f;
+        group.takes.push_back(take);
+
+        CompSegment segment;
+        segment.startBeat = 0.0f;
+        segment.endBeat = 8.0f;
+        segment.takeIndex = 40;              // no such take
+        group.segments.push_back(segment);
+
+        p->compGroups.push_back(group);
+        clampProjectToValidRanges(*p);
+
+        const CompGroup& fixed = p->compGroups[0];
+        check(fixed.channelIndex >= 0 && fixed.channelIndex < Project::MAX_CHANNELS,
+              "an impossible channel is repaired");
+        check(fixed.lengthBeats > 0.0f, "and a negative length");
+        check(fixed.takes[0].sampleId == -1,
+              "a take pointing past the sample pool becomes silent");
+        check(fixed.takes[0].lengthBeats > 0.0f, "and a zero-length take is given one");
+        check(fixed.segments.empty() || fixed.segments[0].takeIndex == -1,
+              "and a segment naming a take that does not exist becomes a "
+              "hole - it would otherwise index off the end of the vector "
+              "during flattening");
+
+        // And flattening a repaired project must not crash or emit nonsense.
+        const int emitted = comp::flattenAll(*p);
+        check(emitted == 0, "a repaired comp with no usable takes emits nothing");
+    }
+}
+
 // ============================================================================
 // Headless ImGui harness
 // ============================================================================
@@ -15631,6 +16156,236 @@ static bool frameIsClean(const HeadlessUI::FrameResult& result) {
 
 
 // ============================================================================
+// 92. The take lanes panel: draws, swipes, and commits a take
+// ============================================================================
+static void testTakeLanesPanel() {
+    beginTest("Take lanes panel (headless GUI)");
+
+    auto uiPtr = std::make_unique<HeadlessUI>();
+    auto projectPtr = std::make_unique<Project>();
+    auto seqPtr = std::make_unique<Sequencer>();
+    UIState ui;
+
+    Project& project = *projectPtr;
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&project);
+
+    TakeLanesState& lanes = takeLanesState();
+    lanes = TakeLanesState();
+
+    // ---- The empty state ---------------------------------------------------
+    //
+    // A panel with nothing in it yet is the first thing every user sees, and
+    // it is the state most likely to divide by a zero count.
+    project.compGroups.clear();
+    {
+        auto result = uiPtr->frames(3, [&] { DrawTakeLanes(project, ui, seq); });
+        check(frameIsClean(result),
+              "Empty take lanes panel draws cleanly: " + result.firstProblem);
+        check(result.vertexCount > 0, "Empty take lanes panel draws something");
+    }
+
+    // ---- With takes --------------------------------------------------------
+    CompGroup group;
+    group.channelIndex = 2;
+    group.name = "Vocal comp";
+    group.startBeat = 0.0f;
+    group.lengthBeats = 16.0f;
+
+    // Four passes, as somebody comping actually has.
+    for (int t = 0; t < 4; ++t) {
+        Sample sample;
+        sample.name = "Take " + std::to_string(t + 1);
+        sample.sampleRate = 44100;
+        sample.audioData.assign(44100, 0.0f);
+        for (size_t i = 0; i < sample.audioData.size(); ++i) {
+            sample.audioData[i] = 0.3f * std::sin(TWO_PI * 220.0f *
+                float(t + 1) * float(i) / 44100.0f);
+        }
+        sample.lengthSeconds = 1.0f;
+        sample.isLoaded = true;
+        const int id = project.samplePool.addSample(sample);
+        comp::addTake(group, id, 0.0f, 16.0f, sample.name);
+    }
+    group.takes[1].muted = true;   // a muted lane must draw differently, not crash
+    project.compGroups.push_back(group);
+    takeLanesState().selectedGroup = 0;
+
+    {
+        auto result = uiPtr->frames(3, [&] { DrawTakeLanes(project, ui, seq); });
+        check(frameIsClean(result),
+              "Take lanes with four takes draws cleanly: " + result.firstProblem);
+    }
+
+    // ---- A degenerate group -------------------------------------------------
+    //
+    // Zero length is what a group has for the instant between being created
+    // and being recorded into, and it is a division by the beat span.
+    {
+        const float saved = project.compGroups[0].lengthBeats;
+        project.compGroups[0].lengthBeats = 0.0f;
+        auto result = uiPtr->frames(2, [&] { DrawTakeLanes(project, ui, seq); });
+        check(frameIsClean(result),
+              "Zero-length comp group draws cleanly: " + result.firstProblem);
+        project.compGroups[0].lengthBeats = saved;
+    }
+
+    // ---- The swipe ----------------------------------------------------------
+    //
+    // Driven through the panel's own release path rather than by aiming at
+    // pixels: what must be proven is that letting go of the mouse commits
+    // the choice and flattens it, which is where a comp becomes audible.
+    {
+        const size_t clipsBefore = project.arrangement.size();
+
+        TakeLanesState& state = takeLanesState();
+        state.swiping = true;
+        state.swipeTake = 2;
+        state.swipeAnchor = 4.0f;
+
+        // Mouse released, positioned inside the grid so the drop beat is a
+        // real one rather than off the left edge.
+        uiPtr->setMouse(700.0f, 380.0f, false);
+        auto result = uiPtr->frames(2, [&] { DrawTakeLanes(project, ui, seq); });
+        check(frameIsClean(result),
+              "Swipe release draws cleanly: " + result.firstProblem);
+
+        check(!state.swiping, "Releasing the mouse ends the swipe");
+
+        const CompGroup& after = project.compGroups[0];
+        bool takeTwoUsed = false;
+        for (const CompSegment& segment : after.segments) {
+            if (segment.takeIndex == 2) takeTwoUsed = true;
+        }
+        check(takeTwoUsed, "The swiped take wins the range it was swiped over");
+
+        // Flattening is what makes it audible. Without this the comp is a
+        // picture: the segments exist and nothing plays them.
+        check(project.arrangement.size() > clipsBefore,
+              "The swipe flattens the comp onto the arrangement");
+
+        bool tagged = false;
+        for (const Clip& clip : project.arrangement) {
+            if (clip.compGroup == 0) tagged = true;
+        }
+        check(tagged, "Flattened clips are tagged with their comp group");
+    }
+
+    // ---- Committing a recorded pass ------------------------------------------
+    {
+        TakeLanesState& state = takeLanesState();
+        CompGroup& live = project.compGroups[0];
+        const size_t takesBefore = live.takes.size();
+
+        // A false start: a few milliseconds of audio is somebody hitting
+        // record and changing their mind, and it must not become a lane.
+        state.pending.assign(200, 0.1f);
+        state.takeStartBeat = 0.0f;
+        const int rejected = commitPendingTake(project, live, state, 44100, 4.0f);
+        check(rejected < 0, "A near-empty pass is not kept as a take");
+        check(live.takes.size() == takesBefore,
+              "A rejected pass adds no lane");
+        check(state.pending.empty(), "A rejected pass clears the buffer");
+
+        // A real pass.
+        state.pending.assign(44100, 0.0f);
+        for (size_t i = 0; i < state.pending.size(); ++i) {
+            state.pending[i] = 0.4f * std::sin(TWO_PI * 330.0f * float(i) / 44100.0f);
+        }
+        state.takeStartBeat = 8.0f;
+        const int added = commitPendingTake(project, live, state, 44100, 12.0f);
+        check(added >= 0, "A recorded pass becomes a take");
+        check(live.takes.size() == takesBefore + 1, "The pass adds one lane");
+        check(state.pending.empty(), "Committing clears the buffer");
+
+        if (added >= 0) {
+            const Take& take = live.takes[size_t(added)];
+            check(std::fabs(take.startBeat - 8.0f) < 0.01f,
+                  "The take starts where recording started");
+            check(std::fabs(take.lengthBeats - 4.0f) < 0.01f,
+                  "The take is as long as the pass was");
+
+            // The audio has to actually be in the pool, or the lane is a
+            // label with nothing behind it.
+            const Sample* sample = project.samplePool.getSample(take.sampleId);
+            check(sample != nullptr, "The take's audio reached the sample pool");
+            if (sample != nullptr) {
+                check(sample->audioData.size() == 44100,
+                      "The whole pass was kept, not a fragment");
+                float peak = 0.0f;
+                for (float value : sample->audioData) {
+                    peak = std::max(peak, std::fabs(value));
+                }
+                check(peak > 0.3f, "The take contains the audio that was played");
+            }
+        }
+    }
+
+    // ---- Loop recording stacks ------------------------------------------------
+    //
+    // The playhead going backwards is the only signal a wrap happened. Each
+    // wrap must close one lane and open the next, which is the whole reason
+    // to loop-record at all.
+    {
+        TakeLanesState& state = takeLanesState();
+        state = TakeLanesState();
+        state.selectedGroup = 0;
+        state.recording = true;
+        state.loopStack = true;
+        state.takeStartBeat = 0.0f;
+        state.lastBeat = 0.0f;
+
+        const size_t takesBefore = project.compGroups[0].takes.size();
+
+        // Two passes around a four-beat loop.
+        for (int pass = 0; pass < 2; ++pass) {
+            for (int step = 0; step < 4; ++step) {
+                std::vector<float> block(6000, 0.25f);
+                g_VoiceDevice.ring().write(block.data(), block.size());
+                PollTakeRecording(project, float(step));
+            }
+            // The wrap: back to the top.
+            PollTakeRecording(project, 0.0f);
+        }
+
+        check(project.compGroups[0].takes.size() == takesBefore + 2,
+              "Two loop passes stack into two lanes");
+
+        // Punch: outside the range, nothing is captured.
+        state = TakeLanesState();
+        state.selectedGroup = 0;
+        state.recording = true;
+        state.loopStack = false;
+        state.punchEnabled = true;
+        state.punchIn = 4.0f;
+        state.punchOut = 8.0f;
+
+        std::vector<float> block(6000, 0.25f);
+        g_VoiceDevice.ring().write(block.data(), block.size());
+        PollTakeRecording(project, 1.0f);    // before the punch-in
+        check(state.pending.empty(),
+              "Nothing is recorded before the punch-in point");
+
+        PollTakeRecording(project, 5.0f);    // inside
+        check(!state.pending.empty(), "Audio is recorded inside the punch range");
+
+        state = TakeLanesState();
+    }
+
+    // ---- Not recording is free -------------------------------------------------
+    {
+        TakeLanesState& state = takeLanesState();
+        state = TakeLanesState();
+        PollTakeRecording(project, 4.0f);
+        check(state.pending.empty(),
+              "Polling while not recording captures nothing");
+    }
+
+    takeLanesState() = TakeLanesState();
+}
+
+// ============================================================================
 // 77. Every panel draws cleanly, headlessly
 // ============================================================================
 static void testPanelsDrawHeadless() {
@@ -15678,6 +16433,7 @@ static void testPanelsDrawHeadless() {
         {"Voice",          [](Project& p, UIState& u, Sequencer& s) { DrawVoicePanel(p, u, s); }},
         {"Pattern List",   [](Project& p, UIState& u, Sequencer& s) { (void)s; DrawPatternList(p, u); }},
         {"Note Editor",    [](Project& p, UIState& u, Sequencer& s) { (void)s; DrawNoteEditor(p, u); }},
+        {"Take Lanes",     [](Project& p, UIState& u, Sequencer& s) { DrawTakeLanes(p, u, s); }},
     };
 
     for (const Panel& panel : PANELS) {
@@ -16136,7 +16892,10 @@ int main(int argc, char** argv) {
     testConvolutionInChannel();
     testEqualisers();
     testEqualisersInChannel();
+    testTakeLanes();
+    testCompFlattening();
     testPanelsDrawHeadless();
+    testTakeLanesPanel();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

@@ -21,6 +21,7 @@
 #include "Routing.h"
 #include "WavetableEngine.h"
 #include "EqualizerSuite.h"
+#include "TakeLanes.h"
 
 #include <cmath>
 #include <algorithm>
@@ -474,6 +475,10 @@ inline void clampProjectToValidRanges(Project& project) {
         }
     }
     sortRegions(project.regions);
+
+    // Take lanes. A segment naming a take that is gone would index off the
+    // end of the vector during flattening.
+    clampCompGroups(project);
 
     // Audio clips: a missing sample or a backwards trim must not reach the
     // audio thread as an index into nothing.

@@ -26,6 +26,7 @@
 #include "ProjectValidation.h"
 #include "OscillatorNames.h"
 #include "Effects.h"   // EffectType and its stable tokens
+#include "TakeLanes.h"
 
 #include <fstream>
 #include <istream>
@@ -871,6 +872,37 @@ inline bool writeProject(std::ostream& file, const Project& project) {
         }
     }
 
+    /*
+     * Take lanes.
+     *
+     * The comp is the editing state; the clips it flattens into are written
+     * as ordinary ACLIPs alongside everything else. Both are stored because
+     * re-flattening on load would be equivalent but would silently discard
+     * any hand-editing done to the resulting clips.
+     */
+    for (size_t g = 0; g < project.compGroups.size(); ++g) {
+        const CompGroup& group = project.compGroups[g];
+        file << "COMP " << g << ' ' << group.channelIndex << ' '
+             << ctp::floatToToken(group.startBeat) << ' '
+             << ctp::floatToToken(group.lengthBeats) << ' '
+             << ctp::quote(group.name) << "\n";
+
+        for (const Take& take : group.takes) {
+            file << "TAKE " << g << ' ' << take.sampleId << ' '
+                 << ctp::floatToToken(take.startBeat) << ' '
+                 << ctp::floatToToken(take.lengthBeats) << ' '
+                 << (take.muted ? 1 : 0) << ' '
+                 << ctp::quote(take.name) << "\n";
+        }
+        for (const CompSegment& segment : group.segments) {
+            file << "COMPSEG " << g << ' '
+                 << ctp::floatToToken(segment.startBeat) << ' '
+                 << ctp::floatToToken(segment.endBeat) << ' '
+                 << segment.takeIndex << "\n";
+        }
+    }
+    if (!project.compGroups.empty()) file << "\n";
+
     // Tempo and meter changes, markers and regions. Written before the
     // arrangement so a reader has the map in hand by the time it places
     // anything against it.
@@ -960,7 +992,8 @@ inline bool writeProject(std::ostream& file, const Project& project) {
                  << ctp::floatToToken(clip.trimEndSeconds) << ' '
                  << ctp::floatToToken(clip.fadeInBeats) << ' '
                  << ctp::floatToToken(clip.fadeOutBeats) << ' '
-                 << (clip.loopClip ? 1 : 0) << "\n";
+                 << (clip.loopClip ? 1 : 0) << ' '
+                 << clip.compGroup << "\n";
             continue;
         }
 
@@ -1235,6 +1268,43 @@ inline bool readProject(std::istream& file, Project& project) {
                 target.fxSlotCount = count;
             }
         }
+        else if (cmd == "COMP") {
+            size_t index = 0;
+            iss >> index;
+            while (project.compGroups.size() <= index &&
+                   project.compGroups.size() < 32) {
+                project.compGroups.push_back(CompGroup());
+            }
+            if (index < project.compGroups.size()) {
+                CompGroup& group = project.compGroups[index];
+                iss >> group.channelIndex >> group.startBeat >> group.lengthBeats;
+                size_t pos = 0;
+                group.name = ctp::unquote(line, pos);
+                if (group.name.empty()) group.name = "Comp";
+            }
+        }
+        else if (cmd == "TAKE") {
+            size_t index = 0;
+            iss >> index;
+            if (index < project.compGroups.size()) {
+                Take take;
+                int muted = 0;
+                iss >> take.sampleId >> take.startBeat >> take.lengthBeats >> muted;
+                take.muted = (muted != 0);
+                size_t pos = 0;
+                take.name = ctp::unquote(line, pos);
+                project.compGroups[index].takes.push_back(take);
+            }
+        }
+        else if (cmd == "COMPSEG") {
+            size_t index = 0;
+            iss >> index;
+            if (index < project.compGroups.size()) {
+                CompSegment segment;
+                iss >> segment.startBeat >> segment.endBeat >> segment.takeIndex;
+                project.compGroups[index].segments.push_back(segment);
+            }
+        }
         else if (cmd == "GRAPHICEQ") {
             int ch = -1;
             iss >> ch;
@@ -1404,6 +1474,11 @@ inline bool readProject(std::istream& file, Project& project) {
                 >> clip.gain >> clip.trimStartSeconds >> clip.trimEndSeconds
                 >> clip.fadeInBeats >> clip.fadeOutBeats >> loopFlag;
             clip.loopClip = (loopFlag != 0);
+
+            // Absent in a file written before comping, where the failed
+            // extraction leaves the default of -1: a hand-placed clip.
+            int compGroup = -1;
+            if (iss >> compGroup) clip.compGroup = compGroup;
 
             // A clip whose sample did not load keeps its place on the
             // timeline with sampleId -1. Dropping it would lose the edit -

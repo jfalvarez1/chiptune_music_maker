@@ -618,6 +618,13 @@ struct Clip {
     // codebase - the exact mistake Clip::transpose taught, and which I made
     // again here by leading with it.
     ClipType type = ClipType::Pattern;
+
+    // Which comp group emitted this clip, or -1 for one placed by hand.
+    // Flattening a comp replaces its own previous output rather than adding
+    // to it, and this is how it recognises that output. After `type` for the
+    // same reason `type` is last: Clip is aggregate-initialised in a dozen
+    // places and inserting in the middle silently re-maps every one.
+    int compGroup = -1;
 };
 
 // ============================================================================
@@ -740,6 +747,59 @@ struct WavetableBank {
         tables = { sine, saw, square };
         name = "Default";
     }
+};
+
+
+// ============================================================================
+// Take lanes
+//
+// The structures live here because Project holds them; the operations that
+// work on them - swiping, flattening, validation - are in TakeLanes.h, which
+// needs a complete Project and therefore cannot be included from this file.
+// ============================================================================
+struct Take {
+    int sampleId = -1;
+    float startBeat = 0.0f;       // where the pass began on the timeline
+    float lengthBeats = 4.0f;
+    std::string name;
+    bool muted = false;           // kept, but never chosen
+
+    float endBeat() const { return startBeat + lengthBeats; }
+    bool covers(float beat) const {
+        return beat >= startBeat && beat < endBeat();
+    }
+};
+
+/*
+ * A span of the timeline, and which take wins over it.
+ *
+ * Segments are kept sorted, non-overlapping and gapless. That invariant is
+ * what makes the whole thing tractable: "which take is playing here" is a
+ * single lookup, and a swipe only has to maintain it rather than reason
+ * about arbitrary overlaps.
+ */
+struct CompSegment {
+    float startBeat = 0.0f;
+    float endBeat = 4.0f;
+    int takeIndex = -1;           // -1 is a deliberate hole
+
+    float length() const { return endBeat - startBeat; }
+};
+
+struct CompGroup {
+    static constexpr int MAX_TAKES = 32;
+
+    int channelIndex = 0;
+    std::string name = "Comp";
+    std::vector<Take> takes;
+    std::vector<CompSegment> segments;
+
+    // Where the comp lives on the timeline. Takes outside it are kept but
+    // never sound, which is what makes punch recording safe.
+    float startBeat = 0.0f;
+    float lengthBeats = 16.0f;
+
+    float endBeat() const { return startBeat + lengthBeats; }
 };
 
 // ============================================================================
@@ -1057,6 +1117,17 @@ struct Project {
     // why they can afford to carry strings.
     std::vector<Marker> markers;
     std::vector<Region> regions;
+
+    /*
+     * Take lanes and their comps.
+     *
+     * Editing state only: the mixer never reads these. A comp is flattened
+     * into ordinary audio clips on the arrangement, and those are what
+     * plays - so comping reuses the whole tested audio-clip path rather
+     * than duplicating trimming, fades and sample-rate conversion inside a
+     * second one.
+     */
+    std::vector<CompGroup> compGroups;
 
     // Convenience wrappers, so call sites do not have to remember to pass
     // the base tempo and meter every time.
