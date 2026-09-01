@@ -25,6 +25,7 @@
 #include "ModMatrix.h"
 #include "Reverbs.h"
 #include "Convolution.h"
+#include "EqualizerSuite.h"
 #include "Genres.h"
 
 namespace ChiptuneTracker {
@@ -510,6 +511,22 @@ struct ChannelConfig {
     bool convolutionEnabled = false;
     int convolutionIR = 0;          // indexes ImpulseResponse
     float convolutionMix = 0.35f;
+
+    // ---- Equalisers -------------------------------------------------------
+    bool tiltEqEnabled = false;
+    float tiltEqAmount = 0.0f;      // dB, negative is darker
+    float tiltEqCentre = 700.0f;
+
+    bool graphicEqEnabled = false;
+    std::array<float, GraphicEQ::BANDS> graphicEqGains{};
+
+    bool dynamicEqEnabled = false;
+    float dynamicEqFrequency = 300.0f;
+    float dynamicEqQ = 1.2f;
+    float dynamicEqThreshold = -24.0f;
+    float dynamicEqRange = -6.0f;
+    float dynamicEqAttack = 0.010f;
+    float dynamicEqRelease = 0.120f;
 
     bool pitchShiftEnabled = false;
     float pitchShiftSemitones = 0.0f;

@@ -14,6 +14,7 @@
 #include "DrumMachine.h"
 #include "ModMatrix.h"
 #include "Convolution.h"
+#include "EqualizerSuite.h"
 #include "Effects.h"
 #include "Sample.h"
 #include <cmath>
@@ -379,6 +380,28 @@ inline void applyEffectsConfig(const ChannelConfig& config, EffectsChain& chain,
             chain.attachedIR = wanted;
         }
     }
+
+    // ---- Equalisers --------------------------------------------------------
+    //
+    // Each has an update() that rebuilds its biquads, and each is called
+    // here rather than per sample: recomputing ten biquads involves ten
+    // sines, cosines and pows, which would cost more than the rest of the
+    // channel put together.
+    chain.tiltEqEnabled = config.tiltEqEnabled;
+    chain.tiltEq.set(config.tiltEqAmount, config.tiltEqCentre);
+
+    chain.graphicEqEnabled = config.graphicEqEnabled;
+    chain.graphicEq.gainDb = config.graphicEqGains;
+    chain.graphicEq.update();
+
+    chain.dynamicEqEnabled = config.dynamicEqEnabled;
+    chain.dynamicEq.frequency = config.dynamicEqFrequency;
+    chain.dynamicEq.q = config.dynamicEqQ;
+    chain.dynamicEq.thresholdDb = config.dynamicEqThreshold;
+    chain.dynamicEq.rangeDb = config.dynamicEqRange;
+    chain.dynamicEq.attack = config.dynamicEqAttack;
+    chain.dynamicEq.release = config.dynamicEqRelease;
+    chain.dynamicEq.update();
 
     // The reverb algorithm goes through the setter, which re-sizes the
     // tank's delay lines. Assigning the field alone would leave the tank

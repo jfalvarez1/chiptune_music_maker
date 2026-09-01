@@ -140,6 +140,14 @@ inline constexpr FloatField<ChannelConfig> CHANNEL_FLOATS[] = {
     {"rmFreq",     &ChannelConfig::ringModFrequency},
     {"rmMix",      &ChannelConfig::ringModMix},
     {"convMix",    &ChannelConfig::convolutionMix},
+    {"tiltAmt",    &ChannelConfig::tiltEqAmount},
+    {"tiltHz",     &ChannelConfig::tiltEqCentre},
+    {"dynHz",      &ChannelConfig::dynamicEqFrequency},
+    {"dynQ",       &ChannelConfig::dynamicEqQ},
+    {"dynThr",     &ChannelConfig::dynamicEqThreshold},
+    {"dynRange",   &ChannelConfig::dynamicEqRange},
+    {"dynAtk",     &ChannelConfig::dynamicEqAttack},
+    {"dynRel",     &ChannelConfig::dynamicEqRelease},
 
     {"echTime",    &ChannelConfig::echoTime},
     {"echFb",      &ChannelConfig::echoFeedback},
@@ -203,6 +211,9 @@ inline constexpr BoolField<ChannelConfig> CHANNEL_BOOLS[] = {
     {"scOn",   &ChannelConfig::sidechainEnabled},
     {"rmOn",   &ChannelConfig::ringModEnabled},
     {"convOn", &ChannelConfig::convolutionEnabled},
+    {"tiltOn", &ChannelConfig::tiltEqEnabled},
+    {"grEqOn", &ChannelConfig::graphicEqEnabled},
+    {"dynOn",  &ChannelConfig::dynamicEqEnabled},
     {"echOn",  &ChannelConfig::echoEnabled},
     {"fenvOn", &ChannelConfig::filterEnvEnabled},
     {"eqOn",   &ChannelConfig::eqEnabled},
@@ -762,6 +773,24 @@ inline bool writeProject(std::ostream& file, const Project& project) {
             }
         }
 
+        // The graphic EQ's ten band gains. Its own line rather than ten
+        // rows in the float table: the tables key on a single member
+        // pointer and cannot address an array element, and ten rows for one
+        // effect would swamp them. Written only when a band is not flat.
+        {
+            bool anyBand = false;
+            for (float gain : c.graphicEqGains) {
+                if (gain != 0.0f) { anyBand = true; break; }
+            }
+            if (anyBand) {
+                file << "GRAPHICEQ " << ch;
+                for (float gain : c.graphicEqGains) {
+                    file << ' ' << ctp::floatToToken(gain);
+                }
+                file << "\n";
+            }
+        }
+
         // Sends, written only when they go somewhere.
         for (int slot = 0; slot < MAX_SENDS_PER_CHANNEL; ++slot) {
             const SendConfig& send = c.sends[static_cast<size_t>(slot)];
@@ -1204,6 +1233,14 @@ inline bool readProject(std::istream& file, Project& project) {
                         static_cast<uint8_t>(type);
                 }
                 target.fxSlotCount = count;
+            }
+        }
+        else if (cmd == "GRAPHICEQ") {
+            int ch = -1;
+            iss >> ch;
+            if (ch >= 0 && ch < Project::MAX_CHANNELS) {
+                auto& gains = project.channels[static_cast<size_t>(ch)].graphicEqGains;
+                for (float& gain : gains) iss >> gain;
             }
         }
         else if (cmd == "MOD") {

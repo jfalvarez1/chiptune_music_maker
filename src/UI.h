@@ -5239,6 +5239,61 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
         }
     }
 
+    /*
+     * Mid-side EQ.
+     *
+     * On the master rather than a channel because it needs stereo - the
+     * channel chain is mono until the pan - and because it is a mastering
+     * tool. Cutting bass from the side alone tightens a mix without thinning
+     * it, since bass is nearly always mono in practice and side bass is
+     * mostly phase trouble.
+     */
+    if (ImGui::CollapsingHeader("Mid-Side EQ")) {
+        MasterEffects& master = seq.getMasterEffects();
+
+        ImGui::Checkbox("Enable##ms", &master.midSideEnabled);
+        if (master.midSideEnabled) {
+            ImGui::TextDisabled(
+                "Mid is what the channels share; side is what differs.");
+
+            bool changed = false;
+            static const char* BAND_NAMES[3] = {"Low", "Mid", "High"};
+
+            ImGui::Text("Mid");
+            for (int i = 0; i < 3; ++i) {
+                ImGui::PushID(1400 + i);
+                ImGui::SetNextItemWidth(150);
+                changed |= ImGui::SliderFloat(BAND_NAMES[i],
+                                              &master.midSide.mid[static_cast<size_t>(i)].gainDb,
+                                              -18.0f, 18.0f, "%.1f dB");
+                ImGui::PopID();
+            }
+
+            ImGui::Text("Side");
+            for (int i = 0; i < 3; ++i) {
+                ImGui::PushID(1410 + i);
+                ImGui::SetNextItemWidth(150);
+                changed |= ImGui::SliderFloat(BAND_NAMES[i],
+                                              &master.midSide.side[static_cast<size_t>(i)].gainDb,
+                                              -18.0f, 18.0f, "%.1f dB");
+                ImGui::PopID();
+            }
+
+            // The biquads are only rebuilt when a gain actually moved -
+            // recomputing six of them per frame would cost more than the
+            // whole master bus.
+            if (changed) master.midSide.update();
+
+            if (ImGui::SmallButton("Flat##ms")) {
+                for (int i = 0; i < 3; ++i) {
+                    master.midSide.mid[static_cast<size_t>(i)].gainDb = 0.0f;
+                    master.midSide.side[static_cast<size_t>(i)].gainDb = 0.0f;
+                }
+                master.midSide.update();
+            }
+        }
+    }
+
     if (ImGui::CollapsingHeader("Chip Accuracy")) {
             ImGui::Checkbox("8 channels only", &project.chipAuthentic);
             if (ImGui::IsItemHovered()) {
@@ -11542,6 +11597,81 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
             ImGui::Indent();
             ImGui::SliderFloat("Freq##ring", &channel.ringModFrequency, 20.0f, 2000.0f, "%.0f Hz");
             ImGui::SliderFloat("Mix##ring", &channel.ringModMix, 0.0f, 1.0f);
+            ImGui::Unindent();
+        }
+
+        // ---- Tilt -------------------------------------------------------------
+        //
+        // One control, and the one most people actually want most of the
+        // time: brighter or darker without deciding which band to touch.
+        ImGui::Checkbox("Tilt EQ", &channel.tiltEqEnabled);
+        if (channel.tiltEqEnabled) {
+            ImGui::Indent();
+            ImGui::SliderFloat("Tilt##tilt", &channel.tiltEqAmount,
+                               -12.0f, 12.0f, "%.1f dB");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Right is brighter, left is darker. The two ends pivot\n"
+                    "around the centre frequency, so the overall level\n"
+                    "barely moves - it is a tone control, not a fader.");
+            }
+            ImGui::SliderFloat("Pivot##tilt", &channel.tiltEqCentre,
+                               50.0f, 8000.0f, "%.0f Hz");
+            ImGui::Unindent();
+        }
+
+        // ---- Graphic ----------------------------------------------------------
+        ImGui::Checkbox("Graphic EQ", &channel.graphicEqEnabled);
+        if (channel.graphicEqEnabled) {
+            ImGui::Indent();
+            ImGui::TextDisabled("Ten octave bands. The curve is the sliders.");
+
+            // Vertical sliders, because a graphic EQ that does not look like
+            // its own response curve gives up the only thing it is good at.
+            for (int band = 0; band < GraphicEQ::BANDS; ++band) {
+                if (band > 0) ImGui::SameLine();
+                ImGui::PushID(1200 + band);
+                ImGui::VSliderFloat("##band", ImVec2(20, 100),
+                                    &channel.graphicEqGains[static_cast<size_t>(band)],
+                                    -18.0f, 18.0f, "");
+                if (ImGui::IsItemHovered()) {
+                    const float centre = GraphicEQ::CENTRES[static_cast<size_t>(band)];
+                    ImGui::SetTooltip("%.0f Hz: %+.1f dB", centre,
+                                      channel.graphicEqGains[static_cast<size_t>(band)]);
+                }
+                ImGui::PopID();
+            }
+
+            if (ImGui::SmallButton("Flat##graphic")) {
+                for (float& gain : channel.graphicEqGains) gain = 0.0f;
+            }
+            ImGui::Unindent();
+        }
+
+        // ---- Dynamic ----------------------------------------------------------
+        ImGui::Checkbox("Dynamic EQ", &channel.dynamicEqEnabled);
+        if (channel.dynamicEqEnabled) {
+            ImGui::Indent();
+            ImGui::TextDisabled(
+                "Acts only when the band is actually loud, so a note that\n"
+                "turns boxy on the hits is fixed without the quiet ones\n"
+                "going thin.");
+            ImGui::SliderFloat("Freq##dyn", &channel.dynamicEqFrequency,
+                               20.0f, 18000.0f, "%.0f Hz");
+            ImGui::SliderFloat("Q##dyn", &channel.dynamicEqQ, 0.2f, 10.0f, "%.2f");
+            ImGui::SliderFloat("Threshold##dyn", &channel.dynamicEqThreshold,
+                               -60.0f, 0.0f, "%.1f dB");
+            ImGui::SliderFloat("Range##dyn", &channel.dynamicEqRange,
+                               -24.0f, 24.0f, "%.1f dB");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Negative ducks the band when it gets loud; positive\n"
+                    "lifts it. Ducking is the usual one.");
+            }
+            ImGui::SliderFloat("Attack##dyn", &channel.dynamicEqAttack,
+                               0.001f, 0.2f, "%.3f s");
+            ImGui::SliderFloat("Release##dyn", &channel.dynamicEqRelease,
+                               0.005f, 1.0f, "%.3f s");
             ImGui::Unindent();
         }
 

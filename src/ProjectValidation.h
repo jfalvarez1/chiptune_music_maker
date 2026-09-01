@@ -20,6 +20,7 @@
 #include "Effects.h"
 #include "Routing.h"
 #include "WavetableEngine.h"
+#include "EqualizerSuite.h"
 
 #include <cmath>
 #include <algorithm>
@@ -220,6 +221,22 @@ inline void clampChannelToValidRanges(ChannelConfig& c, int poolSize = 0) {
     c.oscillator.pulseWidth = sanitizeFloat(c.oscillator.pulseWidth, 0.01f, 0.99f, 0.5f);
     c.oscillator.triangleSlope = sanitizeFloat(c.oscillator.triangleSlope, 0.0f, 1.0f, 0.5f);
     c.oscillator.detune = sanitizeFloat(c.oscillator.detune, -1200.0f, 1200.0f, 0.0f);
+
+    // ---- Equalisers ---------------------------------------------------------
+    //
+    // A NaN gain would poison a biquad's state permanently: the filter is
+    // recursive, so once a NaN is in z1 every sample after it is NaN, and
+    // the channel is silent for the rest of the session.
+    clampTiltEQ(c.tiltEqAmount, c.tiltEqCentre);
+    clampGraphicEQ(c.graphicEqGains);
+
+    c.dynamicEqFrequency = sanitizeFloat(c.dynamicEqFrequency, 20.0f, 20000.0f, 300.0f);
+    c.dynamicEqQ = sanitizeFloat(c.dynamicEqQ, 0.1f, 18.0f, 1.2f);
+    c.dynamicEqThreshold = sanitizeFloat(c.dynamicEqThreshold, -80.0f, 0.0f, -24.0f);
+    c.dynamicEqRange = sanitizeFloat(c.dynamicEqRange, -24.0f, 24.0f, -6.0f);
+    // Zero attack or release divides by itself in the envelope coefficient.
+    c.dynamicEqAttack = sanitizeFloat(c.dynamicEqAttack, 0.0001f, 1.0f, 0.010f);
+    c.dynamicEqRelease = sanitizeFloat(c.dynamicEqRelease, 0.001f, 5.0f, 0.120f);
 
     // A response index this build does not have falls back to the first.
     c.convolutionIR = sanitizeInt(c.convolutionIR, 0, IRLibrary::SLOTS - 1, 0);

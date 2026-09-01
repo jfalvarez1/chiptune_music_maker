@@ -137,20 +137,36 @@ struct MasterEffects {
     Limiter limiter;
     LUFSMeter lufsMeter;
 
+    /*
+     * Mid-side EQ, here rather than on a channel because it needs stereo -
+     * the channel chain is mono until the pan - and because it is a
+     * mastering tool. Cutting bass from the side alone tightens a mix
+     * without thinning it; brightening the side widens without making the
+     * centre harsh. Neither is reachable with any left-right EQ.
+     */
+    MidSideEQ midSide;
+
     // Enable flags
     bool eqEnabled = false;
     bool compressorEnabled = false;
     bool limiterEnabled = true;  // Usually always on for safety
+    bool midSideEnabled = false;
 
     void setSampleRate(float sr) {
         eq.setSampleRate(sr);
         compressor.setSampleRate(sr);
         limiter.setSampleRate(sr);
         lufsMeter.setSampleRate(sr);
+        midSide.configure(sr);
     }
 
     // Process stereo signal
     void process(float& left, float& right) {
+        // Mid-side first: it is corrective tonal shaping, and doing it
+        // after the compressor would mean compressing a balance that is
+        // about to change.
+        if (midSideEnabled) midSide.process(left, right);
+
         // EQ first (tonal shaping)
         if (eqEnabled) {
             left = eq.process(left);
@@ -178,6 +194,7 @@ struct MasterEffects {
         compressor.reset();
         limiter.reset();
         lufsMeter.reset();
+        midSide.reset();
     }
 
     // Get loudness for display

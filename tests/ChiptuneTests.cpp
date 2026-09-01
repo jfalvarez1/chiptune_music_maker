@@ -50,6 +50,7 @@
 #include "SettingsAudit.h"
 #include "Reverbs.h"
 #include "Convolution.h"
+#include "EqualizerSuite.h"
 #include "Tutorial.h"
 #include "LegacyEffectsChain.h"
 #include "Routing.h"
@@ -14992,6 +14993,482 @@ static void testConvolutionInChannel() {
     }
 }
 
+
+// ============================================================================
+// 88. Equalisers
+// ============================================================================
+static void testEqualisers() {
+    beginTest("Equalisers");
+
+    const float rate = 44100.0f;
+
+    /*
+     * The gain a processor applies at one frequency, in dB.
+     *
+     * Measured by settling first and then taking the RMS - a biquad has a
+     * transient at the start of any tone, and including it would report a
+     * gain that is partly the filter starting up.
+     */
+    auto gainAt = [rate](auto&& processor, float frequency) {
+        const int settle = 8192;
+        const int measure = 16384;
+
+        double energy = 0.0;
+        for (int i = 0; i < settle + measure; ++i) {
+            const float t = float(i) / rate;
+            const float in = std::sin(6.28318530718f * frequency * t);
+            const float out = processor(in);
+            if (i >= settle) energy += double(out) * out;
+        }
+        const double rms = std::sqrt(energy / double(measure));
+        // A unit sine has an RMS of 1/sqrt(2).
+        return 20.0 * std::log10(std::max(1e-9, rms / 0.70710678));
+    };
+
+    // ---- Tilt ---------------------------------------------------------------
+    {
+        auto tilt = std::make_unique<TiltEQ>();
+        tilt->configure(rate);
+        tilt->set(0.0f, 700.0f);
+
+        const double flatLow = gainAt([&](float x) { return tilt->process(x); }, 100.0f);
+        const double flatHigh = gainAt([&](float x) { return tilt->process(x); }, 6000.0f);
+        check(std::fabs(flatLow) < 0.6 && std::fabs(flatHigh) < 0.6,
+              "a tilt of zero is flat (" + std::to_string(flatLow) + " dB low, " +
+              std::to_string(flatHigh) + " dB high)");
+
+        tilt->set(6.0f, 700.0f);
+        tilt->reset();
+        const double brightLow = gainAt([&](float x) { return tilt->process(x); }, 100.0f);
+        tilt->reset();
+        const double brightHigh = gainAt([&](float x) { return tilt->process(x); }, 6000.0f);
+
+        check(brightHigh > 3.0,
+              "tilting bright raises the top (" + std::to_string(brightHigh) + " dB)");
+        check(brightLow < -3.0,
+              "and lowers the bottom (" + std::to_string(brightLow) +
+              " dB) - it pivots, which is what stops it being a level control "
+              "in disguise");
+
+        tilt->set(-6.0f, 700.0f);
+        tilt->reset();
+        const double darkHigh = gainAt([&](float x) { return tilt->process(x); }, 6000.0f);
+        check(darkHigh < -3.0, "and tilting dark does the reverse");
+    }
+
+    // ---- Graphic --------------------------------------------------------------
+    {
+        auto graphic = std::make_unique<GraphicEQ>();
+        graphic->configure(rate);
+
+        // Flat must be exactly flat: ten near-unity biquads in series still
+        // accumulate phase and numerical noise, which is why zero-gain bands
+        // are set to passthrough rather than to a 0 dB bell.
+        const double flat = gainAt([&](float x) { return graphic->process(x); }, 1000.0f);
+        check(std::fabs(flat) < 0.05,
+              "a graphic EQ at zero is flat to within " +
+              std::to_string(std::fabs(flat)) + " dB");
+
+        // Boost one band and check it lands on that band and not a neighbour.
+        graphic->gainDb[6] = 12.0f;         // 2 kHz
+        graphic->update();
+        graphic->reset();
+        const double atBand = gainAt([&](float x) { return graphic->process(x); }, 2000.0f);
+        graphic->reset();
+        const double farBelow = gainAt([&](float x) { return graphic->process(x); }, 125.0f);
+        graphic->reset();
+        const double farAbove = gainAt([&](float x) { return graphic->process(x); }, 16000.0f);
+
+        check(atBand > 8.0,
+              "boosting the 2 kHz band raises 2 kHz (" +
+              std::to_string(atBand) + " dB)");
+        check(std::fabs(farBelow) < 2.0 && std::fabs(farAbove) < 2.5,
+              "and leaves 125 Hz and 16 kHz alone (" +
+              std::to_string(farBelow) + ", " + std::to_string(farAbove) + " dB)");
+
+        // Cuts as well as boosts.
+        graphic->gainDb[6] = -12.0f;
+        graphic->update();
+        graphic->reset();
+        check(gainAt([&](float x) { return graphic->process(x); }, 2000.0f) < -8.0,
+              "and cutting it cuts");
+    }
+
+    // ---- Mid-side ---------------------------------------------------------------
+    {
+        auto ms = std::make_unique<MidSideEQ>();
+        ms->configure(rate);
+
+        // With nothing set, the encode and decode must be an exact round
+        // trip. The 0.5 in the decode is what makes that true; without it
+        // every mid-side stage doubles the level.
+        float worst = 0.0f;
+        for (int i = 0; i < 2000; ++i) {
+            const float t = float(i) / rate;
+            float l = 0.7f * std::sin(6.28318530718f * 300.0f * t);
+            float r = 0.4f * std::sin(6.28318530718f * 900.0f * t + 1.1f);
+            const float wantL = l;
+            const float wantR = r;
+            ms->process(l, r);
+            worst = std::max(worst, std::max(std::fabs(l - wantL),
+                                             std::fabs(r - wantR)));
+        }
+        check(worst < 1e-4f,
+              "an untouched mid-side stage is an exact round trip (worst " +
+              std::to_string(worst) + ") - the 0.5 in the decode is what "
+              "makes that true, and leaving it out doubles the level");
+
+        // Cutting the side alone must leave a mono signal untouched: a mono
+        // signal has no side content at all. This is the property that makes
+        // mid-side worth having, so it is the one to assert.
+        ms->side[0] = {120.0f, -18.0f, 0.9f};
+        ms->update();
+        ms->reset();
+
+        float monoWorst = 0.0f;
+        for (int i = 0; i < 4000; ++i) {
+            const float t = float(i) / rate;
+            const float mono = 0.6f * std::sin(6.28318530718f * 120.0f * t);
+            float l = mono, r = mono;
+            ms->process(l, r);
+            if (i > 2000) {
+                monoWorst = std::max(monoWorst, std::fabs(l - mono));
+            }
+        }
+        check(monoWorst < 1e-3f,
+              "cutting the SIDE leaves a mono signal untouched (worst " +
+              std::to_string(monoWorst) + ") - which is exactly why it "
+              "tightens a mix without thinning it");
+
+        // And it must actually act on a wide signal.
+        ms->reset();
+        double wideEnergy = 0.0;
+        for (int i = 0; i < 8000; ++i) {
+            const float t = float(i) / rate;
+            const float s = 0.6f * std::sin(6.28318530718f * 120.0f * t);
+            float l = s, r = -s;          // pure side
+            ms->process(l, r);
+            if (i > 4000) wideEnergy += double(l) * l;
+        }
+        check(wideEnergy < 4000.0 * 0.6 * 0.6 * 0.5 * 0.3,
+              "while a pure side signal at that frequency is cut");
+    }
+
+    // ---- Dynamic -----------------------------------------------------------------
+    {
+        auto dyn = std::make_unique<DynamicEQ>();
+        dyn->frequency = 300.0f;
+        dyn->q = 1.2f;
+        dyn->thresholdDb = -20.0f;
+        dyn->rangeDb = -12.0f;
+        dyn->attack = 0.005f;
+        dyn->release = 0.05f;
+        dyn->configure(rate);
+
+        // Quiet: below the threshold, so it should do nothing at all. A
+        // static cut would be cutting here too, which is the whole
+        // difference.
+        dyn->reset();
+        double quietEnergy = 0.0, quietInput = 0.0;
+        for (int i = 0; i < 20000; ++i) {
+            const float t = float(i) / rate;
+            const float in = 0.01f * std::sin(6.28318530718f * 300.0f * t);
+            const float out = dyn->process(in);
+            if (i > 10000) { quietEnergy += double(out) * out; quietInput += double(in) * in; }
+        }
+        const double quietGain = 20.0 * std::log10(
+            std::sqrt(std::max(1e-12, quietEnergy)) /
+            std::sqrt(std::max(1e-12, quietInput)));
+        check(std::fabs(quietGain) < 1.5,
+              "a quiet signal passes untouched (" + std::to_string(quietGain) +
+              " dB) - a static cut would be cutting it too");
+
+        // Loud: above the threshold, so the band should duck.
+        dyn->reset();
+        double loudEnergy = 0.0, loudInput = 0.0;
+        for (int i = 0; i < 30000; ++i) {
+            const float t = float(i) / rate;
+            const float in = 0.8f * std::sin(6.28318530718f * 300.0f * t);
+            const float out = dyn->process(in);
+            if (i > 20000) { loudEnergy += double(out) * out; loudInput += double(in) * in; }
+        }
+        const double loudGain = 20.0 * std::log10(
+            std::sqrt(std::max(1e-12, loudEnergy)) /
+            std::sqrt(std::max(1e-12, loudInput)));
+        check(loudGain < -4.0,
+              "and a loud one is ducked (" + std::to_string(loudGain) +
+              " dB), which is the point: the problem gets fixed only when it "
+              "is actually there");
+
+        check(dyn->currentGainDb() < -1.0,
+              "and the applied gain reports what it is doing");
+
+        // The detector is banded, not full-band. A loud tone somewhere else
+        // entirely must not duck this band - otherwise it is a compressor
+        // with extra steps.
+        dyn->reset();
+        double offBandEnergy = 0.0, offBandInput = 0.0;
+        for (int i = 0; i < 30000; ++i) {
+            const float t = float(i) / rate;
+            const float in = 0.8f * std::sin(6.28318530718f * 6000.0f * t);
+            const float out = dyn->process(in);
+            if (i > 20000) { offBandEnergy += double(out) * out; offBandInput += double(in) * in; }
+        }
+        const double offBandGain = 20.0 * std::log10(
+            std::sqrt(std::max(1e-12, offBandEnergy)) /
+            std::sqrt(std::max(1e-12, offBandInput)));
+        check(std::fabs(offBandGain) < 2.0,
+              "a loud tone in a different band does not duck this one (" +
+              std::to_string(offBandGain) + " dB) - the detector is a "
+              "bandpass tap, not the full-band level, or it would be a "
+              "compressor with extra steps");
+    }
+
+    // ---- Nothing goes unstable ------------------------------------------------
+    {
+        // Every shape at extreme settings, over frequencies up to and past
+        // Nyquist. tan() runs to infinity at Nyquist, so a band nudged past
+        // it by a high-rate project would otherwise produce infinite
+        // coefficients rather than failing gently.
+        bool allSafe = true;
+        std::string failed;
+
+        for (float frequency : {5.0f, 20.0f, 1000.0f, 15000.0f, 22050.0f, 40000.0f}) {
+            for (float gain : {-36.0f, -18.0f, 0.0f, 18.0f, 36.0f}) {
+                for (float q : {0.05f, 1.0f, 30.0f}) {
+                    eq::Biquad biquad;
+                    biquad.setPeaking(frequency, q, gain, rate);
+
+                    float peak = 0.0f;
+                    for (int i = 0; i < 20000; ++i) {
+                        const float t = float(i) / rate;
+                        const float out = biquad.process(
+                            0.8f * std::sin(6.28318530718f * 440.0f * t));
+                        if (!std::isfinite(out)) {
+                            allSafe = false;
+                            failed = std::to_string(frequency) + " Hz, " +
+                                     std::to_string(gain) + " dB, Q " +
+                                     std::to_string(q);
+                            break;
+                        }
+                        peak = std::max(peak, std::fabs(out));
+                    }
+                    if (!allSafe) break;
+                    if (peak > 200.0f) {
+                        allSafe = false;
+                        failed = "peak " + std::to_string(peak) + " at " +
+                                 std::to_string(frequency) + " Hz";
+                        break;
+                    }
+                }
+                if (!allSafe) break;
+            }
+            if (!allSafe) break;
+        }
+        check(allSafe,
+              "biquads stay finite and bounded at every frequency from 5 Hz "
+              "to past Nyquist and every gain and Q" +
+              (allSafe ? std::string() : " (" + failed + ")"));
+    }
+
+    // ---- Validation -------------------------------------------------------------
+    {
+        Project p;
+        p.channels[0].tiltEqAmount = std::numeric_limits<float>::quiet_NaN();
+        p.channels[0].tiltEqCentre = 1e9f;
+        p.channels[0].graphicEqGains[3] = std::numeric_limits<float>::infinity();
+        p.channels[0].graphicEqGains[7] = 900.0f;
+        p.channels[0].dynamicEqAttack = 0.0f;
+        p.channels[0].dynamicEqQ = -4.0f;
+
+        clampProjectToValidRanges(p);
+
+        check(std::isfinite(p.channels[0].tiltEqAmount),
+              "a NaN tilt is replaced - a biquad is recursive, so one NaN in "
+              "its state means every sample after it is NaN and the channel "
+              "is silent for the rest of the session");
+        check(p.channels[0].tiltEqCentre <= 8000.0f, "an absurd centre is clamped");
+        check(std::isfinite(p.channels[0].graphicEqGains[3]) &&
+              std::fabs(p.channels[0].graphicEqGains[7]) <= 18.0f,
+              "and so are the graphic bands");
+        check(p.channels[0].dynamicEqAttack > 0.0f,
+              "a zero attack cannot divide by itself in the envelope");
+        check(p.channels[0].dynamicEqQ > 0.0f, "and a negative Q is repaired");
+    }
+}
+
+// ============================================================================
+// 89. Equalisers in a channel and on the master
+// ============================================================================
+static void testEqualisersInChannel() {
+    beginTest("Equalisers in a channel");
+
+    {
+        const ChannelConfig fresh;
+        check(!fresh.tiltEqEnabled && !fresh.graphicEqEnabled &&
+              !fresh.dynamicEqEnabled,
+              "every new equaliser is off on a new channel");
+    }
+
+    // ---- The rack knows about them ---------------------------------------------
+    {
+        check(EFFECT_TYPE_COUNT == CLASSIC_EFFECT_COUNT,
+              "the classic order still lists every effect exactly once");
+
+        auto chainPtr = std::make_unique<EffectsChain>();
+        bool allResolve = true;
+        for (int i = 0; i < EFFECT_TYPE_COUNT; ++i) {
+            if (chainPtr->effectFor(static_cast<EffectType>(i)) == nullptr) {
+                allResolve = false;
+                break;
+            }
+        }
+        check(allResolve, "and every type still resolves to an adapter");
+
+        EffectType parsed;
+        check(effectTypeFromId("tilteq", parsed) && parsed == EffectType::TiltEq,
+              "tilt has a stable token");
+        check(effectTypeFromId("graphiceq", parsed) && parsed == EffectType::GraphicEq,
+              "graphic has one");
+        check(effectTypeFromId("dynamiceq", parsed) && parsed == EffectType::DynamicEq,
+              "and so does dynamic");
+    }
+
+    // ---- Switching one on changes the audio -------------------------------------
+    {
+        auto render = [](bool tilt) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+            p.channels[0].tiltEqEnabled = tilt;
+            p.channels[0].tiltEqAmount = tilt ? -9.0f : 0.0f;
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 60;
+            note.startTime = 0.0f;
+            note.duration = 4.0f;
+            note.oscillatorType = OscillatorType::Sawtooth;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512);
+            std::vector<float> collected;
+            for (int b = 0; b < 40; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                if (b >= 8) collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> flat = render(false);
+        const std::vector<float> tilted = render(true);
+
+        double difference = 0.0;
+        const size_t n = std::min(flat.size(), tilted.size());
+        for (size_t i = 0; i < n; ++i) {
+            difference += std::fabs(double(flat[i]) - double(tilted[i]));
+        }
+        check(n > 0 && difference / double(n) > 1e-3,
+              "switching the tilt EQ on changes what comes out");
+
+        bool finite = true;
+        for (float v : tilted) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and the result is finite");
+    }
+
+    // ---- Mid-side on the master --------------------------------------------------
+    {
+        auto masterPtr = std::make_unique<MasterEffects>();
+        masterPtr->setSampleRate(44100.0f);
+        check(!masterPtr->midSideEnabled,
+              "mid-side is off on a fresh master bus");
+
+        // Off, it must be an exact passthrough for the mid-side stage.
+        masterPtr->eqEnabled = false;
+        masterPtr->compressorEnabled = false;
+        masterPtr->limiterEnabled = false;
+
+        float l = 0.4f, r = -0.2f;
+        masterPtr->process(l, r);
+        check(std::fabs(l - 0.4f) < 1e-5f && std::fabs(r + 0.2f) < 1e-5f,
+              "and with everything off the master bus passes audio through "
+              "untouched");
+    }
+
+    // ---- Settings survive a save and load -----------------------------------------
+    {
+        Project p;
+        p.channels[4].tiltEqEnabled = true;
+        p.channels[4].tiltEqAmount = -4.5f;
+        p.channels[4].tiltEqCentre = 900.0f;
+        p.channels[4].graphicEqEnabled = true;
+        p.channels[4].graphicEqGains[0] = 6.0f;
+        p.channels[4].graphicEqGains[5] = -7.5f;
+        p.channels[4].graphicEqGains[9] = 3.25f;
+        p.channels[4].dynamicEqEnabled = true;
+        p.channels[4].dynamicEqFrequency = 420.0f;
+        p.channels[4].dynamicEqThreshold = -18.5f;
+        p.channels[4].dynamicEqRange = -9.0f;
+        p.arrangement.push_back(Clip{0, 4, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("eq_suite.ctp");
+        check(saveProject(p, path), "an EQ project saves");
+
+        Project loaded;
+        check(loadProject(loaded, path), "and loads");
+
+        const ChannelConfig& c = loaded.channels[4];
+        check(c.tiltEqEnabled && std::fabs(c.tiltEqAmount + 4.5f) < 1e-3f &&
+              std::fabs(c.tiltEqCentre - 900.0f) < 1e-2f,
+              "the tilt survives");
+        check(c.graphicEqEnabled &&
+              std::fabs(c.graphicEqGains[0] - 6.0f) < 1e-3f &&
+              std::fabs(c.graphicEqGains[5] + 7.5f) < 1e-3f &&
+              std::fabs(c.graphicEqGains[9] - 3.25f) < 1e-3f,
+              "all ten graphic bands survive, on their own line - the field "
+              "tables key on a member pointer and cannot address an array");
+        check(c.dynamicEqEnabled &&
+              std::fabs(c.dynamicEqFrequency - 420.0f) < 1e-2f &&
+              std::fabs(c.dynamicEqThreshold + 18.5f) < 1e-3f,
+              "and the dynamic band survives");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- A flat graphic EQ writes nothing --------------------------------------------
+    {
+        Project plain;
+        const std::string path = testPath("eq_absent.ctp");
+        check(saveProject(plain, path), "a project with flat EQ saves");
+
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        check(ss.str().find("GRAPHICEQ") == std::string::npos,
+              "and writes no GRAPHICEQ line - ten numbers per channel for an "
+              "effect nobody touched");
+        std::remove(path.c_str());
+    }
+}
+
 // ============================================================================
 // Headless ImGui harness
 // ============================================================================
@@ -15657,6 +16134,8 @@ int main(int argc, char** argv) {
     testEffectSettingsPersist();
     testConvolution();
     testConvolutionInChannel();
+    testEqualisers();
+    testEqualisersInChannel();
     testPanelsDrawHeadless();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();

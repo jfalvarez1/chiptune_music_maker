@@ -11,6 +11,7 @@
 #include "PitchShift.h"
 #include "Reverbs.h"
 #include "Convolution.h"
+#include "EqualizerSuite.h"
 #include <cmath>
 #include <cstring>
 #include <array>
@@ -1212,6 +1213,13 @@ enum class EffectType : uint8_t {
     // migrates onto.
     Convolution,
 
+    // Equalisers (Task G4). Mid-side is not here: it needs stereo, and the
+    // channel chain is mono until the pan - it lives on the master bus,
+    // which is where a mid-side EQ belongs anyway.
+    TiltEq,
+    GraphicEq,
+    DynamicEq,
+
     Count
 };
 
@@ -1239,6 +1247,9 @@ inline const char* effectTypeId(EffectType type) {
         case EffectType::FormantShift:   return "formantshift";
         case EffectType::AutoTune:       return "autotune";
         case EffectType::Convolution:    return "convolution";
+        case EffectType::TiltEq:         return "tilteq";
+        case EffectType::GraphicEq:      return "graphiceq";
+        case EffectType::DynamicEq:      return "dynamiceq";
         default:                         return "?";
     }
 }
@@ -1263,6 +1274,9 @@ inline const char* effectDisplayName(EffectType type) {
         case EffectType::FormantShift:   return "Formant Shift";
         case EffectType::AutoTune:       return "Auto-Tune";
         case EffectType::Convolution:    return "Convolution Reverb";
+        case EffectType::TiltEq:         return "Tilt EQ";
+        case EffectType::GraphicEq:      return "Graphic EQ";
+        case EffectType::DynamicEq:      return "Dynamic EQ";
         default:                         return "Unknown";
     }
 }
@@ -1475,6 +1489,48 @@ public:
     }
 };
 
+class TiltEqFx final : public IEffect {
+public:
+    TiltEQ* target = nullptr;
+    const char* typeId() const override { return "tilteq"; }
+    float process(float input, float time) override {
+        (void)time;
+        return target ? target->process(input) : input;
+    }
+    void setSampleRate(float sampleRate) override {
+        if (target) target->configure(sampleRate);
+    }
+    void reset() override { if (target) target->reset(); }
+};
+
+class GraphicEqFx final : public IEffect {
+public:
+    GraphicEQ* target = nullptr;
+    const char* typeId() const override { return "graphiceq"; }
+    float process(float input, float time) override {
+        (void)time;
+        return target ? target->process(input) : input;
+    }
+    void setSampleRate(float sampleRate) override {
+        if (target) target->configure(sampleRate);
+    }
+    void reset() override { if (target) target->reset(); }
+};
+
+class DynamicEqFx final : public IEffect {
+public:
+    DynamicEQ* target = nullptr;
+    const char* typeId() const override { return "dynamiceq"; }
+    float process(float input, float time) override {
+        (void)time;
+        return target ? target->process(input) : input;
+    }
+    void setSampleRate(float sampleRate) override {
+        if (target) target->configure(sampleRate);
+    }
+    void reset() override { if (target) target->reset(); }
+};
+
 class ChorusFx final : public IEffect {
 public:
     Chorus* target = nullptr;
@@ -1512,6 +1568,9 @@ inline constexpr EffectType CLASSIC_EFFECT_ORDER[] = {
     EffectType::FormantShift,
     EffectType::AutoTune,
     EffectType::Convolution,
+    EffectType::TiltEq,
+    EffectType::GraphicEq,
+    EffectType::DynamicEq,
 };
 inline constexpr int CLASSIC_EFFECT_COUNT =
     static_cast<int>(sizeof(CLASSIC_EFFECT_ORDER) / sizeof(CLASSIC_EFFECT_ORDER[0]));
@@ -1551,6 +1610,10 @@ struct EffectsChain {
     // Holds no buffers until an impulse response is attached.
     ConvolutionEngine convolution;
 
+    TiltEQ tiltEq;
+    GraphicEQ graphicEq;
+    DynamicEQ dynamicEq;
+
     // Which response is currently attached, so a sync can tell whether
     // prepare() - which reallocates the whole delay line - is actually
     // needed. Without this every UI interaction would reallocate.
@@ -1581,6 +1644,9 @@ struct EffectsChain {
     bool autoTuneEnabled = false;
     bool convolutionEnabled = false;
     float convolutionMix = 0.35f;
+    bool tiltEqEnabled = false;
+    bool graphicEqEnabled = false;
+    bool dynamicEqEnabled = false;
 
     int sidechainSource = -1;  // Source channel index (-1 = none)
 
@@ -1685,6 +1751,9 @@ struct EffectsChain {
             case EffectType::FormantShift:   return &formantShiftFx;
             case EffectType::AutoTune:       return &autoTuneFx;
             case EffectType::Convolution:    return &convolutionFx;
+            case EffectType::TiltEq:         return &tiltEqFx;
+            case EffectType::GraphicEq:      return &graphicEqFx;
+            case EffectType::DynamicEq:      return &dynamicEqFx;
             // A type with no arm here is silently skipped by the rack, with
             // no error anywhere - the effect simply never runs. That is
             // exactly what happened when these three were added, so there is
@@ -1713,6 +1782,9 @@ struct EffectsChain {
             case EffectType::FormantShift:   return formantShiftEnabled;
             case EffectType::AutoTune:       return autoTuneEnabled;
             case EffectType::Convolution:    return convolutionEnabled;
+            case EffectType::TiltEq:         return tiltEqEnabled;
+            case EffectType::GraphicEq:      return graphicEqEnabled;
+            case EffectType::DynamicEq:      return dynamicEqEnabled;
             default:                         return false;
         }
     }
@@ -1737,6 +1809,9 @@ struct EffectsChain {
             case EffectType::FormantShift:   formantShiftEnabled = on; break;
             case EffectType::AutoTune:       autoTuneEnabled = on; break;
             case EffectType::Convolution:    convolutionEnabled = on; break;
+            case EffectType::TiltEq:         tiltEqEnabled = on; break;
+            case EffectType::GraphicEq:      graphicEqEnabled = on; break;
+            case EffectType::DynamicEq:      dynamicEqEnabled = on; break;
             default: break;
         }
     }
@@ -1786,6 +1861,10 @@ struct EffectsChain {
         // configure() is the only place they do, so it has to be reached -
         // an unconfigured vocoder passes its input straight through, which
         // looks exactly like the effect being switched off.
+        tiltEq.configure(sr);
+        graphicEq.configure(sr);
+        dynamicEq.configure(sr);
+
         pitchShifter.configure(sr);
         formantShifter.configure(sr);
         autoTune.configure(sr);
@@ -1852,6 +1931,7 @@ private:
     FlangerFx flangerFx; ChorusFx chorusFx; DelayFx delayFx; ReverbFx reverbFx;
     PitchShiftFx pitchShiftFx; FormantShiftFx formantShiftFx;
     AutoTuneFx autoTuneFx; ConvolutionFx convolutionFx;
+    TiltEqFx tiltEqFx; GraphicEqFx graphicEqFx; DynamicEqFx dynamicEqFx;
 
     void bindAdapters() {
         eqFx.target = &eq;
@@ -1873,6 +1953,9 @@ private:
         autoTuneFx.target = &autoTune;
         convolutionFx.target = &convolution;
         convolutionFx.mix = &convolutionMix;
+        tiltEqFx.target = &tiltEq;
+        graphicEqFx.target = &graphicEq;
+        dynamicEqFx.target = &dynamicEq;
     }
 
     void copyFrom(const EffectsChain& other) {
@@ -1905,6 +1988,10 @@ private:
         // line belong to the chain they were prepared for.
         convolutionEnabled = other.convolutionEnabled;
         convolutionMix = other.convolutionMix;
+
+        tiltEqEnabled = other.tiltEqEnabled;
+        graphicEqEnabled = other.graphicEqEnabled;
+        dynamicEqEnabled = other.dynamicEqEnabled;
 
         bitcrusherEnabled = other.bitcrusherEnabled;
         distortionEnabled = other.distortionEnabled;
