@@ -760,6 +760,7 @@
             <li><a href="#chiptune-guide" data-section="Chiptune Guide"></a></li>
             <li><a href="#tools" data-section="Tools Panel"></a></li>
             <li><a href="#production-fundamentals" data-section="Production Guide"></a></li>
+            <li><a href="#whats-new" data-section="New Since v2.7"></a></li>
         </ul>
     </nav>
 
@@ -792,6 +793,7 @@
                 <a href="#chiptune-guide"><span class="toc-number">17</span> Chiptune Guide</a>
                 <a href="#tools"><span class="toc-number">18</span> Tools Panel</a>
                 <a href="#production-fundamentals"><span class="toc-number">19</span> Production Fundamentals</a>
+                <a href="#whats-new"><span class="toc-number">20</span> New Since v2.7</a>
             </div>
         </div>
 
@@ -4461,11 +4463,146 @@ Phrase 2 (Answer):   G - E - D - C  (returns to the root - "resolved")</code></p
             </div>
         </section>
 
+
+        <!-- What's new: everything since the guide was last extended -->
+        <section id="whats-new">
+            <h2>New Since v2.7 - Engines, Audio, Comping and Plugins</h2>
+
+            <p>
+                The guide above predates a good deal of what the program can
+                now do. This section covers the rest, in the order you are
+                likely to meet it.
+            </p>
+
+            <h3>Instrument Engines</h3>
+            <p>
+                Five engines sit at the end of the instrument list, in the
+                Sound Palette's <strong>Engines</strong> row:
+            </p>
+            <ul>
+                <li><strong>FM</strong> - six operators, with algorithms and
+                    feedback. This is phase modulation, the same thing a DX7
+                    does, which is why it can be bright and metallic in a way
+                    an oscillator cannot.</li>
+                <li><strong>Wavetable</strong> - a bank of waveforms with a
+                    morph position you can sweep or modulate. Band-limited at
+                    seven levels, so a sweep does not alias as it rises.</li>
+                <li><strong>Sampler</strong> - multisample zones with key and
+                    velocity ranges.</li>
+                <li><strong>Granular</strong> - grains of a sample, with
+                    position, size, density and jitter. Freeze a sound and
+                    move through it.</li>
+                <li><strong>Drum Model</strong> - a modelled analogue drum
+                    rather than a recorded one, so pitch, decay and snap are
+                    all continuous.</li>
+            </ul>
+            <p>
+                Each engine's controls appear in the Channel Editor only when
+                the channel is on that engine. A modulation matrix routes any
+                source - LFOs, envelopes, velocity, macros - to any
+                destination, which is what makes these worth having: a
+                wavetable whose morph never moves is just a sampled waveform.
+            </p>
+
+            <h3>Audio on the Timeline</h3>
+            <p>
+                Recorded or imported audio sits on a channel and runs through
+                that channel's volume, pan, effects and sends exactly like a
+                played part. A clip whose file has moved keeps its place and
+                its edits and tells you so, rather than vanishing.
+            </p>
+
+            <h3>Take Lanes and Comping</h3>
+            <p>
+                Record a part several times, then build the keeper out of the
+                best moments of each. Open <strong>Take Lanes</strong>, press
+                Record Take, and leave <strong>Stack loops</strong> on: every
+                pass around the loop becomes its own lane.
+            </p>
+            <p>
+                Drag across a lane to choose that take for the stretch you
+                dragged. The strip along the top shows what actually plays.
+                Turn on <strong>Punch</strong> to record only inside a range,
+                so one bad phrase can be repaired without risking the rest of
+                a good take.
+            </p>
+            <p>
+                What you comp becomes ordinary audio clips on the
+                arrangement - so you can trim, fade and move the result
+                afterwards like anything else, and you can see exactly what
+                your swipe produced.
+            </p>
+
+            <h3>Voice to Notes</h3>
+            <p>
+                Sing a line or beatbox a groove and get notes, either live as
+                you make them or from a recorded take. Pitch detection and
+                onset detection run off the audio thread, so it does not
+                interfere with playback.
+            </p>
+
+            <h3>Pitch and Time</h3>
+            <p>
+                A phase vocoder: pitch shift, formant shift and autotune.
+                Formant shifting moves the resonances <em>without</em> moving
+                the notes, which is the difference between transposing a
+                voice and turning it into a chipmunk.
+            </p>
+
+            <h3>Reverbs, Convolution and EQ</h3>
+            <p>
+                The reverb slot now offers six algorithms - room, hall,
+                plate, spring, shimmer and a feedback delay network - chosen
+                on the one slot rather than adding five more. Convolution
+                reverb plays a real impulse response, and there is a library
+                of them.
+            </p>
+            <p>
+                Four equalisers join the three-band: tilt, a ten-band
+                graphic, mid-side on the master bus, and a dynamic EQ that
+                only moves when the band gets loud.
+            </p>
+
+            <h3>Finding Things</h3>
+            <p>
+                <strong>Ctrl+P</strong> opens the command palette: type any
+                command by name and press Enter. <strong>Ctrl+/</strong>
+                lists every keyboard shortcut, and any of them can be
+                rebound. <strong>Ctrl+B</strong> opens the Browser - the
+                samples in your project, every instrument and engine, the
+                shipped presets, and the audio files on disk. Drag any of it
+                onto a channel or onto the timeline.
+            </p>
+
+            <h3>Project Check</h3>
+            <p>
+                Finds settings that are switched on and doing nothing, or
+                quietly cancelling something else: a send into a muted bus, an
+                effect with its mix at zero, a soloed channel that is the
+                reason nothing else is audible. It reports and never changes
+                anything.
+            </p>
+
+            <h3>Plugins</h3>
+            <p>
+                The Plugins panel holds a rack of hosted VST and CLAP plugins
+                per channel, and scans for what is installed.
+            </p>
+            <p>
+                <strong>This build cannot load plugins yet</strong> - none of
+                the plugin SDKs ships with it. Everything around that does
+                work, and it matters for one reason: a project made somewhere
+                plugins <em>do</em> load keeps every plugin, its parameters
+                and its state when opened here, and gives them back intact.
+                Moving a project between machines loses nothing.
+            </p>
+        </section>
+
         <footer>
-            <p>CHIPTUNE TRACKER v2.9.0</p>
+            <p>CHIPTUNE TRACKER v3.9.0 &mdash; "Comp"</p>
             <p>Built with C++20, ImGui, OpenGL, and miniaudio</p>
-            <p>7 Oscillators | 18 Synths | 45 Chord Presets | 26 Drums | 8 Themes | 7 Sample Track Genres</p>
-            <p>9 Production Tools | Scale Lock | Arpeggiator | Pattern Generator | Velocity Curve | Humanize</p>
+            <p>69 Instruments | 5 Engines | 45 Chord Presets | 26 Drums | 10 Themes | 7 Sample Track Genres</p>
+            <p>9 Production Tools | Voice to Notes | Take Lanes | Audio Clips | Command Palette | Browser</p>
             <p style="color: var(--neon-pink); margin-top: 20px;">[ SYSTEM ONLINE - MAKE SOME NOISE ]</p>
         </footer>
     </div>
