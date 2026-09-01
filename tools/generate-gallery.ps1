@@ -80,6 +80,11 @@ $shots = @(
     @{ name = "song-structure";  args = "--demo --theme cyberpunk --view arrangement --structure --loop 8 24" }
     @{ name = "take-lanes";      args = "--demo --theme stock --comp --focus `"Take Lanes`"" }
 
+    # Finding things: the browser, and the palette that makes every command
+    # reachable by name rather than by a key you had to be told about.
+    @{ name = "browser";         args = "--demo --theme stock --show browser --focus `"Browser`"" }
+    @{ name = "command-palette"; args = "--demo --theme stock --show palette" }
+
     # Voice to notes, and the check panel with real findings in it.
     @{ name = "voice-to-notes";  args = "--demo --theme stock --focus `"Voice to Notes`"" }
     @{ name = "project-check";   args = "--demo --theme stock --conflicts --focus `"Project Check`"" }

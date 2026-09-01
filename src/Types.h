@@ -1712,6 +1712,21 @@ struct UIState {
     bool showAutomation = false;
     bool showWavetableEditor = false;
 
+    // The browser and the shortcut list. Both start closed: they are places
+    // you go looking for something, not things that should be in the way of
+    // somebody who already knows what they are doing.
+    bool showBrowser = false;
+    bool showShortcuts = false;
+
+    /*
+     * Where per-user settings live - key bindings among them.
+     *
+     * Held here rather than found again at each call site because the
+     * screenshot and test runs point it at a scratch directory, and a
+     * rebind during a test must not write into the real one.
+     */
+    std::string settingsDirectory;
+
     // Workspace layout (see Layout.h). pendingLayoutFrames counts down; the
     // layout has to be applied after the windows exist, and for two frames
     // so size changes settle before anything is drawn at the new size.

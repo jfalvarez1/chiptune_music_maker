@@ -18,6 +18,7 @@
 #include "InstrumentPresets.h"
 #include "SettingsAudit.h"
 #include "TakeLanes.h"
+#include "Browser.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -5504,6 +5505,1005 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
     ImGui::End();
 }
 
+
+/*
+ * Every oscillator type's short name, in enum order.
+ *
+ * File scope rather than local to the Sound Palette because the Browser
+ * lists the same instruments: a second copy of this table would have
+ * drifted the first time an engine was added to one and not the other.
+ *
+ * It stays a C array so the two static_asserts below it keep working. They
+ * are the reason inserting FMSynth mid-enum lasted one compile instead of
+ * reaching a user as every instrument past Custom playing the wrong sound.
+ */
+inline constexpr const char* OSC_NAMES[] = {
+        // Oscillators (7)
+        "Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Supersaw", "Custom",
+        // Synths (10)
+        "Lead", "Pad", "Bass", "Pluck", "Arp", "Organ", "Strings", "Brass", "Chip", "Bell",
+        // Synthwave (6)
+        "SW Lead", "SW Bass", "SW Pad", "SW Arp", "SW Chord", "SW FM",
+        // Techno (5)
+        "Acid", "Stab", "Hoover", "Rave", "Reese",
+        // Hip Hop (4)
+        "Sub808", "LoFi", "Vinyl", "Trap",
+        // Additional (3)
+        "Gated", "Poly", "Sync",
+        // Drums (21) - indices 35-55
+        "Kick", "Kick808", "KickHard", "KickSoft",
+        "Snare", "Snare808", "SnareRim", "Clap",
+        "HiHat", "HiHatOpen", "HiHatPedal",
+        "Tom", "TomLow", "TomHigh",
+        "Crash", "Ride",
+        "Cowbell", "Clave", "Conga", "Maracas", "Tambourine",
+        // Reggaeton Instruments (7) - indices 56-62
+        "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow808", "DembowSnare",
+        // High-Accuracy Recreations (2) - indices 63-64
+        "Vocoder", "Kavinsky Bass",
+        // Six-operator FM - index 65
+        "FM",
+        // Multisample - index 66
+        "Sampler",
+        // Granular and the analogue drum model - indices 67-68
+        "Granular", "Drum Model"
+};
+
+inline constexpr int OSC_NAME_COUNT =
+    static_cast<int>(sizeof(OSC_NAMES) / sizeof(OSC_NAMES[0]));
+
+static_assert(static_cast<int>(OscillatorType::DrumModel) + 1 == OSC_NAME_COUNT,
+              "the last OscillatorType must be the last OSC_NAMES entry");
+
+inline const char* oscillatorTypeName(OscillatorType type) {
+    const int index = static_cast<int>(type);
+    if (index < 0 || index >= OSC_NAME_COUNT) return "?";
+    return OSC_NAMES[index];
+}
+
+// ============================================================================
+// Commands
+//
+// Every global command in one table. What used to be a shortcut buried in
+// the frame loop is now a row with a name, so it can be searched for, shown
+// in a list, and rebound.
+// ============================================================================
+
+static ActionRegistry g_Actions;
+
+inline ActionRegistry& actionRegistry() { return g_Actions; }
+
+struct CommandPaletteState {
+    bool open = false;
+    bool justOpened = false;
+    char query[128] = {};
+    int selected = 0;
+
+    // What ran last, so the palette can confirm it. A command that succeeds
+    // silently and closes the window looks identical to one that did
+    // nothing at all.
+    std::string lastRan;
+};
+
+static CommandPaletteState g_Palette;
+
+inline CommandPaletteState& commandPaletteState() { return g_Palette; }
+
+inline void OpenCommandPalette() {
+    g_Palette.open = true;
+    g_Palette.justOpened = true;
+    g_Palette.query[0] = '\0';
+    g_Palette.selected = 0;
+}
+
+/*
+ * Build the table.
+ *
+ * Idempotent - add() replaces by id - so calling it twice cannot produce
+ * duplicate rows, which matters because a test builds its own registry.
+ *
+ * The defaults deliberately match the keys the program already answered to,
+ * so nobody's fingers have to change. Two of them were previously promised
+ * and not implemented: the Save button's tooltip has always said Ctrl+S,
+ * and nothing anywhere handled it.
+ */
+inline void registerDefaultActions(ActionRegistry& registry) {
+    auto key = [](ImGuiKey k, bool ctrl = false, bool shift = false,
+                  bool alt = false) {
+        Shortcut shortcut;
+        shortcut.key = k;
+        shortcut.ctrl = ctrl;
+        shortcut.shift = shift;
+        shortcut.alt = alt;
+        return shortcut;
+    };
+
+    auto add = [&](const char* id, const char* label, const char* category,
+                   const char* hint, Shortcut shortcut,
+                   std::function<void(ActionContext&)> run,
+                   bool opensDialog = false) {
+        Action action;
+        action.id = id;
+        action.label = label;
+        action.category = category;
+        action.hint = hint;
+        action.defaultShortcut = shortcut;
+        action.opensDialog = opensDialog;
+        action.run = std::move(run);
+        registry.add(std::move(action));
+    };
+
+    // ---- Transport ----------------------------------------------------------
+    add("transport.playpause", "Play / Pause", "Transport",
+        "Start or pause playback", key(ImGuiKey_Space),
+        [](ActionContext& c) {
+            if (c.seq->isPlaying()) c.seq->pause();
+            else c.seq->play();
+        });
+
+    add("transport.stop", "Stop", "Transport",
+        "Stop and return to the start", key(ImGuiKey_Escape, false, true),
+        [](ActionContext& c) { c.seq->stop(); });
+
+    add("transport.rewind", "Rewind to Start", "Transport",
+        "Move the playhead to the beginning", key(ImGuiKey_Home),
+        [](ActionContext& c) { c.seq->setPosition(0.0f); });
+
+    // ---- File ---------------------------------------------------------------
+    add("file.new", "New Project", "File",
+        "Start again from an empty project", key(ImGuiKey_N, true),
+        [](ActionContext& c) {
+            *c.project = Project();
+            c.ui->selectedPattern = 0;
+            c.ui->selectedNoteIndex = -1;
+            c.ui->selectedNoteIndices.clear();
+            c.ui->projectFilePath.clear();
+            g_UndoHistory.clear();
+            c.seq->updateChannelConfigs();
+        });
+
+    add("file.save", "Save Project", "File",
+        "Save, asking for a name the first time", key(ImGuiKey_S, true),
+        [](ActionContext& c) {
+            std::string path = c.ui->projectFilePath;
+            if (path.empty()) {
+                path = saveFileDialog("Chiptune Projects (*.ctp)\0*.ctp\0", "ctp");
+                if (path.empty()) return;
+                c.ui->projectFilePath = path;
+            }
+            saveProject(*c.project, path);
+        },
+        /*opensDialog=*/true);
+
+    add("file.saveas", "Save Project As...", "File",
+        "Save under a new name", key(ImGuiKey_S, true, true),
+        [](ActionContext& c) {
+            const std::string path =
+                saveFileDialog("Chiptune Projects (*.ctp)\0*.ctp\0", "ctp");
+            if (path.empty()) return;
+            c.ui->projectFilePath = path;
+            saveProject(*c.project, path);
+        },
+        /*opensDialog=*/true);
+
+    add("file.open", "Open Project...", "File",
+        "Load a .ctp project", key(ImGuiKey_O, true),
+        [](ActionContext& c) {
+            const std::string path = openFileDialog(
+                "Chiptune Projects (*.ctp)\0*.ctp\0All Files (*.*)\0*.*\0", "ctp");
+            if (path.empty()) return;
+            if (!loadProject(*c.project, path)) return;
+            c.ui->projectFilePath = path;
+            c.ui->selectedPattern = 0;
+            c.ui->selectedNoteIndex = -1;
+            c.ui->selectedNoteIndices.clear();
+            g_UndoHistory.clear();
+            c.seq->updateChannelConfigs();
+        },
+        /*opensDialog=*/true);
+
+    // ---- Edit ---------------------------------------------------------------
+    add("edit.undo", "Undo", "Edit", "Step back through your changes",
+        key(ImGuiKey_Z, true), [](ActionContext&) { RequestUndo(); });
+
+    add("edit.redo", "Redo", "Edit", "Step forward again",
+        key(ImGuiKey_Y, true), [](ActionContext&) { RequestRedo(); });
+
+    // ---- Views --------------------------------------------------------------
+    struct ViewEntry { const char* id; const char* label; ViewMode mode; ImGuiKey key; };
+    static const ViewEntry VIEWS[] = {
+        {"view.pianoroll",   "Piano Roll",     ViewMode::PianoRoll,    ImGuiKey_F1},
+        {"view.tracker",     "Tracker",        ViewMode::Tracker,      ImGuiKey_F2},
+        {"view.arrangement", "Arrangement",    ViewMode::Arrangement,  ImGuiKey_F3},
+        {"view.mixer",       "Mixer",          ViewMode::Mixer,        ImGuiKey_F5},
+        {"view.pad",         "Pad Controller", ViewMode::PadController, ImGuiKey_F6},
+    };
+    for (const ViewEntry& entry : VIEWS) {
+        const ViewMode mode = entry.mode;
+        add(entry.id, entry.label, "View", "Switch the main view",
+            key(entry.key), [mode](ActionContext& c) { c.ui->currentView = mode; });
+    }
+
+    // ---- Panels --------------------------------------------------------------
+    struct PanelEntry { const char* id; const char* label; bool UIState::* flag; ImGuiKey key; };
+    static const PanelEntry PANELS[] = {
+        {"panel.macros",    "Macro Editor",      &UIState::showMacroEditor,      ImGuiKey_F4},
+        {"panel.spectrum",  "Spectrum Analyzer", &UIState::showSpectrumAnalyzer, ImGuiKey_F7},
+        {"panel.midi",      "MIDI Input",        &UIState::showMIDIInput,        ImGuiKey_F8},
+        {"panel.automation","Automation",        &UIState::showAutomation,       ImGuiKey_F9},
+        {"panel.wavetable", "Wavetable Editor",  &UIState::showWavetableEditor,  ImGuiKey_F10},
+    };
+    for (const PanelEntry& entry : PANELS) {
+        bool UIState::* flag = entry.flag;
+        add(entry.id, (std::string("Toggle ") + entry.label).c_str(), "Panels",
+            "Show or hide the panel", key(entry.key),
+            [flag](ActionContext& c) { c.ui->*flag = !(c.ui->*flag); });
+    }
+
+    // ---- Editing modes --------------------------------------------------------
+    struct ModeEntry { const char* id; const char* label; PianoRollMode mode; };
+    static const ModeEntry MODES[] = {
+        {"mode.draw",   "Draw Mode",   PianoRollMode::Draw},
+        {"mode.select", "Select Mode", PianoRollMode::Select},
+        {"mode.erase",  "Erase Mode",  PianoRollMode::Erase},
+    };
+    for (const ModeEntry& entry : MODES) {
+        const PianoRollMode mode = entry.mode;
+        // No default key: D, S and E are already handled by the piano roll
+        // itself, where they are only live when it has focus. Binding them
+        // globally as well would fire both.
+        add(entry.id, entry.label, "Edit", "Change what clicking does",
+            Shortcut(), [mode](ActionContext& c) { c.ui->pianoRollMode = mode; });
+    }
+
+    // ---- Channels ---------------------------------------------------------------
+    add("channel.next", "Next Channel", "Channel", "Select the next channel",
+        Shortcut(), [](ActionContext& c) {
+            const int count = std::max(1, c.project->activeChannelCount());
+            c.ui->selectedChannel = (c.ui->selectedChannel + 1) % count;
+        });
+
+    add("channel.previous", "Previous Channel", "Channel",
+        "Select the previous channel", Shortcut(), [](ActionContext& c) {
+            const int count = std::max(1, c.project->activeChannelCount());
+            c.ui->selectedChannel = (c.ui->selectedChannel + count - 1) % count;
+        });
+
+    add("channel.mute", "Mute Selected Channel", "Channel",
+        "Toggle mute on the selected channel", Shortcut(),
+        [](ActionContext& c) {
+            const int ch = std::clamp(c.ui->selectedChannel, 0,
+                                      Project::MAX_CHANNELS - 1);
+            ChannelConfig& channel = c.project->channels[size_t(ch)];
+            channel.muted = !channel.muted;
+            c.seq->updateChannelConfigs();
+        });
+
+    add("channel.solo", "Solo Selected Channel", "Channel",
+        "Toggle solo on the selected channel", Shortcut(),
+        [](ActionContext& c) {
+            const int ch = std::clamp(c.ui->selectedChannel, 0,
+                                      Project::MAX_CHANNELS - 1);
+            ChannelConfig& channel = c.project->channels[size_t(ch)];
+            channel.solo = !channel.solo;
+            c.seq->updateChannelConfigs();
+        });
+
+    // ---- Workspace ----------------------------------------------------------------
+    add("layout.reset", "Reset Window Layout", "Workspace",
+        "Put every panel back where it started", key(ImGuiKey_0, true),
+        [](ActionContext& c) { c.ui->pendingLayoutFrames = 2; });
+
+    add("view.ghosts", "Toggle Ghost Notes", "View",
+        "Show the other channels' notes behind this one", Shortcut(),
+        [](ActionContext& c) { c.ui->showGhostNotes = !c.ui->showGhostNotes; });
+
+    // ---- Help -----------------------------------------------------------------------
+    add("help.palette", "Command Palette", "Help",
+        "Search every command by name", key(ImGuiKey_P, true),
+        [](ActionContext&) { OpenCommandPalette(); });
+
+    add("help.shortcuts", "Keyboard Shortcuts", "Help",
+        "See and change every key", key(ImGuiKey_Slash, true),
+        [](ActionContext& c) { c.ui->showShortcuts = !c.ui->showShortcuts; });
+
+    add("help.browser", "Browser", "Help",
+        "Samples, instruments, presets and files", key(ImGuiKey_B, true),
+        [](ActionContext& c) { c.ui->showBrowser = !c.ui->showBrowser; });
+}
+
+/*
+ * Run whatever key was pressed.
+ *
+ * Called once per frame from the main loop. Returns true if a command ran,
+ * so the caller knows the key was spoken for.
+ */
+inline bool DispatchActions(Project& project, UIState& ui, Sequencer& seq) {
+    ActionContext context;
+    context.project = &project;
+    context.ui = &ui;
+    context.seq = &seq;
+    return g_Actions.dispatch(context) >= 0;
+}
+
+// ============================================================================
+// The command palette
+// ============================================================================
+inline void DrawCommandPalette(Project& project, UIState& ui, Sequencer& seq) {
+    CommandPaletteState& state = g_Palette;
+    if (!state.open) return;
+
+    ActionContext context;
+    context.project = &project;
+    context.ui = &ui;
+    context.seq = &seq;
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 centre(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                        viewport->WorkPos.y + viewport->WorkSize.y * 0.28f);
+    ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(540, 0), ImGuiCond_Always);
+
+    if (!ImGui::Begin("Command Palette", &state.open,
+                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
+                      ImGuiWindowFlags_NoSavedSettings |
+                      ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+
+    // The search box takes the keyboard the moment the palette opens, so
+    // the shortcut that opened it flows straight into typing.
+    if (state.justOpened) {
+        ImGui::SetKeyboardFocusHere();
+        state.justOpened = false;
+    }
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputTextWithHint("##palettequery", "Type a command...",
+                                 state.query, sizeof(state.query))) {
+        state.selected = 0;   // a new query invalidates the old highlight
+    }
+
+    const std::vector<ActionMatch> matches = g_Actions.search(state.query);
+
+    // Arrow keys move the highlight. Handled before the list is drawn so
+    // the scroll can follow in the same frame.
+    if (!matches.empty()) {
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) {
+            state.selected = (state.selected + 1) % int(matches.size());
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) {
+            state.selected = (state.selected + int(matches.size()) - 1) %
+                             int(matches.size());
+        }
+    }
+    state.selected = std::clamp(state.selected, 0,
+                                std::max(0, int(matches.size()) - 1));
+
+    bool runNow = ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                  ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+    int runIndex = matches.empty() ? -1 : state.selected;
+
+    ImGui::Separator();
+
+    if (matches.empty()) {
+        ImGui::TextDisabled("Nothing matches \"%s\"", state.query);
+    }
+
+    ImGui::BeginChild("##palettelist", ImVec2(0, 320), false);
+    for (size_t i = 0; i < matches.size(); ++i) {
+        const Action& action = g_Actions.all()[size_t(matches[i].index)];
+        const bool selected = (int(i) == state.selected);
+        const bool enabled = action.isEnabled(context);
+
+        ImGui::PushID(int(i));
+
+        if (!enabled) ImGui::BeginDisabled();
+        if (ImGui::Selectable("##row", selected,
+                              ImGuiSelectableFlags_AllowDoubleClick,
+                              ImVec2(0, 34))) {
+            state.selected = int(i);
+            runNow = true;
+            runIndex = int(i);
+        }
+        if (!enabled) ImGui::EndDisabled();
+
+        // The row is drawn over the selectable rather than inside it, so
+        // the label, the category and the key can each have their own
+        // colour without three separate widgets fighting for the click.
+        const ImVec2 rowMin = ImGui::GetItemRectMin();
+        const ImVec2 rowMax = ImGui::GetItemRectMax();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+
+        draw->AddText(ImVec2(rowMin.x + 8, rowMin.y + 4),
+                      ImGui::GetColorU32(enabled ? ImGuiCol_Text
+                                                 : ImGuiCol_TextDisabled),
+                      action.label.c_str());
+        draw->AddText(ImVec2(rowMin.x + 8, rowMin.y + 18),
+                      ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                      (action.category + "  -  " + action.hint).c_str());
+
+        const std::string keys = shortcutText(action.shortcut);
+        if (!keys.empty()) {
+            const float width = ImGui::CalcTextSize(keys.c_str()).x;
+            draw->AddText(ImVec2(rowMax.x - width - 10, rowMin.y + 10),
+                          ImGui::GetColorU32(ImGuiCol_TextDisabled), keys.c_str());
+        }
+
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Up/Down to choose, Enter to run, Escape to close");
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) state.open = false;
+
+    // Run last, and outside the list: an action that changes the registry
+    // or the project must not do so while the loop above is walking it.
+    if (runNow && runIndex >= 0 && runIndex < int(matches.size())) {
+        const int index = matches[size_t(runIndex)].index;
+        Action& action = g_Actions.all()[size_t(index)];
+        if (action.run && action.isEnabled(context)) {
+            state.lastRan = action.label;
+            state.open = false;
+            auto run = action.run;
+            run(context);
+        }
+    }
+
+    ImGui::End();
+}
+
+// ============================================================================
+// Keyboard shortcuts, and changing them
+// ============================================================================
+inline void DrawShortcutsPanel(Project& project, UIState& ui, Sequencer& seq) {
+    (void)project; (void)seq;
+    if (!ui.showShortcuts) return;
+
+    ImGui::SetNextWindowSize(ImVec2(560, 620), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Keyboard Shortcuts", &ui.showShortcuts)) {
+        ImGui::End();
+        return;
+    }
+
+    // Which row is listening for a key. One at a time, by id rather than by
+    // index, so re-sorting or adding a command cannot move the capture onto
+    // a different row.
+    static std::string s_capturing;
+
+    ImGui::TextWrapped(
+        "Every command, and the key it answers to. Click a key to change it, "
+        "then press the combination you want. Escape cancels; Backspace "
+        "clears it.");
+
+    if (g_Actions.anyRebound()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset all")) {
+            g_Actions.resetAllToDefaults();
+            g_Actions.saveBindings(keybindingsPath(ui.settingsDirectory));
+        }
+    }
+
+    ImGui::Separator();
+
+    std::string currentCategory;
+    for (Action& action : g_Actions.all()) {
+        if (action.category != currentCategory) {
+            currentCategory = action.category;
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.6f, 0.75f, 1.0f, 1.0f), "%s",
+                               currentCategory.c_str());
+            ImGui::Separator();
+        }
+
+        ImGui::PushID(action.id.c_str());
+
+        ImGui::TextUnformatted(action.label.c_str());
+        if (ImGui::IsItemHovered() && !action.hint.empty()) {
+            ImGui::SetTooltip("%s", action.hint.c_str());
+        }
+
+        ImGui::SameLine(300.0f);
+
+        const bool capturing = (s_capturing == action.id);
+        const std::string keys = shortcutText(action.shortcut);
+        const char* buttonLabel =
+            capturing ? "Press a key..." : (keys.empty() ? "unbound" : keys.c_str());
+
+        if (capturing) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.5f, 0.1f, 1.0f));
+        }
+        if (ImGui::Button(buttonLabel, ImVec2(150, 0))) {
+            s_capturing = capturing ? std::string() : action.id;
+        }
+        if (capturing) ImGui::PopStyleColor();
+
+        if (capturing) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                s_capturing.clear();
+            } else if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
+                action.shortcut = Shortcut();
+                s_capturing.clear();
+                g_Actions.saveBindings(keybindingsPath(ui.settingsDirectory));
+            } else {
+                const Shortcut pressed = ActionRegistry::capturePressedShortcut();
+                if (pressed.valid()) {
+                    action.shortcut = pressed;
+                    s_capturing.clear();
+                    g_Actions.saveBindings(keybindingsPath(ui.settingsDirectory));
+                }
+            }
+        }
+
+        // A conflict is reported, not refused: two commands on one key is
+        // occasionally deliberate, and a modal complaint in a settings
+        // panel is worse than a line of text next to the row.
+        const int clash = g_Actions.conflict(action.shortcut, action.id);
+        if (clash >= 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "also %s",
+                               g_Actions.all()[size_t(clash)].label.c_str());
+        }
+
+        if (action.shortcut != action.defaultShortcut) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("reset")) {
+                action.shortcut = action.defaultShortcut;
+                g_Actions.saveBindings(keybindingsPath(ui.settingsDirectory));
+            }
+        }
+
+        ImGui::PopID();
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled(
+        "The piano roll's D/S/E, the tracker's cursor keys and the note-entry\n"
+        "keyboard are not listed: they mean different things depending on\n"
+        "which panel has focus, and are not global commands.");
+
+    ImGui::End();
+}
+
+
+// ============================================================================
+// The browser
+//
+// Samples, instruments, presets and files, in one place you can drag out of.
+// The model - scanning, filtering, what a drag carries - is in Browser.h;
+// this is the panel and what happens when something is dropped.
+// ============================================================================
+
+
+/*
+ * Which family an instrument belongs to, for the browser's second column.
+ *
+ * The boundaries are the same ones the Sound Palette draws its headers at.
+ * They are indices rather than a field on the enum because that is what the
+ * enum's order already encodes.
+ */
+inline const char* oscillatorCategoryName(OscillatorType type) {
+    const int index = static_cast<int>(type);
+    if (index <= 6)  return "Oscillator";
+    if (index <= 16) return "Synth";
+    if (index <= 22) return "Synthwave";
+    if (index <= 27) return "Techno";
+    if (index <= 31) return "Hip Hop";
+    if (index <= 34) return "Additional";
+    if (index <= 55) return "Drum";
+    if (index <= 62) return "Reggaeton";
+    if (index <= 64) return "Recreation";
+    return "Engine";
+}
+
+/*
+ * The shipped engine presets, flattened into one list.
+ *
+ * Each entry remembers which engine it belongs to, because applying one
+ * means writing into a different struct depending on the answer - and a
+ * preset applied to the wrong engine is silent, not loud.
+ */
+inline std::vector<BrowserEntry> collectPresetEntries() {
+    std::vector<BrowserEntry> entries;
+
+    auto append = [&](int engine, const char* engineName, const char* name,
+                      const char* description, int index) {
+        BrowserEntry entry;
+        entry.kind = BrowserEntryKind::Preset;
+        entry.name = name;
+        entry.detail = engineName;
+        entry.id = index;
+        entry.engine = engine;
+        (void)description;
+        entries.push_back(entry);
+    };
+
+    for (int i = 0; i < FM_PRESET_COUNT; ++i) {
+        append(static_cast<int>(OscillatorType::FMSynth), "FM",
+               FM_PRESETS[i].name,
+               FM_PRESETS[i].description, i);
+    }
+    for (int i = 0; i < DRUM_PRESET_COUNT; ++i) {
+        append(static_cast<int>(OscillatorType::DrumModel), "Drum Model",
+               DRUM_PRESETS[i].name,
+               DRUM_PRESETS[i].description, i);
+    }
+    for (int i = 0; i < GRANULAR_PRESET_COUNT; ++i) {
+        append(static_cast<int>(OscillatorType::Granular), "Granular",
+               GRANULAR_PRESETS[i].name,
+               GRANULAR_PRESETS[i].description, i);
+    }
+    return entries;
+}
+
+/*
+ * Put a preset on a channel, switching it to the engine the preset is for.
+ *
+ * Switching the engine is the point: choosing "Bell" from a list and
+ * hearing the channel's existing sawtooth would read as the preset having
+ * done nothing.
+ */
+inline bool applyPresetToChannel(Project& project, Sequencer& seq,
+                                 int channelIndex, int engine, int index) {
+    if (channelIndex < 0 || channelIndex >= Project::MAX_CHANNELS) return false;
+    ChannelConfig& channel = project.channels[static_cast<size_t>(channelIndex)];
+
+    const OscillatorType type = static_cast<OscillatorType>(engine);
+
+    if (type == OscillatorType::FMSynth) {
+        if (index < 0 || index >= FM_PRESET_COUNT) return false;
+        g_UndoHistory.saveState(project, "Apply Preset");
+        FM_PRESETS[index].apply(channel.oscillator.fm);
+    } else if (type == OscillatorType::DrumModel) {
+        if (index < 0 || index >= DRUM_PRESET_COUNT) return false;
+        g_UndoHistory.saveState(project, "Apply Preset");
+        DRUM_PRESETS[index].apply(channel.oscillator.drumModel);
+    } else if (type == OscillatorType::Granular) {
+        if (index < 0 || index >= GRANULAR_PRESET_COUNT) return false;
+        g_UndoHistory.saveState(project, "Apply Preset");
+        GRANULAR_PRESETS[index].apply(channel.oscillator.granular);
+    } else {
+        return false;
+    }
+
+    channel.oscillator.type = type;
+    seq.updateChannelConfigs();
+    return true;
+}
+
+static BrowserState g_Browser;
+
+inline BrowserState& browserState() { return g_Browser; }
+
+// What the project already holds.
+inline std::vector<BrowserEntry> collectSampleEntries(const Project& project) {
+    std::vector<BrowserEntry> entries;
+    for (int id = 0; id < project.samplePool.count(); ++id) {
+        const Sample* sample = project.samplePool.getSample(id);
+        if (sample == nullptr) continue;
+
+        BrowserEntry entry;
+        entry.kind = BrowserEntryKind::Sample;
+        entry.name = sample->name.empty() ? ("Sample " + std::to_string(id))
+                                          : sample->name;
+        entry.id = id;
+
+        char detail[64];
+        snprintf(detail, sizeof(detail), "%.2f s  -  %d Hz",
+                 sample->lengthSeconds, sample->sampleRate);
+        entry.detail = detail;
+        entry.path = sample->filepath;
+        entries.push_back(entry);
+    }
+    return entries;
+}
+
+// Every oscillator type, by the name the rest of the UI uses for it.
+inline std::vector<BrowserEntry> collectInstrumentEntries() {
+    std::vector<BrowserEntry> entries;
+    for (int type = 0; type < OSC_NAME_COUNT; ++type) {
+        BrowserEntry entry;
+        entry.kind = BrowserEntryKind::Instrument;
+        entry.name = oscillatorTypeName(static_cast<OscillatorType>(type));
+        entry.detail = oscillatorCategoryName(static_cast<OscillatorType>(type));
+        entry.id = type;
+        entries.push_back(entry);
+    }
+    return entries;
+}
+
+/*
+ * Drop a browser entry onto a channel.
+ *
+ * Shared by the mixer strip, the channel editor and the tracker header, so
+ * the three cannot drift apart in what a drop means.
+ */
+inline bool applyBrowserDropToChannel(Project& project, Sequencer& seq,
+                                      int channelIndex,
+                                      const BrowserPayload& payload) {
+    if (channelIndex < 0 || channelIndex >= Project::MAX_CHANNELS) return false;
+    ChannelConfig& channel = project.channels[static_cast<size_t>(channelIndex)];
+
+    switch (payload.kind) {
+        case BrowserEntryKind::Instrument: {
+            if (payload.id < 0 ||
+                payload.id >= OSC_NAME_COUNT) return false;
+            g_UndoHistory.saveState(project, "Set Instrument");
+            channel.oscillator.type = static_cast<OscillatorType>(payload.id);
+            seq.updateChannelConfigs();
+            return true;
+        }
+        case BrowserEntryKind::Preset:
+            return applyPresetToChannel(project, seq, channelIndex,
+                                        payload.engine, payload.id);
+
+        case BrowserEntryKind::Sample: {
+            // A sample on a channel means the sampler engine plays it.
+            if (project.samplePool.getSample(payload.id) == nullptr) return false;
+            g_UndoHistory.saveState(project, "Load Sample");
+            channel.oscillator.type = OscillatorType::Sampler;
+            channel.oscillator.sampler.zoneCount = 1;
+            channel.oscillator.sampler.zones[0] = SampleZone();
+            channel.oscillator.sampler.zones[0].sampleId = payload.id;
+            seq.updateChannelConfigs();
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+/*
+ * Drop a browser entry onto the arrangement at a beat and a channel.
+ *
+ * Only samples and audio files make a clip. Dropping an instrument here
+ * would have to invent a pattern to go with it, and inventing content the
+ * user did not ask for is worse than doing nothing.
+ */
+inline bool applyBrowserDropToTimeline(Project& project, float beat,
+                                       int channelIndex,
+                                       const BrowserPayload& payload) {
+    int sampleId = -1;
+
+    if (payload.kind == BrowserEntryKind::Sample) {
+        sampleId = payload.id;
+    } else if (payload.kind == BrowserEntryKind::File) {
+        // Loading here rather than at drag time: a file dragged across the
+        // window and dropped somewhere useless should not have cost a disk
+        // read and a pool entry.
+        sampleId = project.samplePool.loadSample(payload.path);
+    }
+
+    const Sample* sample = project.samplePool.getSample(sampleId);
+    if (sample == nullptr) return false;
+
+    g_UndoHistory.saveState(project, "Add Audio Clip");
+
+    Clip clip;
+    clip.type = ClipType::Audio;
+    clip.sampleId = sampleId;
+    clip.channelIndex = std::clamp(channelIndex, 0,
+                                   std::max(0, project.activeChannelCount() - 1));
+    clip.startBeat = std::max(0.0f, beat);
+
+    // As long as the audio actually is, at the tempo where it lands - a clip
+    // whose length does not match its sample either repeats or cuts off,
+    // and both look like a bug rather than a default.
+    const float bpm = std::max(1.0f, project.bpmAt(clip.startBeat));
+    clip.lengthBeats = std::max(0.25f, sample->lengthSeconds * bpm / 60.0f);
+    clip.gain = 1.0f;
+    project.arrangement.push_back(clip);
+    return true;
+}
+
+/*
+ * The drop target half of the above, for a channel.
+ *
+ * A free function because three panels need it and each would otherwise
+ * write the same six lines of BeginDragDropTarget slightly differently.
+ */
+inline bool BrowserChannelDropTarget(Project& project, Sequencer& seq,
+                                     int channelIndex) {
+    if (!ImGui::BeginDragDropTarget()) return false;
+
+    bool applied = false;
+    if (const ImGuiPayload* payload =
+            ImGui::AcceptDragDropPayload(BROWSER_PAYLOAD_TYPE)) {
+        if (payload->DataSize == static_cast<int>(sizeof(BrowserPayload))) {
+            BrowserPayload dropped;
+            std::memcpy(&dropped, payload->Data, sizeof(dropped));
+            applied = applyBrowserDropToChannel(project, seq, channelIndex, dropped);
+        }
+    }
+    ImGui::EndDragDropTarget();
+    return applied;
+}
+
+inline void DrawBrowser(Project& project, UIState& ui, Sequencer& seq) {
+    if (!ui.showBrowser) return;
+
+    ImGui::SetNextWindowSize(ImVec2(320, 520), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Browser", &ui.showBrowser)) {
+        ImGui::End();
+        return;
+    }
+
+    BrowserState& state = g_Browser;
+
+    if (ImGui::BeginTabBar("##browsertabs")) {
+        for (int t = 0; t < static_cast<int>(BrowserTab::Count); ++t) {
+            const BrowserTab tab = static_cast<BrowserTab>(t);
+            if (ImGui::BeginTabItem(browserTabName(tab))) {
+                state.tab = tab;
+                ImGui::EndTabItem();
+            }
+        }
+        ImGui::EndTabBar();
+    }
+
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##browsersearch", "Search...", state.search,
+                             sizeof(state.search));
+
+    // ---- What this tab is showing -------------------------------------------
+    std::vector<BrowserEntry> entries;
+
+    switch (state.tab) {
+        case BrowserTab::Samples:
+            entries = collectSampleEntries(project);
+            break;
+
+        case BrowserTab::Instruments:
+            entries = collectInstrumentEntries();
+            break;
+
+        case BrowserTab::Presets:
+            entries = collectPresetEntries();
+            break;
+
+        case BrowserTab::Files: {
+            if (state.directory.empty()) {
+                std::error_code error;
+                state.directory = std::filesystem::current_path(error).string();
+                if (error) state.directory = ".";
+                state.filesScanned = false;
+            }
+
+            ImGui::TextDisabled("%s", state.directory.c_str());
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", state.directory.c_str());
+            }
+            if (ImGui::SmallButton("Refresh")) state.filesScanned = false;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Choose folder...")) {
+                const std::string picked = openFileDialog(
+                    "Audio and Projects\0*.wav;*.mp3;*.flac;*.ogg;*.ctp\0"
+                    "All Files (*.*)\0*.*\0", "wav");
+                if (!picked.empty()) {
+                    std::error_code error;
+                    const std::filesystem::path parent =
+                        std::filesystem::path(picked).parent_path();
+                    if (std::filesystem::is_directory(parent, error) && !error) {
+                        state.directory = parent.string();
+                        state.filesScanned = false;
+                    }
+                }
+            }
+
+            // Scanned on demand. Walking a directory every frame would put a
+            // syscall per file into the frame budget, which a sample library
+            // on a network drive will not survive.
+            if (!state.filesScanned) {
+                scanDirectory(state.directory, state.files);
+                state.filesScanned = true;
+            }
+            entries = state.files;
+            break;
+        }
+
+        default:
+            break;
+    }
+
+    const std::vector<BrowserEntry> shown =
+        filterEntries(entries, state.search);
+
+    ImGui::Separator();
+
+    if (shown.empty()) {
+        if (state.search[0] != '\0') {
+            ImGui::TextDisabled("Nothing matches \"%s\"", state.search);
+        } else if (state.tab == BrowserTab::Samples) {
+            ImGui::TextWrapped(
+                "No samples yet. Record a take, or drop a .wav onto the "
+                "arrangement, and it will appear here.");
+        } else {
+            ImGui::TextDisabled("Nothing here.");
+        }
+    }
+
+    ImGui::BeginChild("##browserlist", ImVec2(0, -28), false);
+    for (size_t i = 0; i < shown.size(); ++i) {
+        const BrowserEntry& entry = shown[i];
+        ImGui::PushID(static_cast<int>(i));
+
+        const bool selected = (state.selected == static_cast<int>(i));
+        const std::string label =
+            (entry.kind == BrowserEntryKind::Directory ? "[ ] " : "") + entry.name;
+
+        if (ImGui::Selectable(label.c_str(), selected,
+                              ImGuiSelectableFlags_AllowDoubleClick)) {
+            state.selected = static_cast<int>(i);
+
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                switch (entry.kind) {
+                    case BrowserEntryKind::Directory:
+                        state.directory = entry.path;
+                        state.filesScanned = false;
+                        state.selected = -1;
+                        break;
+
+                    case BrowserEntryKind::File: {
+                        BrowserPayload payload = makePayload(entry);
+                        if (applyBrowserDropToTimeline(
+                                project, 0.0f, ui.selectedChannel, payload)) {
+                            state.lastAction = "Added " + entry.name +
+                                               " to the arrangement";
+                        } else {
+                            state.lastAction = "Could not read " + entry.name;
+                        }
+                        break;
+                    }
+
+                    default: {
+                        BrowserPayload payload = makePayload(entry);
+                        if (applyBrowserDropToChannel(project, seq,
+                                                      ui.selectedChannel, payload)) {
+                            state.lastAction =
+                                entry.name + " on " +
+                                project.channels[static_cast<size_t>(
+                                    std::clamp(ui.selectedChannel, 0,
+                                               Project::MAX_CHANNELS - 1))].name;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Anything but a directory can be dragged out.
+        if (entry.kind != BrowserEntryKind::Directory &&
+            ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+            const BrowserPayload payload = makePayload(entry);
+            ImGui::SetDragDropPayload(BROWSER_PAYLOAD_TYPE, &payload,
+                                      sizeof(payload));
+            ImGui::TextUnformatted(entry.name.c_str());
+            ImGui::TextDisabled("Drop on a channel or the arrangement");
+            ImGui::EndDragDropSource();
+        }
+
+        if (!entry.detail.empty()) {
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90.0f);
+            ImGui::TextDisabled("%s", entry.detail.c_str());
+        }
+
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    // A browser that silently succeeds looks broken, so say what happened.
+    if (!state.lastAction.empty()) {
+        ImGui::TextDisabled("%s", state.lastAction.c_str());
+    } else {
+        // Short enough to survive the narrow column the browser docks into.
+        ImGui::TextDisabled("Double-click, or drag out");
+    }
+
+    ImGui::End();
+}
+
 // ============================================================================
 // File Menu Bar
 // ============================================================================
@@ -10419,6 +11419,44 @@ inline void DrawArrangement(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SetCursorScreenPos(canvasPos);
     ImGui::InvisibleButton("##arrangement", canvasSize);
 
+    /*
+     * Dropping out of the browser onto the timeline.
+     *
+     * The clip lands on the lane and the beat it was dropped on, snapped to
+     * the grid, rather than at the start of the song - dropping something
+     * precisely and watching it jump to zero is the behaviour that makes
+     * drag-and-drop feel broken.
+     *
+     * Attached to the canvas button so the drop target covers exactly what
+     * the eye reads as the timeline.
+     */
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* dropped =
+                ImGui::AcceptDragDropPayload(BROWSER_PAYLOAD_TYPE)) {
+            if (dropped->DataSize == static_cast<int>(sizeof(BrowserPayload))) {
+                BrowserPayload payload;
+                std::memcpy(&payload, dropped->Data, sizeof(payload));
+
+                const ImVec2 dropPos = ImGui::GetMousePos();
+                const float dropX =
+                    dropPos.x - canvasPos.x - headerWidth + ui.scrollX;
+                float dropBeat = std::max(0.0f, dropX / std::max(1.0f, beatWidth));
+                dropBeat = snapBeat(dropBeat, effectiveSnap(ui), project);
+
+                int dropChannel =
+                    static_cast<int>((dropPos.y - tracksTop) / trackHeight);
+                dropChannel = std::clamp(dropChannel, 0,
+                                         std::max(0, laneCount - 1));
+
+                if (applyBrowserDropToTimeline(project, dropBeat, dropChannel,
+                                               payload)) {
+                    ui.selectedChannel = dropChannel;
+                }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+
     if (ImGui::IsItemHovered() || isDraggingClip) {
         ImVec2 mousePos = ImGui::GetMousePos();
         float relX = mousePos.x - canvasPos.x - headerWidth + ui.scrollX;
@@ -10577,6 +11615,12 @@ inline void DrawMixer(Project& project, UIState& ui, Sequencer& seq) {
             ((channelColor(ch) >> 16) & 0xFF) / 255.0f,
             1.0f);
         ImGui::TextColored(labelColor, "%.10s", channel.name.c_str());
+
+        // An instrument, a preset or a sample dropped on the strip's name
+        // lands on that channel. The name is the part of a strip that reads
+        // as "this channel", which is why it is the target rather than the
+        // fader.
+        if (BrowserChannelDropTarget(project, seq, ch)) configChanged = true;
 
         // Fader and meter side by side, the way a console lays them out
         ImGui::BeginGroup();
@@ -13958,37 +15002,7 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::Text("Click to select, then draw on Piano Roll");
     ImGui::Separator();
 
-    const char* oscNames[] = {
-        // Oscillators (7)
-        "Pulse", "Triangle", "Sawtooth", "Sine", "Noise", "Supersaw", "Custom",
-        // Synths (10)
-        "Lead", "Pad", "Bass", "Pluck", "Arp", "Organ", "Strings", "Brass", "Chip", "Bell",
-        // Synthwave (6)
-        "SW Lead", "SW Bass", "SW Pad", "SW Arp", "SW Chord", "SW FM",
-        // Techno (5)
-        "Acid", "Stab", "Hoover", "Rave", "Reese",
-        // Hip Hop (4)
-        "Sub808", "LoFi", "Vinyl", "Trap",
-        // Additional (3)
-        "Gated", "Poly", "Sync",
-        // Drums (21) - indices 35-55
-        "Kick", "Kick808", "KickHard", "KickSoft",
-        "Snare", "Snare808", "SnareRim", "Clap",
-        "HiHat", "HiHatOpen", "HiHatPedal",
-        "Tom", "TomLow", "TomHigh",
-        "Crash", "Ride",
-        "Cowbell", "Clave", "Conga", "Maracas", "Tambourine",
-        // Reggaeton Instruments (7) - indices 56-62
-        "Reggae Bass", "Latin Brass", "Guira", "Bongo", "Timbale", "Dembow808", "DembowSnare",
-        // High-Accuracy Recreations (2) - indices 63-64
-        "Vocoder", "Kavinsky Bass",
-        // Six-operator FM - index 65
-        "FM",
-        // Multisample - index 66
-        "Sampler",
-        // Granular and the analogue drum model - indices 67-68
-        "Granular", "Drum Model"
-    };
+    const char* const* oscNames = OSC_NAMES;
     const char* oscDesc[] = {
         // Oscillators (7) - indices 0-6
         "Square wave - Classic NES", "Triangle - Soft, flute-like", "Sawtooth - Rich, buzzy",
@@ -14042,15 +15056,14 @@ inline void DrawSoundPalette(Project& project, UIState& ui, Sequencer& seq) {
     // Plus FM, which lives at the end of the enum. This assert is the reason
     // the mistake of inserting FMSynth mid-enum lasted one compile instead of
     // reaching a user as every instrument past Custom playing the wrong sound.
-    static_assert(RECREATIONS_START + NUM_RECREATIONS + 4 ==
-                      sizeof(oscNames) / sizeof(oscNames[0]),
-                  "oscNames must stay index-aligned with OscillatorType");
+    static_assert(RECREATIONS_START + NUM_RECREATIONS + 4 == OSC_NAME_COUNT,
+                  "OSC_NAMES must stay index-aligned with OscillatorType");
     // Whatever is last in the enum must be last in the table. This assert is
     // the reason inserting FMSynth mid-enum lasted one compile instead of
     // reaching a user as every instrument past Custom playing wrong.
-    static_assert(static_cast<int>(OscillatorType::DrumModel) + 1 ==
-                      static_cast<int>(sizeof(oscNames) / sizeof(oscNames[0])),
-                  "the last OscillatorType must be the last oscNames entry");
+    // The matching assert on the last enum entry now lives beside the
+    // table itself, at file scope.
+    static_assert(OSC_NAME_COUNT > 0, "OSC_NAMES must not be empty");
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     // ========== OSCILLATORS (Collapsible) ==========

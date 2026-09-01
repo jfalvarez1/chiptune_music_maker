@@ -134,6 +134,20 @@ else. A clip whose file has moved keeps its place and its edits and says so.
 
 ![Audio clips](docs/images/audio-clips.png)
 
+### Browser and command palette
+
+One place to find what you have — the samples in the project, every
+instrument and engine, the shipped presets, and the audio and project files
+on disk. Drag any of it onto a channel or onto the timeline.
+
+`Ctrl+P` opens a command palette that finds any command by name, so nothing
+is hidden behind a key you would have had to be told about. `Ctrl+/` lists
+every shortcut, and any of them can be rebound.
+
+![Browser](docs/images/browser.png)
+
+![Command palette](docs/images/command-palette.png)
+
 ### Take lanes
 
 Record a part several times, then build the keeper out of the best moments

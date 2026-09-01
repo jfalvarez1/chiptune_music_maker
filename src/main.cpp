@@ -274,6 +274,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     static ChiptuneTracker::Sequencer sequencer;
     printf("Sequencer created\n");
     ChiptuneTracker::UIState uiState;
+
+    /*
+     * The command table, and whatever the user has rebound.
+     *
+     * Built before the first frame so the palette and the shortcut list are
+     * never drawn against an empty registry, and loaded after registering
+     * so a binding file can only ever override a command that exists.
+     */
+    ChiptuneTracker::registerDefaultActions(ChiptuneTracker::actionRegistry());
     bool showAboutDialog = false;
 
     // Autosave writes beside the user's file, never over it. A recovery file
@@ -291,6 +300,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     ChiptuneTracker::UserSettings userSettings;
     const std::string settingsFile = ChiptuneTracker::settingsPath();
     ChiptuneTracker::loadSettings(userSettings, settingsFile);
+
+    // Key bindings, laid over the defaults registered above. Loaded after
+    // registration so a binding file can only ever override a command that
+    // exists, and one naming a command this build does not have is skipped
+    // rather than costing the user the rest of their bindings.
+    ChiptuneTracker::actionRegistry().loadBindings(
+        ChiptuneTracker::keybindingsPath(uiState.settingsDirectory));
 
     bool showWelcome = false;
 
@@ -435,18 +451,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // vector for the whole frame.
         ChiptuneTracker::ApplyPendingHistory(project, uiState, sequencer);
 
-        // Undo and redo work anywhere, not only when the piano roll has
-        // focus. Both this and the piano roll set the same request flag, and
-        // ApplyPendingHistory consumes it once, so they cannot double-apply.
-        if (!ImGui::GetIO().WantTextInput) {
-            const bool ctrlHeld = ImGui::GetIO().KeyCtrl;
-            if (ctrlHeld && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
-                ChiptuneTracker::RequestUndo();
-            }
-            if (ctrlHeld && ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
-                ChiptuneTracker::RequestRedo();
-            }
-        }
+        /*
+         * Global commands, from the action registry.
+         *
+         * Undo and redo among them, which is why they are no longer written
+         * out here: a command that exists in two places answers to one key
+         * that cannot be rebound and one that can, and the rebindable one
+         * appears to do nothing.
+         *
+         * Dispatched here, before anything is drawn, for the same reason
+         * ApplyPendingHistory is: an action can replace the project, and the
+         * drawing code holds references into it for the whole frame.
+         *
+         * The piano roll also sets the undo request flag, and
+         * ApplyPendingHistory consumes it once, so the two cannot
+         * double-apply.
+         */
+        ChiptuneTracker::DispatchActions(project, uiState, sequencer);
 
         // Draw theme background effects (Matrix rain, Synthwave chasers, etc.)
         ChiptuneTracker::DrawThemeBackground(uiState.currentTheme, io.DeltaTime);
@@ -1012,6 +1033,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // something else.
         ChiptuneTracker::DrawProjectCheck(project, uiState, sequencer);
 
+        // The browser, the command palette and the shortcut list. The
+        // palette draws last of the three so it sits over whatever it was
+        // opened from.
+        ChiptuneTracker::DrawBrowser(project, uiState, sequencer);
+        ChiptuneTracker::DrawShortcutsPanel(project, uiState, sequencer);
+        ChiptuneTracker::DrawCommandPalette(project, uiState, sequencer);
+
         // Take lanes. The poll drains the microphone into the take in
         // progress and splits it at every loop wrap, so it runs whether or
         // not the panel is visible.
@@ -1077,26 +1105,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             ChiptuneTracker::renderWavetableEditor(project, uiState, sequencer);
         }
 
-        // Keyboard shortcuts
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0)) {
-            uiState.pendingLayoutFrames = 2;
-        }
+        /*
+         * What the registry does not own.
+         *
+         * Ctrl+0, F4, Space and Home all moved into it - see
+         * registerDefaultActions. F12 stays here because a screenshot is a
+         * developer tool rather than a command anyone should find in a
+         * palette, and it writes to a global this file owns.
+         */
         if (ImGui::IsKeyPressed(ImGuiKey_F12) && !ImGui::GetIO().WantTextInput) {
             g_CaptureRequested = true;
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_F4) && !ImGui::GetIO().WantTextInput) {
-            uiState.showMacroEditor = !uiState.showMacroEditor;
-        }
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Space)) {
-            if (playbackState.isPlaying) sequencer.pause();
-            else sequencer.play();
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_Space) && !io.KeyCtrl && !ImGui::GetIO().WantTextInput) {
-            if (playbackState.isPlaying) sequencer.pause();
-            else sequencer.play();
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
-            sequencer.stop();
         }
 
         // Virtual keyboard (play notes with computer keyboard)

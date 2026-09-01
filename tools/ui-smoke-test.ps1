@@ -219,6 +219,24 @@ foreach ($panel in $panels) {
     args = "--demo --focus `"Project Check`""
 })
 
+# The browser, the command palette and the shortcut list. The palette is the
+# one worth a shot of its own: it is a modal over the whole window with a
+# focused search box, which is a different code path from a docked panel.
+[void]$cases.Add(@{
+    name = "browser"
+    args = "--demo --show browser --focus `"Browser`""
+})
+
+[void]$cases.Add(@{
+    name = "command-palette"
+    args = "--demo --show palette"
+})
+
+[void]$cases.Add(@{
+    name = "shortcuts"
+    args = "--demo --show shortcuts --focus `"Keyboard Shortcuts`""
+})
+
 # Take lanes with a comp built on them. Empty, the panel is a paragraph of
 # text; the lanes, the comp strip and the per-take highlight are all drawn
 # from beat arithmetic straight into the draw list, where a bad span divides

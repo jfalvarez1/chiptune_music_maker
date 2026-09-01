@@ -16158,6 +16158,747 @@ static bool frameIsClean(const HeadlessUI::FrameResult& result) {
 // ============================================================================
 // 92. The take lanes panel: draws, swipes, and commits a take
 // ============================================================================
+
+// ============================================================================
+// 93. Fuzzy matching, shortcuts and the action registry
+// ============================================================================
+static void testActionRegistry() {
+    beginTest("Actions, shortcuts and fuzzy search");
+
+    // ---- The matcher --------------------------------------------------------
+    //
+    // What matters is the ranking, not merely that a match was found: a
+    // palette that finds the right command and puts it fourth is a palette
+    // people stop using.
+    check(fuzzyScore("save", "Save Project") >= 0, "An exact prefix matches");
+    check(fuzzyScore("svp", "Save Project") >= 0, "Initials match");
+    check(fuzzyScore("zzz", "Save Project") < 0, "Absent letters do not match");
+    check(fuzzyScore("evas", "Save Project") < 0,
+          "Letters out of order do not match");
+    check(fuzzyScore("", "Save Project") == 0, "An empty query matches neutrally");
+    check(fuzzyScore("saveproject", "Save") < 0,
+          "A query longer than the string cannot match");
+
+    check(fuzzyScore("save", "Save Project") >
+              fuzzyScore("save", "Autosave Interval"),
+          "A match at the start beats one in the middle");
+    check(fuzzyScore("save", "Save") > fuzzyScore("save", "Save Project As"),
+          "The shorter of two equal matches wins");
+    check(fuzzyScore("rl", "Reset Layout") > fuzzyScore("rl", "Rewind to Start"),
+          "Word-initial letters beat scattered ones");
+
+    // Case must not matter: nobody types capitals into a palette.
+    check(fuzzyScore("SAVE", "Save Project") >= 0, "Matching ignores case");
+    check(fuzzyScore("save", "SAVE PROJECT") >= 0, "Matching ignores case both ways");
+
+    // ---- Shortcut text round-trips -------------------------------------------
+    {
+        Shortcut plain;
+        plain.key = ImGuiKey_S;
+        check(shortcutText(plain) == "S", "A bare key prints as itself");
+
+        Shortcut combo;
+        combo.key = ImGuiKey_S;
+        combo.ctrl = true;
+        combo.shift = true;
+        check(shortcutText(combo) == "Ctrl+Shift+S", "Modifiers print in order");
+
+        // The round trip is what the binding file depends on.
+        const char* SAMPLES[] = {"S", "Ctrl+S", "Ctrl+Shift+S", "Alt+F4",
+                                 "Ctrl+Shift+Alt+Z", "Space", "F12", "[",
+                                 "Left", "PageDown", "\\"};
+        for (const char* text : SAMPLES) {
+            const Shortcut parsed = shortcutFromText(text);
+            check(parsed.valid(),
+                  std::string("\"") + text + "\" parses");
+            check(shortcutText(parsed) == text,
+                  std::string("\"") + text + "\" survives a round trip, got \"" +
+                      shortcutText(parsed) + "\"");
+        }
+
+        check(!shortcutFromText("").valid(), "An empty string is not a shortcut");
+        check(!shortcutFromText("Ctrl+").valid(), "A modifier alone is not one");
+        check(!shortcutFromText("Meta+S").valid(),
+              "An unknown modifier is refused rather than dropped");
+        check(!shortcutFromText("Ctrl+Nonsense").valid(),
+              "An unknown key name is refused");
+        check(shortcutText(Shortcut()).empty(),
+              "An unbound action prints as nothing, not \"None\"");
+    }
+
+    // ---- The registry ---------------------------------------------------------
+    {
+        ActionRegistry registry;
+
+        int ran = 0;
+        Action first;
+        first.id = "test.first";
+        first.label = "First Command";
+        first.category = "Testing";
+        first.defaultShortcut = shortcutFromText("Ctrl+1");
+        first.run = [&ran](ActionContext&) { ++ran; };
+        registry.add(first);
+
+        Action second;
+        second.id = "test.second";
+        second.label = "Second Command";
+        second.category = "Testing";
+        second.defaultShortcut = shortcutFromText("Ctrl+2");
+        second.run = [&ran](ActionContext&) { ran += 10; };
+        registry.add(second);
+
+        check(registry.size() == 2, "Two commands registered");
+        check(registry.find("test.first") != nullptr, "A command is found by id");
+        check(registry.find("test.missing") == nullptr,
+              "An id that was never registered is not found");
+
+        // Re-adding an id replaces rather than duplicating, or the binding
+        // file would have two rows to choose between.
+        registry.add(first);
+        check(registry.size() == 2, "Re-adding an id replaces it");
+
+        // add() must apply the default, or every command starts unbound.
+        check(registry.find("test.first")->shortcut == shortcutFromText("Ctrl+1"),
+              "A registered command starts on its default key");
+
+        // ---- Conflicts -------------------------------------------------------
+        check(registry.conflict(shortcutFromText("Ctrl+2"), "test.first") == 1,
+              "A key already in use is reported");
+        check(registry.conflict(shortcutFromText("Ctrl+2"), "test.second") < 0,
+              "A command does not conflict with itself");
+        check(registry.conflict(shortcutFromText("Ctrl+9"), "test.first") < 0,
+              "An unused key is free");
+        check(registry.conflict(Shortcut(), "test.first") < 0,
+              "Unbound is not a conflict - every unbound command would clash");
+
+        // ---- Rebinding and persistence ----------------------------------------
+        check(!registry.anyRebound(), "Nothing is rebound to start with");
+        check(registry.bind("test.first", shortcutFromText("Alt+Q")),
+              "A command can be rebound");
+        check(registry.anyRebound(), "Rebinding is noticed");
+
+        const std::string path = "test-keys.ini";
+        check(registry.saveBindings(path), "Bindings save");
+
+        {
+            // Only the difference is written. Writing the whole table would
+            // freeze today's defaults into every user's file forever, so a
+            // later change of default would reach nobody.
+            std::ifstream file(path);
+            std::string body((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+            check(body.find("test.first=Alt+Q") != std::string::npos,
+                  "The rebound command is written");
+            check(body.find("test.second") == std::string::npos,
+                  "A command still on its default is not written");
+        }
+
+        // A fresh registry, same commands, loads what was saved.
+        ActionRegistry reloaded;
+        reloaded.add(first);
+        reloaded.add(second);
+        check(reloaded.find("test.first")->shortcut == shortcutFromText("Ctrl+1"),
+              "The fresh registry starts on defaults");
+        check(reloaded.loadBindings(path), "Bindings load");
+        check(reloaded.find("test.first")->shortcut == shortcutFromText("Alt+Q"),
+              "The saved binding came back");
+        check(reloaded.find("test.second")->shortcut == shortcutFromText("Ctrl+2"),
+              "A command not in the file keeps its default");
+
+        check(registry.resetToDefault("test.first"), "One command resets");
+        check(registry.find("test.first")->shortcut == shortcutFromText("Ctrl+1"),
+              "Reset restores the default key");
+
+        registry.bind("test.first", shortcutFromText("Alt+Q"));
+        registry.bind("test.second", Shortcut());
+        registry.resetAllToDefaults();
+        check(!registry.anyRebound(), "Reset all restores every default");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- A binding file from another version -----------------------------------
+    //
+    // The tolerance that matters: one bad line must not cost the rest.
+    {
+        const std::string path = "test-keys-mixed.ini";
+        {
+            std::ofstream file(path);
+            file << "# a comment\n";
+            file << "\n";
+            file << "test.first=Alt+Q\n";
+            file << "command.from.the.future=Ctrl+J\n";
+            file << "test.second=Ctrl+Nonsense\n";
+            file << "malformed line with no equals\n";
+        }
+
+        ActionRegistry registry;
+        Action first;
+        first.id = "test.first";
+        first.label = "First";
+        first.defaultShortcut = shortcutFromText("Ctrl+1");
+        registry.add(first);
+
+        Action second;
+        second.id = "test.second";
+        second.label = "Second";
+        second.defaultShortcut = shortcutFromText("Ctrl+2");
+        registry.add(second);
+
+        check(registry.loadBindings(path), "A mixed binding file loads");
+        check(registry.find("test.first")->shortcut == shortcutFromText("Alt+Q"),
+              "A good line before the bad ones was applied");
+        check(registry.find("test.second")->shortcut == shortcutFromText("Ctrl+2"),
+              "An unparseable key leaves the command on its default");
+
+        std::remove(path.c_str());
+
+        check(!registry.loadBindings("no-such-keys-file.ini"),
+              "A missing binding file is reported, not thrown");
+    }
+
+    // ---- The shipped table -------------------------------------------------------
+    {
+        ActionRegistry registry;
+        registerDefaultActions(registry);
+        check(registry.size() > 20, "The shipped table has commands in it");
+
+        // Every command must be runnable and describable, or it is a row in
+        // the palette that does nothing when chosen.
+        int missingRun = 0, missingLabel = 0, missingCategory = 0;
+        for (const Action& action : registry.all()) {
+            if (!action.run) ++missingRun;
+            if (action.label.empty()) ++missingLabel;
+            if (action.category.empty()) ++missingCategory;
+        }
+        check(missingRun == 0, "Every command has something to run");
+        check(missingLabel == 0, "Every command has a label");
+        check(missingCategory == 0, "Every command has a category");
+
+        // Ids must be unique - a binding file addresses them by id.
+        int duplicates = 0;
+        for (size_t i = 0; i < registry.all().size(); ++i) {
+            for (size_t j = i + 1; j < registry.all().size(); ++j) {
+                if (registry.all()[i].id == registry.all()[j].id) ++duplicates;
+            }
+        }
+        check(duplicates == 0, "Every command id is unique");
+
+        /*
+         * No two commands ship on the same key.
+         *
+         * A conflict is allowed after rebinding - it is occasionally what
+         * somebody wants - but shipping one means one of the two silently
+         * never fires, and which one depends on registration order.
+         */
+        std::vector<std::string> clashes;
+        for (const Action& action : registry.all()) {
+            if (!action.shortcut.valid()) continue;
+            const int other = registry.conflict(action.shortcut, action.id);
+            if (other >= 0) {
+                clashes.push_back(action.label + " and " +
+                                  registry.all()[size_t(other)].label + " on " +
+                                  shortcutText(action.shortcut));
+            }
+        }
+        check(clashes.empty(), "No two default bindings collide" +
+                  (clashes.empty() ? std::string() : ": " + clashes[0]));
+
+        // Registering twice must not duplicate - main() and a test both do it.
+        const size_t before = registry.size();
+        registerDefaultActions(registry);
+        check(registry.size() == before,
+              "Registering the defaults twice does not duplicate them");
+
+        // The commands people look for by name must be findable by name.
+        struct Lookup { const char* query; const char* expectedId; };
+        static const Lookup LOOKUPS[] = {
+            {"save",     "file.save"},
+            {"undo",     "edit.undo"},
+            {"mixer",    "view.mixer"},
+            {"tracker",  "view.tracker"},
+            {"reset",    "layout.reset"},
+            {"browser",  "help.browser"},
+        };
+        for (const Lookup& lookup : LOOKUPS) {
+            const std::vector<ActionMatch> matches = registry.search(lookup.query);
+            const bool found = !matches.empty() &&
+                registry.all()[size_t(matches[0].index)].id == lookup.expectedId;
+            check(found, std::string("\"") + lookup.query + "\" finds " +
+                      lookup.expectedId + ", got " +
+                      (matches.empty()
+                           ? std::string("nothing")
+                           : registry.all()[size_t(matches[0].index)].id));
+        }
+
+        check(registry.search("").size() == registry.size(),
+              "An empty query lists everything");
+        check(registry.search("qqqzzz").empty(),
+              "A query matching nothing returns nothing");
+
+        // ---- Every command actually does something ---------------------------
+        //
+        // The point of this one: an action whose callback is wired to the
+        // wrong field, or to a copy, changes nothing and looks identical to
+        // one that worked.
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        UIState ui;
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(projectPtr.get());
+
+        ActionContext context;
+        context.project = projectPtr.get();
+        context.ui = &ui;
+        context.seq = seqPtr.get();
+        check(context.complete(), "A fully-populated context is complete");
+
+        ActionContext empty;
+        check(!empty.complete(), "An empty context is not complete");
+
+        int ranWithoutCrashing = 0;
+        for (const Action& action : registry.all()) {
+            // A blocking OS dialog does not fail here, it hangs.
+            if (action.opensDialog) continue;
+            if (!action.run) continue;
+            action.run(context);
+            ++ranWithoutCrashing;
+        }
+        check(ranWithoutCrashing > 15,
+              "Most commands ran headlessly without a window");
+
+        // And specific ones did what they say.
+        ui.currentView = ViewMode::PianoRoll;
+        registry.find("view.mixer")->run(context);
+        check(ui.currentView == ViewMode::Mixer, "The view command changes the view");
+
+        const bool macrosBefore = ui.showMacroEditor;
+        registry.find("panel.macros")->run(context);
+        check(ui.showMacroEditor != macrosBefore,
+              "The panel command toggles the panel");
+
+        ui.selectedChannel = 0;
+        registry.find("channel.next")->run(context);
+        check(ui.selectedChannel == 1, "Next channel advances");
+        registry.find("channel.previous")->run(context);
+        check(ui.selectedChannel == 0, "Previous channel goes back");
+
+        // Wrapping, rather than running off the end into a channel that
+        // does not exist.
+        ui.selectedChannel = 0;
+        registry.find("channel.previous")->run(context);
+        check(ui.selectedChannel == projectPtr->activeChannelCount() - 1,
+              "Previous channel wraps to the last one");
+
+        const bool mutedBefore = projectPtr->channels[0].muted;
+        ui.selectedChannel = 0;
+        registry.find("channel.mute")->run(context);
+        check(projectPtr->channels[0].muted != mutedBefore,
+              "The mute command reaches the channel");
+
+        ui.pendingLayoutFrames = 0;
+        registry.find("layout.reset")->run(context);
+        check(ui.pendingLayoutFrames > 0, "Reset layout asks for a relayout");
+
+        // New Project must actually empty the project - the classic failure
+        // is capturing a Project& at registration, so this works once.
+        projectPtr->patterns.resize(4);
+        registry.find("file.new")->run(context);
+        check(projectPtr->patterns.size() == 1,
+              "New Project resets the project it was handed, not a copy");
+        registry.find("file.new")->run(context);
+        check(projectPtr->patterns.size() == 1,
+              "New Project still works the second time");
+    }
+}
+
+// ============================================================================
+// 94. The browser's model
+// ============================================================================
+static void testBrowserModel() {
+    beginTest("Browser scanning and filtering");
+
+    // ---- Payloads must survive a memcpy ------------------------------------
+    //
+    // ImGui copies a drag payload byte for byte, so anything with a pointer
+    // in it arrives as a dangling one.
+    {
+        check(std::is_trivially_copyable<BrowserPayload>::value,
+              "A drag payload is trivially copyable");
+
+        BrowserEntry entry;
+        entry.kind = BrowserEntryKind::File;
+        entry.id = 7;
+        entry.engine = 3;
+        entry.path = "C:/samples/kick.wav";
+
+        const BrowserPayload payload = makePayload(entry);
+        check(payload.kind == BrowserEntryKind::File, "The payload keeps its kind");
+        check(payload.id == 7, "The payload keeps its id");
+        check(payload.engine == 3, "The payload keeps its engine");
+        check(std::string(payload.path) == "C:/samples/kick.wav",
+              "The payload keeps its path");
+
+        // Round-tripped through raw bytes, which is what ImGui does to it.
+        unsigned char buffer[sizeof(BrowserPayload)];
+        std::memcpy(buffer, &payload, sizeof(payload));
+        BrowserPayload arrived;
+        std::memcpy(&arrived, buffer, sizeof(arrived));
+        check(std::string(arrived.path) == "C:/samples/kick.wav",
+              "The path survives being copied as bytes");
+
+        // A path longer than the buffer truncates rather than overrunning.
+        BrowserEntry huge;
+        huge.path = std::string(1000, 'x');
+        const BrowserPayload truncated = makePayload(huge);
+        check(std::strlen(truncated.path) == sizeof(truncated.path) - 1,
+              "An over-long path is truncated to fit");
+        check(truncated.path[sizeof(truncated.path) - 1] == '\0',
+              "A truncated path is still terminated");
+    }
+
+    // ---- Extensions ---------------------------------------------------------
+    check(isAudioExtension(".wav"), ".wav is audio");
+    check(isAudioExtension(".WAV"), "Extension matching ignores case");
+    check(isAudioExtension(".mp3"), ".mp3 is audio");
+    check(!isAudioExtension(".txt"), ".txt is not audio");
+    check(!isAudioExtension(""), "No extension is not audio");
+    check(isProjectExtension(".ctp"), ".ctp is a project");
+    check(isProjectExtension(".MID"), ".MID is a project");
+    check(!isProjectExtension(".wav"), "Audio is not a project file");
+
+    // ---- Scanning -----------------------------------------------------------
+    {
+        const std::string root = "browser-scan-test";
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+        std::filesystem::create_directories(root + "/inner", error);
+
+        auto touch = [&](const std::string& name) {
+            std::ofstream file(root + "/" + name);
+            file << "x";
+        };
+        touch("beat.wav");
+        touch("song.ctp");
+        touch("notes.txt");        // filtered out
+        touch("alpha.wav");
+
+        std::vector<BrowserEntry> entries;
+        scanDirectory(root, entries);
+
+        int wavs = 0, projects = 0, others = 0, directories = 0;
+        bool hasParent = false;
+        for (const BrowserEntry& entry : entries) {
+            if (entry.name == "..") { hasParent = true; continue; }
+            if (entry.kind == BrowserEntryKind::Directory) { ++directories; continue; }
+            const std::string extension =
+                std::filesystem::path(entry.name).extension().string();
+            if (isAudioExtension(extension)) ++wavs;
+            else if (isProjectExtension(extension)) ++projects;
+            else ++others;
+        }
+
+        check(hasParent, "A scan offers the way back out");
+        check(wavs == 2, "Both audio files were listed");
+        check(projects == 1, "The project file was listed");
+        check(others == 0, "Files that cannot be opened are not listed");
+        check(directories == 1, "The sub-directory was listed");
+
+        // Directories first, then files, each sorted - a browser that lists
+        // in filesystem order is a browser you cannot find anything in.
+        size_t lastDirectory = 0;
+        size_t firstFile = entries.size();
+        for (size_t i = 0; i < entries.size(); ++i) {
+            if (entries[i].kind == BrowserEntryKind::Directory) lastDirectory = i;
+            else if (firstFile == entries.size()) firstFile = i;
+        }
+        check(lastDirectory < firstFile, "Directories are listed before files");
+
+        bool sorted = true;
+        for (size_t i = firstFile + 1; i < entries.size(); ++i) {
+            if (entries[i].name < entries[i - 1].name) sorted = false;
+        }
+        check(sorted, "Files are listed in order");
+
+        // A directory that is not there must be empty, not a throw out of a
+        // draw call.
+        std::vector<BrowserEntry> missing;
+        scanDirectory(root + "/no-such-place", missing);
+        check(missing.empty(), "Scanning a missing directory yields nothing");
+
+        std::vector<BrowserEntry> notADirectory;
+        scanDirectory(root + "/beat.wav", notADirectory);
+        check(notADirectory.empty(), "Scanning a file yields nothing");
+
+        // ---- Filtering ------------------------------------------------------
+        const std::vector<BrowserEntry> all = filterEntries(entries, "");
+        check(all.size() == entries.size(), "An empty filter keeps everything");
+
+        const std::vector<BrowserEntry> wav = filterEntries(entries, "beat");
+        bool foundBeat = false;
+        for (const BrowserEntry& entry : wav) {
+            if (entry.name == "beat.wav") foundBeat = true;
+        }
+        check(foundBeat, "Filtering finds the file by name");
+
+        // The way out survives whatever is typed, or a search becomes a
+        // dead end you can only leave by clearing it.
+        bool keptParent = false;
+        for (const BrowserEntry& entry : wav) {
+            if (entry.name == "..") keptParent = true;
+        }
+        check(keptParent, "The parent entry survives a filter");
+        check(wav[0].name == "..", "The parent entry stays first");
+
+        const std::vector<BrowserEntry> none = filterEntries(entries, "zzzzz");
+        check(none.size() == 1 && none[0].name == "..",
+              "A filter matching nothing leaves only the way out");
+
+        std::filesystem::remove_all(root, error);
+    }
+}
+
+// ============================================================================
+// 95. The command palette, the shortcut list and the browser draw
+// ============================================================================
+static void testCommandPaletteAndBrowser() {
+    beginTest("Palette, shortcuts and browser (headless GUI)");
+
+    auto uiPtr = std::make_unique<HeadlessUI>();
+    auto projectPtr = std::make_unique<Project>();
+    auto seqPtr = std::make_unique<Sequencer>();
+    UIState ui;
+
+    Project& project = *projectPtr;
+    Sequencer& seq = *seqPtr;
+    seq.setSampleRate(44100.0f);
+    seq.setProject(&project);
+
+    registerDefaultActions(actionRegistry());
+
+    // A sample and a preset to list, so the browser draws rows rather than
+    // its empty state.
+    {
+        Sample sample;
+        sample.name = "kick.wav";
+        sample.sampleRate = 44100;
+        sample.audioData.assign(4410, 0.2f);
+        sample.lengthSeconds = 0.1f;
+        sample.isLoaded = true;
+        project.samplePool.addSample(sample);
+    }
+
+    // ---- The browser, on every tab -------------------------------------------
+    ui.showBrowser = true;
+    for (int t = 0; t < static_cast<int>(BrowserTab::Count); ++t) {
+        browserState().tab = static_cast<BrowserTab>(t);
+        browserState().search[0] = '\0';
+
+        auto result = uiPtr->frames(3, [&] { DrawBrowser(project, ui, seq); });
+        check(frameIsClean(result),
+              std::string("Browser tab ") + browserTabName(browserState().tab) +
+                  " draws cleanly: " + result.firstProblem);
+    }
+
+    // With a search that matches nothing, which is the empty-state path.
+    browserState().tab = BrowserTab::Instruments;
+    snprintf(browserState().search, sizeof(browserState().search), "zzzzzzz");
+    {
+        auto result = uiPtr->frames(2, [&] { DrawBrowser(project, ui, seq); });
+        check(frameIsClean(result),
+              "Browser with no matches draws cleanly: " + result.firstProblem);
+    }
+    browserState().search[0] = '\0';
+
+    // Hidden means not drawn at all.
+    ui.showBrowser = false;
+    {
+        auto result = uiPtr->frames(2, [&] { DrawBrowser(project, ui, seq); });
+        check(frameIsClean(result), "A closed browser draws cleanly");
+    }
+
+    // ---- The shortcut list ----------------------------------------------------
+    ui.showShortcuts = true;
+
+    // Into a scratch directory: a rebind writes a file, and a test must not
+    // write into the user's real settings.
+    ui.settingsDirectory = "shortcut-panel-test";
+    std::error_code error;
+    std::filesystem::create_directories(ui.settingsDirectory, error);
+    {
+        auto result = uiPtr->frames(3, [&] { DrawShortcutsPanel(project, ui, seq); });
+        check(frameIsClean(result),
+              "Shortcut list draws cleanly: " + result.firstProblem);
+        check(result.vertexCount > 0, "Shortcut list draws its rows");
+    }
+
+    // With a conflict in it, which is the row that draws the extra warning.
+    actionRegistry().bind("view.mixer", shortcutFromText("Ctrl+S"));
+    {
+        auto result = uiPtr->frames(2, [&] { DrawShortcutsPanel(project, ui, seq); });
+        check(frameIsClean(result),
+              "A conflicting binding draws cleanly: " + result.firstProblem);
+        check(actionRegistry().conflict(shortcutFromText("Ctrl+S"),
+                                        "view.mixer") >= 0,
+              "The conflict the panel is drawing is real");
+    }
+    actionRegistry().resetAllToDefaults();
+    std::filesystem::remove_all(ui.settingsDirectory, error);
+    ui.settingsDirectory.clear();
+    ui.showShortcuts = false;
+
+    // ---- The palette ----------------------------------------------------------
+    OpenCommandPalette();
+    check(commandPaletteState().open, "The palette opens");
+    {
+        auto result = uiPtr->frames(3, [&] { DrawCommandPalette(project, ui, seq); });
+        check(frameIsClean(result),
+              "Palette draws cleanly: " + result.firstProblem);
+        check(result.vertexCount > 0, "Palette draws its list");
+    }
+
+    // With a query that matches nothing - the state most likely to index an
+    // empty list.
+    snprintf(commandPaletteState().query, sizeof(commandPaletteState().query),
+             "zzzzzzzz");
+    commandPaletteState().selected = 5;   // stale, from the longer list
+    {
+        auto result = uiPtr->frames(2, [&] { DrawCommandPalette(project, ui, seq); });
+        check(frameIsClean(result),
+              "Palette with no matches draws cleanly: " + result.firstProblem);
+        check(commandPaletteState().selected == 0,
+              "A stale selection is clamped rather than indexing off the end");
+    }
+
+    // And with a real query.
+    snprintf(commandPaletteState().query, sizeof(commandPaletteState().query),
+             "mixer");
+    {
+        auto result = uiPtr->frames(2, [&] { DrawCommandPalette(project, ui, seq); });
+        check(frameIsClean(result), "Palette with results draws cleanly");
+    }
+
+    commandPaletteState().open = false;
+    {
+        auto result = uiPtr->frames(2, [&] { DrawCommandPalette(project, ui, seq); });
+        check(frameIsClean(result), "A closed palette draws cleanly");
+    }
+
+    // ---- Dropping out of the browser --------------------------------------------
+    //
+    // The drop handlers, driven directly. What matters is that a drop
+    // changes the project - a handler that accepts a payload and quietly
+    // does nothing looks exactly like a drag that missed.
+    {
+        BrowserEntry instrument;
+        instrument.kind = BrowserEntryKind::Instrument;
+        instrument.id = static_cast<int>(OscillatorType::Sine);
+        const BrowserPayload payload = makePayload(instrument);
+
+        project.channels[0].oscillator.type = OscillatorType::Pulse;
+        check(applyBrowserDropToChannel(project, seq, 0, payload),
+              "An instrument drops onto a channel");
+        check(project.channels[0].oscillator.type == OscillatorType::Sine,
+              "The dropped instrument reached the channel");
+
+        // Out of range must be refused rather than written past the array.
+        check(!applyBrowserDropToChannel(project, seq, -1, payload),
+              "A drop onto no channel is refused");
+        check(!applyBrowserDropToChannel(project, seq, Project::MAX_CHANNELS,
+                                         payload),
+              "A drop past the last channel is refused");
+
+        BrowserEntry rubbish;
+        rubbish.kind = BrowserEntryKind::Instrument;
+        rubbish.id = 9999;
+        check(!applyBrowserDropToChannel(project, seq, 0, makePayload(rubbish)),
+              "An instrument index out of range is refused");
+    }
+
+    {
+        // A sample onto a channel means the sampler plays it.
+        BrowserEntry sample;
+        sample.kind = BrowserEntryKind::Sample;
+        sample.id = 0;
+        check(applyBrowserDropToChannel(project, seq, 1, makePayload(sample)),
+              "A sample drops onto a channel");
+        check(project.channels[1].oscillator.type == OscillatorType::Sampler,
+              "A dropped sample switches the channel to the sampler");
+        check(project.channels[1].oscillator.sampler.zoneCount == 1,
+              "The dropped sample became a zone");
+        check(project.channels[1].oscillator.sampler.zones[0].sampleId == 0,
+              "The zone points at the dropped sample");
+
+        BrowserEntry missing;
+        missing.kind = BrowserEntryKind::Sample;
+        missing.id = 999;
+        check(!applyBrowserDropToChannel(project, seq, 1, makePayload(missing)),
+              "A sample that is not in the pool is refused");
+    }
+
+    {
+        // A preset switches the engine as well as writing the patch:
+        // choosing "Bell" and hearing the existing sawtooth would read as
+        // the preset having done nothing.
+        const std::vector<BrowserEntry> presetEntries = collectPresetEntries();
+        check(!presetEntries.empty(), "There are presets to list");
+
+        const BrowserEntry& preset = presetEntries[0];
+        check(applyBrowserDropToChannel(project, seq, 2, makePayload(preset)),
+              "A preset drops onto a channel");
+        check(project.channels[2].oscillator.type ==
+                  static_cast<OscillatorType>(preset.engine),
+              "A dropped preset switches the channel to its engine");
+    }
+
+    {
+        // A sample onto the timeline becomes a clip, at the beat it landed
+        // on and as long as the audio actually is.
+        const size_t before = project.arrangement.size();
+
+        BrowserEntry sample;
+        sample.kind = BrowserEntryKind::Sample;
+        sample.id = 0;
+        check(applyBrowserDropToTimeline(project, 8.0f, 3, makePayload(sample)),
+              "A sample drops onto the timeline");
+        check(project.arrangement.size() == before + 1, "The drop made one clip");
+
+        const Clip& clip = project.arrangement.back();
+        check(clip.type == ClipType::Audio, "The drop made an audio clip");
+        check(clip.sampleId == 0, "The clip plays the dropped sample");
+        check(clip.channelIndex == 3, "The clip landed on the lane it was dropped on");
+        check(std::fabs(clip.startBeat - 8.0f) < 0.01f,
+              "The clip landed at the beat it was dropped on, not at zero");
+
+        // 0.1 s at 120 bpm is 0.2 beats, which the minimum raises to 0.25.
+        check(clip.lengthBeats > 0.0f, "The clip has a length");
+        check(clip.lengthBeats < 4.0f,
+              "A short sample makes a short clip, not a default-length one");
+
+        // An instrument is not something the timeline can accept: making a
+        // pattern for it would be inventing content nobody asked for.
+        BrowserEntry instrument;
+        instrument.kind = BrowserEntryKind::Instrument;
+        instrument.id = 0;
+        check(!applyBrowserDropToTimeline(project, 0.0f, 0,
+                                          makePayload(instrument)),
+              "An instrument dropped on the timeline is refused");
+
+        // A file that is not there must fail rather than making a clip with
+        // nothing behind it.
+        BrowserEntry ghost;
+        ghost.kind = BrowserEntryKind::File;
+        ghost.path = "no-such-file-anywhere.wav";
+        check(!applyBrowserDropToTimeline(project, 0.0f, 0, makePayload(ghost)),
+              "A file that cannot be read makes no clip");
+    }
+
+    // The registry is a global; leave it as it was found.
+    actionRegistry().resetAllToDefaults();
+    commandPaletteState() = CommandPaletteState();
+    browserState() = BrowserState();
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -16434,6 +17175,8 @@ static void testPanelsDrawHeadless() {
         {"Pattern List",   [](Project& p, UIState& u, Sequencer& s) { (void)s; DrawPatternList(p, u); }},
         {"Note Editor",    [](Project& p, UIState& u, Sequencer& s) { (void)s; DrawNoteEditor(p, u); }},
         {"Take Lanes",     [](Project& p, UIState& u, Sequencer& s) { DrawTakeLanes(p, u, s); }},
+        {"Browser",        [](Project& p, UIState& u, Sequencer& s) { u.showBrowser = true; DrawBrowser(p, u, s); }},
+        {"Shortcuts",      [](Project& p, UIState& u, Sequencer& s) { u.showShortcuts = true; DrawShortcutsPanel(p, u, s); }},
     };
 
     for (const Panel& panel : PANELS) {
@@ -16896,6 +17639,9 @@ int main(int argc, char** argv) {
     testCompFlattening();
     testPanelsDrawHeadless();
     testTakeLanesPanel();
+    testActionRegistry();
+    testBrowserModel();
+    testCommandPaletteAndBrowser();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();
