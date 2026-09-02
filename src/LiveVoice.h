@@ -54,7 +54,8 @@
 #include "VoiceCapture.h"
 #include "FFT.h"
 #include "AudioAnalyzer.h"
-#include "VoiceTimbre.h"   // YIN and freqToMidi, shared with the offline path
+#include "VoiceTimbre.h"
+#include "Groove.h"   // YIN and freqToMidi, shared with the offline path
 #include "Types.h"
 #include "Snap.h"
 #include "TempoMap.h"
@@ -728,6 +729,41 @@ struct VoiceToNotesOptions {
     VoiceRole role = VoiceRole::Lead;
 
     /*
+     * How far toward the grid a note is moved.
+     *
+     * 1 is a hard snap, which is the fastest way to make a played part
+     * sound programmed - the push and pull of a real performance is most of
+     * what makes it sound like a person. Around 0.7 tightens the timing
+     * while leaving the feel, and it is worth reaching for.
+     *
+     * It nonetheless DEFAULTS to a hard snap, because that is what this
+     * conversion has always done and changing it would quietly alter every
+     * existing caller's output. A dial that has to be turned is better than
+     * a default that moves under people.
+     */
+    float quantizeStrength = 1.0f;
+
+    /*
+     * How far from the grid a note can be and still be pulled in.
+     *
+     * A note further out than this was probably deliberate - a flam, a
+     * grace note, the front of a fill - and dragging it onto the grid is
+     * the quantisation failure people notice most. At 0.5 everything is in
+     * range, since the nearest grid point is never more than half a step
+     * away.
+     */
+    float quantizeRange = 0.5f;
+
+    /*
+     * Where the offbeats sit. 0.5 is straight; higher shuffles.
+     *
+     * Measured from the performance rather than imposed, when the caller
+     * asks for it - the real range is wide, and a hardcoded triplet swing
+     * is wrong more often than it is right.
+     */
+    float swingRatio = 0.5f;
+
+    /*
      * Whether to move the part into its role's register.
      *
      * On by default, because humming two octaves below where the part
@@ -766,17 +802,49 @@ inline std::vector<Note> hitsToNotes(const std::vector<LiveHit>& hits,
     for (size_t i = 0; i < hits.size(); ++i) {
         const LiveHit& hit = hits[i];
 
-        float startBeat = map.secondsToBeat(hit.timeSeconds, baseBpm);
-        startBeat = snapBeatNearestMapped(startBeat, options.snap, map, beatsPerMeasure);
+        const float playedBeat = map.secondsToBeat(hit.timeSeconds, baseBpm);
+
+        /*
+         * Toward the grid, not necessarily onto it.
+         *
+         * The target is the swung grid point when a swing has been measured,
+         * so a shuffled part keeps its shuffle instead of being straightened
+         * onto the nearest sixteenth. Strength and range then decide how far
+         * it actually moves - see Groove.h.
+         */
+        const float step = snapStepBeats(options.snap, beatsPerMeasure);
+        float target = snapBeatNearestMapped(playedBeat, options.snap, map,
+                                             beatsPerMeasure);
+        if (options.swingRatio > 0.52f && step > 0.0f) {
+            target = swungGridPoint(playedBeat, step, options.swingRatio);
+        }
+
+        float startBeat = quantizePartial(playedBeat, target, step,
+                                          options.quantizeStrength,
+                                          options.quantizeRange);
         if (startBeat < 0.0f) startBeat = 0.0f;
 
         // A note runs until the next hit, so a sung line comes back as a
         // legato line rather than a row of clicks. The last one gets a beat.
         float endBeat = startBeat + 1.0f;
         if (i + 1 < hits.size()) {
-            const float nextBeat = snapBeatNearestMapped(
-                map.secondsToBeat(hits[i + 1].timeSeconds, baseBpm),
-                options.snap, map, beatsPerMeasure);
+            /*
+             * The next note's start, quantised exactly as its own will be.
+             *
+             * Quantising starts and leaving ends alone is what makes every
+             * duration ragged: the note would run to where the next one was
+             * played rather than to where it will sit.
+             */
+            const float nextPlayed =
+                map.secondsToBeat(hits[i + 1].timeSeconds, baseBpm);
+            float nextTarget = snapBeatNearestMapped(nextPlayed, options.snap,
+                                                     map, beatsPerMeasure);
+            if (options.swingRatio > 0.52f && step > 0.0f) {
+                nextTarget = swungGridPoint(nextPlayed, step, options.swingRatio);
+            }
+            const float nextBeat = quantizePartial(nextPlayed, nextTarget, step,
+                                                   options.quantizeStrength,
+                                                   options.quantizeRange);
             if (nextBeat > startBeat) endBeat = nextBeat;
         }
 
@@ -855,13 +923,25 @@ inline std::vector<Note> hitsToNotes(const std::vector<LiveHit>& hits,
         }
     }
 
-    // Two hits that quantise onto the same beat with the same pitch are one
-    // note played slightly unevenly, not two. Keeping both would stack two
-    // voices on one key, which sounds like a phasing artefact.
+    /*
+     * Two hits on effectively the same beat and pitch are one note played
+     * unevenly, not two. Keeping both stacks two voices on one key, which
+     * sounds like a phasing artefact rather than like a repeat.
+     *
+     * The tolerance is a fraction of a grid step rather than an exact
+     * match, because with the strength dial below 1 two hits aimed at the
+     * same grid point no longer land on identical beats - they land near
+     * it, deliberately. An exact comparison would let both through and
+     * reintroduce the stacking the moment anybody softened the quantise.
+     */
+    const float mergeWindow =
+        std::max(1e-4f, snapStepBeats(options.snap, beatsPerMeasure) * 0.25f);
+
     notes.erase(std::unique(notes.begin(), notes.end(),
-                            [](const Note& a, const Note& b) {
+                            [mergeWindow](const Note& a, const Note& b) {
                                 return a.pitch == b.pitch &&
-                                       std::fabs(a.startTime - b.startTime) < 1e-4f;
+                                       std::fabs(a.startTime - b.startTime) <
+                                           mergeWindow;
                             }),
                 notes.end());
     return notes;

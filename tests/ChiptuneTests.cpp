@@ -19189,6 +19189,234 @@ static void testVoiceTimbre() {
     }
 }
 
+
+// ============================================================================
+// 103. Quantising without flattening
+//
+// Snapping every note hard onto a grid is the fastest way to make a played
+// part sound programmed. What is asserted here is that the timing can be
+// tightened while the feel survives - and that a triplet passage is not
+// quantised onto sixteenths, which is the failure musicians complain about
+// most.
+// ============================================================================
+static void testGroove() {
+    beginTest("Quantise strength, grid detection and swing");
+
+    // ---- Partial quantisation ------------------------------------------------
+    {
+        const float step = 0.25f;   // sixteenths
+
+        // A note played 0.06 beats late, aiming at beat 1.
+        const float played = 1.06f;
+        const float target = 1.0f;
+
+        check(std::fabs(quantizePartial(played, target, step, 0.0f, 0.5f) - played)
+                  < 1e-5f,
+              "at strength zero a note stays exactly where it was played");
+
+        check(std::fabs(quantizePartial(played, target, step, 1.0f, 0.5f) - target)
+                  < 1e-5f,
+              "at strength one it lands on the grid");
+
+        const float half = quantizePartial(played, target, step, 0.5f, 0.5f);
+        check(std::fabs(half - 1.03f) < 1e-5f,
+              "at a half it moves halfway, keeping half the feel (got " +
+                  std::to_string(half) + ")");
+
+        // Still on the late side of the beat - the direction of the push
+        // survives, which is the whole point.
+        check(half > target, "and it is still late, as it was played");
+
+        /*
+         * Range: a note far from the grid was deliberate.
+         *
+         * A flam, a grace note or the front of a fill sits well off the
+         * grid on purpose, and dragging it in is the quantisation failure
+         * people notice most.
+         */
+        const float grace = 1.11f;   // most of a half-step out at 1/16
+        check(std::fabs(quantizePartial(grace, 1.0f, step, 1.0f, 0.2f) - grace)
+                  < 1e-5f,
+              "a note beyond the range is left alone entirely");
+        check(std::fabs(quantizePartial(grace, 1.0f, step, 1.0f, 0.5f) - 1.0f)
+                  < 1e-5f,
+              "and pulled in once the range covers it");
+
+        // Degenerate input must not produce a NaN that poisons a whole part.
+        check(std::isfinite(quantizePartial(1.0f, 1.0f, 0.0f, 1.0f, 0.5f)),
+              "a zero step does not divide by zero");
+        check(quantizePartial(std::numeric_limits<float>::quiet_NaN(), 1.0f,
+                              step, 1.0f, 0.5f) == 0.0f,
+              "a NaN beat is replaced rather than propagated");
+        check(std::isfinite(quantizePartial(1.0f, 1.0f, step, 5.0f, 5.0f)),
+              "out-of-range dials are clamped rather than extrapolating");
+    }
+
+    // ---- Which grid ------------------------------------------------------------
+    {
+        // Straight sixteenths.
+        std::vector<float> sixteenths;
+        for (int i = 0; i < 16; ++i) sixteenths.push_back(float(i) * 0.25f);
+        const GridEstimate straight = detectGrid(sixteenths, 4);
+        check(straight.division == SnapDivision::Sixteenth ||
+                  straight.division == SnapDivision::Eighth ||
+                  straight.division == SnapDivision::Quarter,
+              "evenly spaced sixteenths are recognised as a straight grid");
+        check(straight.fit < 0.01f, "and they fit it exactly");
+
+        /*
+         * Triplets.
+         *
+         * The case that matters. Quantising a triplet passage to sixteenths
+         * destroys it, and a grid chosen by assumption rather than
+         * measurement does exactly that.
+         */
+        std::vector<float> triplets;
+        for (int i = 0; i < 12; ++i) triplets.push_back(float(i) / 3.0f);
+        const GridEstimate swung = detectGrid(triplets, 4);
+        check(swung.division == SnapDivision::TripletEighth ||
+                  swung.division == SnapDivision::TripletSixteenth,
+              "an eighth-triplet passage is recognised as triplets, not as "
+              "sixteenths - got " +
+                  std::to_string(int(swung.division)));
+
+        // Randomly placed notes have no grid, and saying so is better than
+        // picking whichever candidate scraped ahead.
+        std::vector<float> scattered = {0.0f, 0.37f, 0.61f, 1.13f,
+                                        1.44f, 2.09f, 2.31f, 2.88f};
+        const GridEstimate none = detectGrid(scattered, 4);
+        check(!none.confident,
+              "a performance with no grid is reported as not confident "
+              "rather than quantised to a guess");
+
+        // Too little to judge.
+        check(!detectGrid({0.0f, 1.0f}, 4).confident,
+              "two notes are not enough to detect a grid from");
+        check(!detectGrid({}, 4).confident, "and nor is nothing");
+
+        // The fit score must actually mean something.
+        check(gridFit(sixteenths, SnapDivision::Sixteenth, 4) <
+                  gridFit(scattered, SnapDivision::Sixteenth, 4),
+              "an on-grid performance scores a better fit than a scattered one");
+    }
+
+    // ---- Swing ------------------------------------------------------------------
+    {
+        // Straight eighths: every offbeat exactly halfway.
+        std::vector<float> straight;
+        for (int i = 0; i < 8; ++i) straight.push_back(float(i) * 0.5f);
+        check(std::fabs(detectSwing(straight, 1.0f) - 0.5f) < 0.06f,
+              "a straight part measures as straight (got " +
+                  std::to_string(detectSwing(straight, 1.0f)) + ")");
+
+        // Triplet swing: the offbeat two-thirds of the way through the beat.
+        std::vector<float> shuffled;
+        for (int i = 0; i < 8; ++i) {
+            shuffled.push_back(float(i));
+            shuffled.push_back(float(i) + 0.667f);
+        }
+        const float measured = detectSwing(shuffled, 1.0f);
+        check(measured > 0.6f,
+              "a shuffled part measures as swung rather than straight (got " +
+                  std::to_string(measured) + ")");
+
+        // Nothing to measure gives the neutral answer, not a guess.
+        check(std::fabs(detectSwing({}, 1.0f) - 0.5f) < 1e-5f,
+              "no notes measures as straight");
+        check(std::fabs(detectSwing({0.0f, 1.0f}, 0.0f) - 0.5f) < 1e-5f,
+              "a zero pair length does not divide by zero");
+    }
+
+    // ---- Swung grid points ---------------------------------------------------------
+    {
+        const float step = 0.5f;     // eighths, so a pair is one beat
+
+        // Straight: the offbeat sits at the halfway point.
+        check(std::fabs(swungGridPoint(0.5f, step, 0.5f) - 0.5f) < 1e-4f,
+              "with no swing the offbeat is halfway");
+
+        // Swung: a note played near two-thirds should land there, not be
+        // straightened back onto the halfway point.
+        const float landed = swungGridPoint(0.66f, step, 0.667f);
+        check(std::fabs(landed - 0.667f) < 0.02f,
+              "with swing the offbeat lands where the shuffle puts it, not "
+              "straightened onto the half (got " + std::to_string(landed) + ")");
+
+        // A downbeat is a downbeat whatever the swing.
+        check(std::fabs(swungGridPoint(0.02f, step, 0.667f)) < 1e-4f,
+              "a note near the downbeat still lands on it");
+        check(std::fabs(swungGridPoint(0.98f, step, 0.667f) - 1.0f) < 1e-4f,
+              "and one near the next downbeat lands on that");
+
+        check(std::isfinite(swungGridPoint(1.0f, 0.0f, 0.667f)),
+              "a zero step is refused rather than dividing by zero");
+    }
+
+    // ---- Through the conversion -------------------------------------------------------
+    //
+    // The dials have to reach the notes, not just exist.
+    {
+        TempoMap flat;
+        const float bpm = 120.0f;
+
+        // Three hits, each played slightly late of a beat.
+        std::vector<LiveHit> hits;
+        const float lateness = 0.06f;   // beats
+        for (int i = 0; i < 3; ++i) {
+            LiveHit hit;
+            // 120 bpm: one beat is half a second.
+            hit.timeSeconds = (float(i) + lateness) * 0.5f;
+            hit.midiNote = 60 + i * 2;
+            hit.velocity = 0.8f;
+            hits.push_back(hit);
+        }
+
+        VoiceToNotesOptions hard;
+        hard.snap = SnapDivision::Quarter;
+        hard.quantizeStrength = 1.0f;
+        hard.placeInRegister = false;
+        const std::vector<Note> hardNotes = hitsToNotes(hits, flat, bpm, 4, hard);
+
+        VoiceToNotesOptions loose;
+        loose.snap = SnapDivision::Quarter;
+        loose.quantizeStrength = 0.0f;
+        loose.placeInRegister = false;
+        const std::vector<Note> looseNotes = hitsToNotes(hits, flat, bpm, 4, loose);
+
+        check(hardNotes.size() == 3 && looseNotes.size() == 3,
+              "both settings produce the same notes");
+
+        if (hardNotes.size() == 3 && looseNotes.size() == 3) {
+            check(std::fabs(hardNotes[1].startTime - 1.0f) < 1e-3f,
+                  "a hard snap puts the second note exactly on beat 1 (got " +
+                      std::to_string(hardNotes[1].startTime) + ")");
+            check(std::fabs(looseNotes[1].startTime - (1.0f + lateness)) < 1e-2f,
+                  "and no quantise leaves it exactly where it was played (got " +
+                      std::to_string(looseNotes[1].startTime) + ")");
+            check(looseNotes[1].startTime > hardNotes[1].startTime,
+                  "so the played lateness survives when the dial is down");
+        }
+
+        /*
+         * Non-destructive by construction.
+         *
+         * The same take run twice at different strengths gives different
+         * notes, and running it again at the first strength gives the first
+         * answer back - because these are pure functions of the original
+         * hits, not edits to a stored result. That is what lets the dial be
+         * moved back and forth without re-recording.
+         */
+        const std::vector<Note> again = hitsToNotes(hits, flat, bpm, 4, hard);
+        check(again.size() == hardNotes.size(),
+              "re-running the conversion is repeatable");
+        if (!again.empty() && !hardNotes.empty()) {
+            check(std::fabs(again[1].startTime - hardNotes[1].startTime) < 1e-6f,
+                  "and gives the identical answer - the take is never "
+                  "overwritten, so the strength dial is reversible");
+        }
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -19940,6 +20168,7 @@ int main(int argc, char** argv) {
     testVoiceRoles();
     testVoiceDestination();
     testVoiceTimbre();
+    testGroove();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

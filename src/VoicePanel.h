@@ -212,6 +212,10 @@ struct VoicePanelState {
     char renameBuffer[48] = {};
     bool renaming = false;
 
+    // What "Match the take" found, so the answer is visible rather than
+    // silently applied to a combo the user then has to notice moved.
+    std::string gridMessage;
+
 
     // Live tracking.
     LiveVoiceTracker tracker;

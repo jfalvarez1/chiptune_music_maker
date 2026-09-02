@@ -9631,8 +9631,8 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
      * The footer is sized from the frame height rather than a pixel count so
      * it stays right at any font scale or theme padding.
      */
-    float footerHeight = ImGui::GetFrameHeightWithSpacing() * 7.2f +
-                         ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+    float footerHeight = ImGui::GetFrameHeightWithSpacing() * 1.4f +
+                         ImGui::GetTextLineHeightWithSpacing() * 2.2f;
 
     /*
      * Never more than half the panel.
@@ -9923,7 +9923,99 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
             "choice, and not always the one you want.");
     }
 
+
+    /*
+     * How hard to quantise, and what to leave alone.
+     *
+     * A hard snap is the fastest way to make a played part sound
+     * programmed, so the strength is a dial rather than a switch - but it
+     * defaults to a full snap, because that is what this has always done
+     * and a default that moves under people is worse than one they have to
+     * change.
+     */
+    ImGui::SetNextItemWidth(140);
+    ImGui::SliderFloat("Strength", &g_Voice.options.quantizeStrength,
+                       0.0f, 1.0f, "%.0f%%",
+                       ImGuiSliderFlags_AlwaysClamp);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "How far toward the grid each note moves.\n"
+            "100%% is a hard snap. Around 70%% tightens the timing while\n"
+            "leaving the push and pull that makes it sound played.");
+    }
+
     ImGui::SameLine();
+    ImGui::SetNextItemWidth(120);
+    ImGui::SliderFloat("Keep", &g_Voice.options.quantizeRange,
+                       0.05f, 0.5f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Notes further than this from the grid are left where they are.\n"
+            "A flam or a grace note sits well off the beat on purpose, and\n"
+            "dragging it in is the quantise failure people notice most.\n"
+            "0.5 pulls in everything.");
+    }
+
+    /*
+     * Measure the grid rather than assume one.
+     *
+     * Quantising a triplet passage onto sixteenths destroys it, and that is
+     * exactly what happens when the grid is a setting rather than something
+     * read off the performance.
+     */
+    {
+        const bool haveTiming = g_Voice.liveMode
+            ? g_Voice.tracker.hits().size() >= 4
+            : g_Voice.detected.size() >= 4;
+
+        ImGui::BeginDisabled(!haveTiming);
+        if (ImGui::SmallButton("Match the take")) {
+            std::vector<float> onsets;
+            if (g_Voice.liveMode) {
+                for (const LiveHit& hit : g_Voice.tracker.hits()) {
+                    onsets.push_back(project.secondsToBeat(hit.timeSeconds));
+                }
+            } else {
+                for (const DetectedNote& note : g_Voice.detected) {
+                    onsets.push_back(project.secondsToBeat(note.startTime));
+                }
+            }
+
+            const GridEstimate grid = detectGrid(onsets, project.beatsPerMeasure);
+            if (grid.confident) {
+                g_Voice.options.snap = grid.division;
+                g_Voice.gridMessage = std::string("Grid: ") +
+                                      snapLabel(grid.division);
+            } else {
+                // Said rather than silently applied. A grid guessed from a
+                // performance that has none is worse than the setting the
+                // user already had.
+                g_Voice.gridMessage = "No clear grid - left as it was";
+            }
+
+            const float swing = detectSwing(onsets, 1.0f);
+            g_Voice.options.swingRatio = swing;
+            if (swing > 0.56f) {
+                char text[64];
+                snprintf(text, sizeof(text), "  swing %.0f%%", swing * 100.0f);
+                g_Voice.gridMessage += text;
+            }
+        }
+        ImGui::EndDisabled();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Works out which grid you actually played on - straight or\n"
+                "triplet - and how much you swung, then uses that instead of\n"
+                "the setting above.");
+        }
+
+        if (!g_Voice.gridMessage.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", g_Voice.gridMessage.c_str());
+        }
+    }
+
     ImGui::SetNextItemWidth(100);
     ImGui::DragInt("Shift", &g_Voice.options.transpose, 0.1f, -48, 48, "%+d st");
     if (ImGui::IsItemHovered()) {
@@ -9947,8 +10039,6 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
      * The most common outcome of a good take was discovering it had
      * overwritten something else.
      */
-    ImGui::EndChild();
-
     ImGui::SeparatorText("Destination");
 
     // ---- Which pattern -------------------------------------------------------
@@ -10060,6 +10150,8 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
     const float startBeat = placementStartBeat(
         g_Voice.placement, g_Voice.placementBar,
         seq.getCurrentBeat(), project.beatsPerMeasure);
+
+    ImGui::EndChild();
 
     // ---- What is about to happen, in one line ------------------------------------
     //
