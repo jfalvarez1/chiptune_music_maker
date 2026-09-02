@@ -17799,6 +17799,587 @@ static void testPluginsPanel() {
     }
 }
 
+
+// ============================================================================
+// A benchmark for voice detection
+//
+// The other voice tests ask whether the code runs and whether a pure tone
+// comes back as the right note. Both are worth having and neither tells you
+// whether a change to the tracker made detection better or worse - which is
+// the only question that matters while refining it.
+//
+// This synthesises input with the properties that actually break pitch
+// trackers, scores the output against known ground truth, and asserts on
+// the score. A refinement is then a number that went up.
+//
+// WHAT MAKES SYNTHETIC VOICE HARD ENOUGH TO BE WORTH TESTING:
+//
+//   - Harmonics. A pure sine is the one signal YIN never gets wrong, and a
+//     voice is nothing like one. A strong second harmonic is what produces
+//     the octave error that is the single most common complaint about every
+//     voice-to-MIDI tool ever shipped.
+//   - Vibrato. A sung note is not one frequency, it wobbles - and a tracker
+//     without hysteresis reports each wobble as a new note.
+//   - Portamento. People slide between hummed notes. The slide is not a
+//     note and must not become one.
+//   - An amplitude envelope per note, so onsets are where the notes are
+//     rather than uniformly loud throughout.
+//   - Breath noise. A voice has a noise floor; silence in a real recording
+//     is not digital zero.
+// ============================================================================
+
+struct BenchNote {
+    int midi = 60;
+    float startSeconds = 0.0f;
+    float durationSeconds = 0.5f;
+};
+
+struct HumOptions {
+    float vibratoCents = 0.0f;      // depth, in cents
+    float vibratoHz = 5.5f;
+    float portamentoSeconds = 0.0f; // slide into each note
+    float breathNoise = 0.0f;       // amplitude of the noise floor
+    float secondHarmonic = 0.55f;   // the octave-error maker
+    float thirdHarmonic = 0.30f;
+    float amplitude = 0.30f;
+};
+
+/*
+ * Synthesise a hummed line with known ground truth.
+ *
+ * Deterministic - a fixed xorshift rather than rand() - because a benchmark
+ * that scores differently on each run cannot be used to judge a change.
+ */
+static std::vector<float> synthesiseHum(const std::vector<BenchNote>& notes,
+                                        int sampleRate, const HumOptions& options) {
+    float endSeconds = 0.0f;
+    for (const BenchNote& note : notes) {
+        endSeconds = std::max(endSeconds, note.startSeconds + note.durationSeconds);
+    }
+    std::vector<float> out(static_cast<size_t>((endSeconds + 0.25f) *
+                                               float(sampleRate)), 0.0f);
+
+    uint32_t rng = 0x1234567u;
+    auto noise = [&rng]() {
+        rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+        return (float(rng & 0xFFFFFF) / 8388608.0f) - 1.0f;
+    };
+
+    // The breath floor runs throughout, including the gaps - a real
+    // recording's silence is not digital zero, and a tracker that only
+    // works against true silence does not work.
+    if (options.breathNoise > 0.0f) {
+        for (float& sample : out) sample += noise() * options.breathNoise;
+    }
+
+    // Phase is accumulated across the whole line rather than reset per note,
+    // because a phase discontinuity is a click, and a click is an onset that
+    // the ground truth does not contain.
+    double phase = 0.0;
+
+    for (size_t n = 0; n < notes.size(); ++n) {
+        const BenchNote& note = notes[n];
+        const float target = 440.0f * std::pow(2.0f, float(note.midi - 69) / 12.0f);
+
+        // Slide in from the previous note, which is what humming does.
+        float from = target;
+        if (options.portamentoSeconds > 0.0f && n > 0) {
+            from = 440.0f * std::pow(2.0f, float(notes[n - 1].midi - 69) / 12.0f);
+        }
+
+        const size_t start = static_cast<size_t>(note.startSeconds * float(sampleRate));
+        const size_t count = static_cast<size_t>(note.durationSeconds * float(sampleRate));
+
+        for (size_t i = 0; i < count && start + i < out.size(); ++i) {
+            const float t = float(i) / float(sampleRate);
+
+            float frequency = target;
+            if (options.portamentoSeconds > 0.0f && t < options.portamentoSeconds) {
+                const float glide = t / options.portamentoSeconds;
+                frequency = from + (target - from) * glide;
+            }
+            if (options.vibratoCents > 0.0f) {
+                const float cents = options.vibratoCents *
+                    std::sin(6.28318530718f * options.vibratoHz * t);
+                frequency *= std::pow(2.0f, cents / 1200.0f);
+            }
+
+            phase += 6.28318530718 * double(frequency) / double(sampleRate);
+
+            // Attack and release, so the onset is where the note is.
+            const float attack = std::min(1.0f, t / 0.015f);
+            const float remaining = note.durationSeconds - t;
+            const float release = std::min(1.0f, std::max(0.0f, remaining) / 0.030f);
+            const float envelope = attack * release;
+
+            const float value =
+                std::sin(float(phase)) +
+                options.secondHarmonic * std::sin(float(phase * 2.0)) +
+                options.thirdHarmonic * std::sin(float(phase * 3.0));
+
+            out[start + i] += options.amplitude * envelope * value;
+        }
+    }
+    return out;
+}
+
+/*
+ * How well a detection matched the truth.
+ *
+ * Octave errors are counted separately from other wrong pitches on purpose:
+ * they are by far the most common failure of every pitch tracker, they are
+ * the one users notice immediately, and a change that trades three octave
+ * errors for one wrong note is an improvement that a single "accuracy"
+ * number would hide.
+ */
+struct BenchScore {
+    int groundTruth = 0;
+    int detected = 0;
+    int matched = 0;          // right note, right time
+    int octaveErrors = 0;     // right pitch class, wrong octave
+    int wrongPitch = 0;
+    int missed = 0;
+    int spurious = 0;         // detected where there is no note at all
+    float onsetErrorMs = 0.0f;
+
+    float recall() const {
+        return groundTruth > 0 ? float(matched) / float(groundTruth) : 0.0f;
+    }
+    float precision() const {
+        return detected > 0 ? float(matched) / float(detected) : 0.0f;
+    }
+    std::string summary() const {
+        char text[256];
+        snprintf(text, sizeof(text),
+                 "%d/%d matched (recall %.0f%%, precision %.0f%%), "
+                 "%d octave, %d wrong, %d spurious, onset %.0f ms",
+                 matched, groundTruth, recall() * 100.0f, precision() * 100.0f,
+                 octaveErrors, wrongPitch, spurious, onsetErrorMs);
+        return text;
+    }
+};
+
+/*
+ * Score detected hits against the truth.
+ *
+ * A hit matches a note if it lands inside the note's span, widened by a
+ * tolerance. Notes are matched at most once, so a tracker that reports the
+ * same note forty times does not score forty matches - that flickering is
+ * precisely the failure being measured.
+ */
+static BenchScore scoreHits(const std::vector<BenchNote>& truth,
+                            const std::vector<LiveHit>& hits,
+                            float toleranceSeconds = 0.12f) {
+    BenchScore score;
+    score.groundTruth = static_cast<int>(truth.size());
+    score.detected = static_cast<int>(hits.size());
+
+    std::vector<bool> claimed(truth.size(), false);
+    float onsetErrorTotal = 0.0f;
+    int onsetCount = 0;
+
+    for (const LiveHit& hit : hits) {
+        int best = -1;
+        for (size_t t = 0; t < truth.size(); ++t) {
+            const float from = truth[t].startSeconds - toleranceSeconds;
+            const float to = truth[t].startSeconds + truth[t].durationSeconds +
+                             toleranceSeconds;
+            if (hit.timeSeconds < from || hit.timeSeconds > to) continue;
+            if (best < 0 || !claimed[t]) best = static_cast<int>(t);
+            if (!claimed[t]) break;
+        }
+
+        if (best < 0) { ++score.spurious; continue; }
+
+        const int expected = truth[static_cast<size_t>(best)].midi;
+        const int got = hit.midiNote;
+
+        if (got == expected) {
+            if (!claimed[static_cast<size_t>(best)]) {
+                claimed[static_cast<size_t>(best)] = true;
+                ++score.matched;
+                onsetErrorTotal += std::fabs(
+                    hit.timeSeconds - truth[static_cast<size_t>(best)].startSeconds);
+                ++onsetCount;
+            }
+        } else if (((got - expected) % 12) == 0) {
+            ++score.octaveErrors;
+        } else {
+            ++score.wrongPitch;
+        }
+    }
+
+    for (bool wasClaimed : claimed) if (!wasClaimed) ++score.missed;
+    score.onsetErrorMs = onsetCount > 0
+        ? (onsetErrorTotal / float(onsetCount)) * 1000.0f : 0.0f;
+    return score;
+}
+
+
+// Printed, not just asserted. The assertion says the tracker did not get
+// worse; the number says where it actually is, which is what tells you
+// whether the next change is worth making.
+static void reportBench(const char* label, const BenchScore& score) {
+    std::printf("        %-16s %s\n", label, score.summary().c_str());
+    std::fflush(stdout);
+}
+
+static void testVoiceDetectionBenchmark() {
+    beginTest("Voice detection benchmark");
+
+    const int rate = 48000;
+
+    // A plain rising line, the easiest realistic case.
+    const std::vector<BenchNote> SCALE = {
+        {60, 0.00f, 0.40f}, {62, 0.45f, 0.40f}, {64, 0.90f, 0.40f},
+        {65, 1.35f, 0.40f}, {67, 1.80f, 0.40f}, {69, 2.25f, 0.40f},
+    };
+
+    auto runTracker = [&](const std::vector<float>& audio) {
+        LiveVoiceTracker tracker;
+        tracker.setSampleRate(rate);
+        tracker.setMode(LiveVoiceMode::Melodic);
+        tracker.process(audio.data(), audio.size());
+        return tracker.hits();
+    };
+
+    /*
+     * The baseline these assertions record is the CURRENT behaviour, not an
+     * aspiration. The point is that a change which makes any of them worse
+     * fails the build, so the tracker can only be refined forwards.
+     */
+
+    // ---- Clean, harmonic-rich, no vibrato -----------------------------------
+    {
+        HumOptions options;
+        options.vibratoCents = 0.0f;
+        const BenchScore score = scoreHits(SCALE, runTracker(
+            synthesiseHum(SCALE, rate, options)));
+        reportBench("clean", score);
+
+        check(score.recall() >= 0.95f,
+              "clean hum: every note is found - " + score.summary());
+        check(score.precision() >= 0.95f,
+              "clean hum: and nothing else is - " + score.summary());
+        check(score.octaveErrors == 0,
+              "clean hum: no octave errors - " + score.summary());
+    }
+
+    // ---- With vibrato ---------------------------------------------------------
+    //
+    // A sung note wobbles. Every wobble that becomes a note is a note the
+    // user has to delete by hand, which is the thing that makes people stop
+    // using these tools.
+    {
+        HumOptions options;
+        options.vibratoCents = 45.0f;      // a natural singing vibrato
+        const BenchScore score = scoreHits(SCALE, runTracker(
+            synthesiseHum(SCALE, rate, options)));
+
+        reportBench("vibrato", score);
+        check(score.recall() >= 0.95f,
+              "vibrato: notes are still found - " + score.summary());
+        check(score.precision() >= 0.90f,
+              "vibrato does not shatter into a stream of notes - " +
+                  score.summary());
+    }
+
+    // ---- With portamento --------------------------------------------------------
+    //
+    // People slide between hummed notes. The slide is not a note.
+    {
+        HumOptions options;
+        options.portamentoSeconds = 0.08f;
+        const BenchScore score = scoreHits(SCALE, runTracker(
+            synthesiseHum(SCALE, rate, options)));
+
+        reportBench("portamento", score);
+        check(score.recall() >= 0.95f,
+              "portamento: the notes either side are found - " + score.summary());
+        /*
+         * The one that mattered.
+         *
+         * A hummed slide passes through every semitone between two notes,
+         * and each one used to become a note the user had to delete - nine
+         * of them across six real notes, for 40% precision. Taking the
+         * pitch from the note's stable portion instead of from the moment
+         * it changed is what fixed it.
+         */
+        check(score.precision() >= 0.90f,
+              "portamento: the slide between notes does not become notes - " +
+                  score.summary());
+    }
+
+    // ---- Everything at once, which is what a real hum is -------------------------
+    {
+        HumOptions options;
+        options.vibratoCents = 35.0f;
+        options.portamentoSeconds = 0.06f;
+        options.breathNoise = 0.004f;
+        const BenchScore score = scoreHits(SCALE, runTracker(
+            synthesiseHum(SCALE, rate, options)));
+
+        reportBench("realistic", score);
+        check(score.recall() >= 0.95f,
+              "realistic hum: every note is found - " + score.summary());
+        check(score.precision() >= 0.85f,
+              "realistic hum: and little else is - " + score.summary());
+        check(score.spurious == 0,
+              "realistic hum: nothing invented out of nothing - " +
+                  score.summary());
+    }
+
+
+    // ---- Short notes ---------------------------------------------------------
+    //
+    // The cost of waiting for a pitch to settle: a note shorter than the
+    // stability window cannot be detected at all. This pins where that
+    // limit is, so raising the threshold further fails here rather than
+    // silently losing fast passages.
+    //
+    // 150 ms is a sixteenth at 100 BPM, which is about as fast as anybody
+    // hums cleanly. If this ever fails, the stability window has gone too
+    // far and the trade has stopped being worth it.
+    {
+        const std::vector<BenchNote> FAST_LINE = {
+            {60, 0.00f, 0.15f}, {62, 0.16f, 0.15f}, {64, 0.32f, 0.15f},
+            {65, 0.48f, 0.15f}, {67, 0.64f, 0.15f}, {69, 0.80f, 0.15f},
+        };
+
+        HumOptions options;
+        const BenchScore score = scoreHits(FAST_LINE, runTracker(
+            synthesiseHum(FAST_LINE, rate, options)));
+        reportBench("fast notes", score);
+
+        check(score.recall() >= 0.65f,
+              "sixteenths at 100 BPM still register - the stability window "
+              "has not eaten fast passages - " + score.summary());
+    }
+
+    // ---- The benchmark itself must be sound ---------------------------------------
+    //
+    // A harness that scores well on silence is measuring nothing.
+    {
+        std::vector<float> silence(static_cast<size_t>(rate * 2), 0.0f);
+        const BenchScore score = scoreHits(SCALE, runTracker(silence));
+        check(score.matched == 0, "silence matches nothing");
+        check(score.recall() < 0.01f, "silence scores zero recall");
+    }
+
+    // And the synthesiser must actually produce the pitches it claims, or
+    // every number above is measured against the wrong thing.
+    {
+        const std::vector<BenchNote> ONE = {{69, 0.0f, 0.5f}};
+        HumOptions options;
+        const std::vector<float> audio = synthesiseHum(ONE, rate, options);
+
+        std::vector<float> window(audio.begin() + rate / 10,
+                                  audio.begin() + rate / 10 + 2048);
+        const float detected = AudioAnalyzer::getPitchYIN(window, rate);
+        check(std::fabs(detected - 440.0f) < 10.0f,
+              "the benchmark's own A4 really is 440 Hz (got " +
+                  std::to_string(detected) + ")");
+
+        check(audio.size() > static_cast<size_t>(rate) / 2,
+              "the benchmark produces audio of the requested length");
+    }
+
+    // ---- Scoring counts an octave error as an octave error --------------------------
+    {
+        const std::vector<BenchNote> ONE = {{60, 0.0f, 0.5f}};
+
+        LiveHit octaveDown;
+        octaveDown.timeSeconds = 0.1f;
+        octaveDown.midiNote = 48;
+        const BenchScore octave = scoreHits(ONE, {octaveDown});
+        check(octave.octaveErrors == 1 && octave.wrongPitch == 0,
+              "an octave below is scored as an octave error");
+
+        LiveHit wrong;
+        wrong.timeSeconds = 0.1f;
+        wrong.midiNote = 61;
+        const BenchScore semitone = scoreHits(ONE, {wrong});
+        check(semitone.wrongPitch == 1 && semitone.octaveErrors == 0,
+              "a semitone out is scored as a wrong pitch, not an octave error");
+
+        LiveHit late;
+        late.timeSeconds = 9.0f;
+        late.midiNote = 60;
+        const BenchScore spurious = scoreHits(ONE, {late});
+        check(spurious.spurious == 1,
+              "a hit where there is no note at all is spurious");
+
+        LiveHit right;
+        right.timeSeconds = 0.1f;
+        right.midiNote = 60;
+        const BenchScore twice = scoreHits(ONE, {right, right});
+        check(twice.matched == 1,
+              "one note reported twice counts once, not twice - flickering is "
+              "the failure being measured, not a bonus");
+    }
+}
+
+
+// ============================================================================
+// 99. Key detection has no thumb on the scale
+//
+// The old implementation scored a chroma histogram against Krumhansl-Kessler
+// profiles with a raw dot product. Those two profiles do not sum to the same
+// number - major 41.79, minor 44.51 - so a flat or noisy histogram scored
+// 6.5% higher for minor before a single note was considered.
+//
+// A hummed melody produces exactly that kind of flat histogram, which made
+// this a real bug rather than a theoretical one: hum something ambiguous and
+// it was called minor every time.
+// ============================================================================
+static void testKeyDetectionBias() {
+    beginTest("Key detection is not biased toward minor");
+
+    const int rate = 44100;
+
+    // A melody, built from the pitch classes of a given key, so the chroma
+    // histogram is what that key actually produces.
+    auto melody = [rate](const std::vector<int>& midiNotes) {
+        std::vector<float> out;
+        for (int note : midiNotes) {
+            const float frequency = 440.0f * std::pow(2.0f, float(note - 69) / 12.0f);
+            const size_t count = static_cast<size_t>(0.30f * float(rate));
+            for (size_t i = 0; i < count; ++i) {
+                const float t = float(i) / float(rate);
+                const float envelope = std::min(1.0f, t / 0.01f) *
+                                       std::min(1.0f, (0.30f - t) / 0.02f);
+                out.push_back(0.35f * envelope *
+                              (std::sin(6.28318530718f * frequency * t) +
+                               0.4f * std::sin(6.28318530718f * frequency * 2.0f * t)));
+            }
+        }
+        return out;
+    };
+
+    // ---- The profiles themselves --------------------------------------------
+    //
+    // Asserted directly, because this is the property whose absence caused
+    // the bug. Aarden-Essen's halves both sum to 100; Krumhansl-Kessler's do
+    // not, which is what made the old dot product unsafe.
+    {
+        const float aardenMajor[12] = {
+            17.7661f, 0.145624f, 14.9265f, 0.160186f, 19.8049f, 11.3587f,
+            0.291248f, 22.062f, 0.145624f, 8.15494f, 0.232998f, 4.95122f};
+        const float aardenMinor[12] = {
+            18.2648f, 0.737619f, 14.0499f, 16.8599f, 0.702494f, 14.4362f,
+            0.702494f, 18.6161f, 4.56621f, 1.93186f, 7.37619f, 1.75623f};
+
+        float majorSum = 0.0f, minorSum = 0.0f;
+        for (int i = 0; i < 12; ++i) { majorSum += aardenMajor[i]; minorSum += aardenMinor[i]; }
+
+        check(std::fabs(majorSum - 100.0f) < 0.5f,
+              "the major profile sums to 100 (got " + std::to_string(majorSum) + ")");
+        check(std::fabs(minorSum - 100.0f) < 0.5f,
+              "the minor profile sums to 100 (got " + std::to_string(minorSum) + ")");
+        check(std::fabs(majorSum - minorSum) < 0.5f,
+              "neither mode is favoured by the profile weights alone - the old "
+              "pair differed by 6.5%, which is the whole bug");
+    }
+
+    // ---- A clear major melody is major ---------------------------------------
+    {
+        // C major, leaning hard on the tonic and dominant.
+        const DetectedKey key = AudioAnalyzer::detectKey(
+            melody({60, 64, 67, 72, 67, 64, 60, 67, 60, 64, 67, 60}), rate);
+
+        check(!key.isMinor,
+              "a C major melody is major, not minor (got " +
+                  std::string(key.isMinor ? "minor" : "major") + ")");
+        check(key.root == 0,
+              "and its root is C (got pitch class " + std::to_string(key.root) + ")");
+    }
+
+    // ---- A clear minor melody is still minor ------------------------------------
+    //
+    // The fix must not simply swap the bias the other way.
+    {
+        // A minor: A C E, with the minor third prominent.
+        const DetectedKey key = AudioAnalyzer::detectKey(
+            melody({57, 60, 64, 69, 64, 60, 57, 60, 57, 64, 60, 57}), rate);
+
+        check(key.isMinor,
+              "an A minor melody is still minor (got " +
+                  std::string(key.isMinor ? "minor" : "major") + ")");
+        check(key.root == 9,
+              "and its root is A (got pitch class " + std::to_string(key.root) + ")");
+    }
+
+    // ---- Ambiguous input says it is ambiguous --------------------------------------
+    //
+    // A chromatic run has no key. What matters is not which of the 24 it
+    // picks - something has to win - but that it reports almost no margin,
+    // so a caller about to snap notes to that key can decline.
+    {
+        const DetectedKey chromatic = AudioAnalyzer::detectKey(
+            melody({60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71}), rate);
+
+        const DetectedKey clear = AudioAnalyzer::detectKey(
+            melody({60, 64, 67, 72, 67, 64, 60, 67, 60, 64, 67, 60}), rate);
+
+        check(clear.confidence > chromatic.confidence,
+              "a clear key is more confident than a chromatic run (" +
+                  std::to_string(clear.confidence) + " vs " +
+                  std::to_string(chromatic.confidence) + ")");
+        check(chromatic.confidence < 0.25f,
+              "a chromatic run reports low confidence rather than a firm "
+              "wrong answer (got " + std::to_string(chromatic.confidence) + ")");
+    }
+
+    // ---- Silence ------------------------------------------------------------------
+    {
+        const std::vector<float> quiet(static_cast<size_t>(rate), 0.0f);
+        const DetectedKey key = AudioAnalyzer::detectKey(quiet, rate);
+        check(key.confidence < 0.01f,
+              "silence has no key and says so");
+
+        const DetectedKey empty = AudioAnalyzer::detectKey({}, rate);
+        check(empty.confidence < 0.01f, "no audio at all does not crash");
+    }
+
+    // ---- Loudness must not decide the key ------------------------------------------
+    //
+    // The histogram is weighted by duration, not level. One note hummed
+    // loudly used to be able to outweigh everything else, and people do not
+    // hum at a constant level.
+    {
+        auto melodyWithOneLoudNote = [&](float loudGain) {
+            std::vector<float> out;
+            // A clear C major line, but with a single loud F#, which is not
+            // in the key and would drag the answer if level decided it.
+            const std::vector<int> notes = {60, 64, 67, 72, 67, 64, 60, 66};
+            for (size_t n = 0; n < notes.size(); ++n) {
+                const float gain = (n == notes.size() - 1) ? loudGain : 0.35f;
+                const float frequency =
+                    440.0f * std::pow(2.0f, float(notes[n] - 69) / 12.0f);
+                const size_t count = static_cast<size_t>(0.30f * float(rate));
+                for (size_t i = 0; i < count; ++i) {
+                    const float t = float(i) / float(rate);
+                    const float envelope = std::min(1.0f, t / 0.01f) *
+                                           std::min(1.0f, (0.30f - t) / 0.02f);
+                    out.push_back(gain * envelope *
+                                  std::sin(6.28318530718f * frequency * t));
+                }
+            }
+            return out;
+        };
+
+        const DetectedKey quietOutlier = AudioAnalyzer::detectKey(
+            melodyWithOneLoudNote(0.35f), rate);
+        const DetectedKey loudOutlier = AudioAnalyzer::detectKey(
+            melodyWithOneLoudNote(0.95f), rate);
+
+        check(quietOutlier.root == loudOutlier.root &&
+                  quietOutlier.isMinor == loudOutlier.isMinor,
+              "making one note three times louder does not change the key - "
+              "it is the same eight notes for the same length of time");
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -18545,6 +19126,8 @@ int main(int argc, char** argv) {
     testCommandPaletteAndBrowser();
     testPluginHosting();
     testPluginsPanel();
+    testVoiceDetectionBenchmark();
+    testKeyDetectionBias();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

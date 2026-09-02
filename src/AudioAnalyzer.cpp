@@ -757,42 +757,96 @@ DetectedKey AudioAnalyzer::detectKey(const std::vector<float>& samples, int samp
         const int midi = freqToMidi(freq);
         if (midi < 0) continue;
 
-        histogram[midi % 12] += rms;
+        /*
+         * Weighted by duration, not by loudness.
+         *
+         * Every frame is the same length, so counting frames is counting
+         * time. Weighting by RMS instead - which this did - lets one
+         * loudly-hummed note decide the key of the whole take, and people
+         * do not hum at a constant level.
+         */
+        histogram[midi % 12] += 1.0f;
     }
 
-    // Krumhansl major/minor profiles
-    const float majorProfile[12] = {6.35f, 2.23f, 3.48f, 2.33f, 4.38f, 4.09f, 2.52f, 5.19f, 2.39f, 3.66f, 2.29f, 2.88f};
-    const float minorProfile[12] = {6.33f, 2.68f, 3.52f, 5.38f, 2.60f, 3.53f, 2.54f, 4.75f, 3.98f, 2.69f, 3.34f, 3.17f};
+    /*
+     * Aarden-Essen profiles, not Krumhansl-Kessler.
+     *
+     * Aarden-Essen was fitted to the Essen folksong corpus - monophonic
+     * melody, which is exactly what a hum is. Krumhansl-Kessler came from
+     * probe-tone experiments on chords.
+     *
+     * They also matter for a second reason: KK's two halves sum to 41.79
+     * and 44.51, so scoring them with a dot product gives minor a 6.5%
+     * advantage on any flat or noisy histogram - before a single note is
+     * considered. That is what this function used to do, and a hum makes
+     * precisely the kind of flat histogram that trips it. Both Aarden-Essen
+     * halves sum to 100, and the Pearson correlation below is
+     * scale-invariant anyway, so the bias cannot come back by either route.
+     */
+    static const float majorProfile[12] = {
+        17.7661f, 0.145624f, 14.9265f, 0.160186f, 19.8049f, 11.3587f,
+        0.291248f, 22.062f, 0.145624f, 8.15494f, 0.232998f, 4.95122f};
+    static const float minorProfile[12] = {
+        18.2648f, 0.737619f, 14.0499f, 16.8599f, 0.702494f, 14.4362f,
+        0.702494f, 18.6161f, 4.56621f, 1.93186f, 7.37619f, 1.75623f};
 
-    auto correlate = [&](const float profile[12]) {
-        float bestScore = -1.0f;
-        int bestRoot = 0;
-        for (int shift = 0; shift < 12; ++shift) {
-            float score = 0.0f;
-            for (int i = 0; i < 12; ++i) {
-                score += histogram[i] * profile[(i + 12 - shift) % 12];
-            }
-            if (score > bestScore) {
-                bestScore = score;
-                bestRoot = shift;
-            }
+    // Pearson correlation between the histogram and a rotated profile.
+    auto pearson = [&](const float profile[12], int shift) {
+        float meanH = 0.0f, meanP = 0.0f;
+        for (int i = 0; i < 12; ++i) {
+            meanH += histogram[static_cast<size_t>(i)];
+            meanP += profile[i];
         }
-        return std::pair<int, float>(bestRoot, bestScore);
+        meanH /= 12.0f;
+        meanP /= 12.0f;
+
+        float covariance = 0.0f, varianceH = 0.0f, varianceP = 0.0f;
+        for (int i = 0; i < 12; ++i) {
+            const float h = histogram[static_cast<size_t>(i)] - meanH;
+            const float p = profile[(i + 12 - shift) % 12] - meanP;
+            covariance += h * p;
+            varianceH += h * h;
+            varianceP += p * p;
+        }
+        if (varianceH <= 1e-9f || varianceP <= 1e-9f) return 0.0f;
+        return covariance / std::sqrt(varianceH * varianceP);
     };
 
-    auto [majorRoot, majorScore] = correlate(majorProfile);
-    auto [minorRoot, minorScore] = correlate(minorProfile);
+    // Every one of the 24 keys, so the runner-up is known and the margin
+    // between first and second can be reported.
+    float bestScore = -2.0f, secondScore = -2.0f;
+    int bestRoot = 0;
+    bool bestMinor = false;
 
-    if (majorScore >= minorScore) {
-        key.root = majorRoot;
-        key.isMinor = false;
-        key.correlation = majorScore;
-    } else {
-        key.root = minorRoot;
-        key.isMinor = true;
-        key.correlation = minorScore;
+    for (int shift = 0; shift < 12; ++shift) {
+        for (int minorPass = 0; minorPass < 2; ++minorPass) {
+            const float score =
+                pearson(minorPass ? minorProfile : majorProfile, shift);
+            if (score > bestScore) {
+                secondScore = bestScore;
+                bestScore = score;
+                bestRoot = shift;
+                bestMinor = (minorPass != 0);
+            } else if (score > secondScore) {
+                secondScore = score;
+            }
+        }
     }
 
+    key.root = bestRoot;
+    key.isMinor = bestMinor;
+    key.correlation = bestScore;
+
+    /*
+     * How much better the winner is than the runner-up.
+     *
+     * A short hum is often genuinely ambiguous between relative major and
+     * minor, and a confidently-wrong key destroys a take when notes get
+     * snapped to it. Reporting the margin lets the caller decline to snap
+     * rather than guess - which the research is clear is worth more than
+     * any accuracy improvement to the guess itself.
+     */
+    key.confidence = std::max(0.0f, bestScore - secondScore);
     return key;
 }
 

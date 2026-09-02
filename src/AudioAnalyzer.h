@@ -21,6 +21,19 @@ struct DetectedKey {
     int root; // 0=C, 1=C#, ... 11=B
     bool isMinor;
     float correlation;
+
+    /*
+     * How far ahead the winning key is of the runner-up.
+     *
+     * A short hum is often genuinely ambiguous between relative major and
+     * minor. Snapping notes to a confidently-wrong key destroys a take, so
+     * a caller that is about to do that should check this first and decline
+     * rather than guess. Near zero means "no idea".
+     *
+     * Appended, and every future field must be too - this struct is
+     * aggregate-initialised.
+     */
+    float confidence = 0.0f;
 };
 
 struct DrumDebugInfo {

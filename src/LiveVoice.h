@@ -118,6 +118,9 @@ public:
         m_currentNote = -1;
         m_candidateNote = -1;
         m_currentFrequency = 0.0f;
+        m_stableHops = 0;
+        m_stableFrequencySum = 0.0f;
+        m_lastEmittedNote = -1;
         m_currentLevel = 0.0f;
         m_previousLevel = 0.0f;
         m_levelFollower = 0.0f;
@@ -198,6 +201,11 @@ private:
             m_currentNote = -1;
             m_candidateNote = -1;
             m_currentFrequency = 0.0f;
+            m_stableHops = 0;
+            m_stableFrequencySum = 0.0f;
+            // Silence ends the note. Without this, humming the same pitch
+            // either side of a rest produces one note, not two.
+            m_lastEmittedNote = -1;
             std::fill(m_previousSpectrum.begin(), m_previousSpectrum.end(), 0.0f);
 
             // Silence still counts as a flux measurement, and it has to.
@@ -349,21 +357,38 @@ private:
     }
 
     // ---- Melodic ----------------------------------------------------------
+    /*
+     * How long a pitch must hold before it is believed to be a note.
+     *
+     * At a 256-sample hop and 48 kHz this is 5.3 ms per hop, so six hops is
+     * about 32 ms. That is long enough to sit out the slide between two
+     * hummed notes - which takes 60-100 ms and passes through every
+     * semitone on the way - and short enough that the note still lands close
+     * to where it was sung.
+     *
+     * Every one of those passed-through semitones used to become a note the
+     * user had to delete by hand. That is the single thing that makes people
+     * abandon a voice-to-notes tool.
+     */
+    static constexpr int STABLE_HOPS = 9;
+
     void trackPitch(bool onset) {
         const float frequency = AudioAnalyzer::getPitchYIN(m_window, m_sampleRate);
         if (frequency <= 0.0f) {
             m_candidateNote = -1;
+            m_stableHops = 0;
             return;
         }
 
         const int note = AudioAnalyzer::freqToMidi(frequency);
         if (note < 0 || note > 127) {
             m_candidateNote = -1;
+            m_stableHops = 0;
             return;
         }
 
         /*
-         * Two consecutive hops must agree before the note changes.
+         * Two consecutive hops must agree before the READOUT changes.
          *
          * YIN reports the octave below on a single frame often enough that
          * without this the readout flickers between the note and its octave
@@ -372,26 +397,61 @@ private:
          */
         if (note != m_candidateNote) {
             m_candidateNote = note;
+            m_stableHops = 1;
+            m_stableFrequencySum = frequency;
             if (!onset) return;
+        } else {
+            ++m_stableHops;
+            m_stableFrequencySum += frequency;
         }
 
-        const bool changed = (note != m_currentNote);
         m_currentNote = note;
         m_currentFrequency = frequency;
 
-        if (changed || onset) {
-            LiveHit hit;
-            hit.timeSeconds = elapsedSeconds();
-            hit.midiNote = note;
-            hit.frequency = frequency;
-            // Velocity from how hard it was sung. The mapping is deliberately
-            // compressed: a voice has nothing like the dynamic range of the
-            // 0..1 the note format wants, and a linear map leaves everything
-            // sung at a conversational level down at 0.1.
-            hit.velocity = std::clamp(0.35f + m_currentLevel * 4.0f, 0.1f, 1.0f);
-            hit.confidence = 1.0f;
-            appendHit(hit);
-        }
+        /*
+         * A hit is emitted once, when the pitch has held long enough to be
+         * a note rather than a moment during a slide.
+         *
+         * An onset is allowed to emit immediately: a deliberately
+         * re-articulated note is a real note even if the pitch has not
+         * settled, and waiting on those would drop every repeated note in a
+         * line sung on one pitch.
+         */
+        const bool settled = (m_stableHops == STABLE_HOPS);
+        const bool restated = onset && (m_stableHops < STABLE_HOPS);
+        if (!settled && !restated) return;
+
+        // Not the frequency of this instant, but the average across the
+        // hops that agreed - which is the note's stable portion, and is what
+        // the pitch should have been read from all along.
+        const float stableFrequency =
+            m_stableFrequencySum / float(std::max(1, m_stableHops));
+
+        // The note this actually settled on, which after averaging can
+        // differ from the instantaneous reading at the edge of a bin.
+        const int settledNote = AudioAnalyzer::freqToMidi(stableFrequency);
+        if (settledNote < 0 || settledNote > 127) return;
+
+        // The same note still sounding is not a new note. Without this a
+        // held note re-emits every time an onset flickers underneath it.
+        if (!restated && settledNote == m_lastEmittedNote) return;
+        m_lastEmittedNote = settledNote;
+
+        LiveHit hit;
+        // Backdated to where the note actually started, rather than to the
+        // moment it was confirmed - otherwise every note lands late by the
+        // length of the confirmation window, and a whole part drags.
+        hit.timeSeconds = std::max(0.0f,
+            elapsedSeconds() - float(m_stableHops * HOP) / float(m_sampleRate));
+        hit.midiNote = settledNote;
+        hit.frequency = stableFrequency;
+        // Velocity from how hard it was sung. The mapping is deliberately
+        // compressed: a voice has nothing like the dynamic range of the
+        // 0..1 the note format wants, and a linear map leaves everything
+        // sung at a conversational level down at 0.1.
+        hit.velocity = std::clamp(0.35f + m_currentLevel * 4.0f, 0.1f, 1.0f);
+        hit.confidence = std::min(1.0f, float(m_stableHops) / float(STABLE_HOPS));
+        appendHit(hit);
     }
 
     // ---- Drums ------------------------------------------------------------
@@ -463,6 +523,13 @@ private:
         }
         m_hits.push_back(hit);
     }
+
+    // How many consecutive hops the candidate pitch has held, and the sum
+    // of those readings - so the emitted pitch is the average over the
+    // stable portion rather than one instant during a slide.
+    int m_stableHops = 0;
+    float m_stableFrequencySum = 0.0f;
+    int m_lastEmittedNote = -1;
 
     int m_sampleRate = 48000;
     LiveVoiceMode m_mode = LiveVoiceMode::Melodic;
