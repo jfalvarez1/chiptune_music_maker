@@ -18852,6 +18852,343 @@ static void testVoiceDestination() {
     }
 }
 
+
+// ============================================================================
+// 102. Timbre features and the taught drum classifier
+//
+// The old rules - centroid, zero-crossing rate, band ratios - separate a
+// kick from everything else easily and then fail exactly where a beatboxed
+// groove lives, between a snare and a hi-hat, because a snare is half noise
+// and lands in hi-hat territory on both measures.
+//
+// What is asserted here is not that the code runs but that the features
+// actually separate the sounds the old ones could not.
+// ============================================================================
+
+/*
+ * Synthetic vocal percussion.
+ *
+ * Not drum samples - mouth sounds, which is what this classifies. Each is
+ * built from the properties that distinguish the real thing: a kick is a
+ * low pitched thump, a snare is a mid-band noise burst with a body, a
+ * closed hat is short bright noise, an open hat is the same but ringing.
+ *
+ * `variation` moves each one slightly, so training and test examples are
+ * not literally the same buffer - a classifier that only recognises the
+ * exact vectors it was taught has learned nothing.
+ */
+static std::vector<float> vocalPercussion(DrumClass which, int sampleRate,
+                                          uint32_t seed, float variation) {
+    const int count = sampleRate / 4;            // 250 ms, long enough for a ring
+    std::vector<float> out(static_cast<size_t>(count), 0.0f);
+
+    uint32_t rng = seed * 2654435761u + 1u;
+    auto noise = [&rng]() {
+        rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+        return (float(rng & 0xFFFFFF) / 8388608.0f) - 1.0f;
+    };
+
+    // A one-pole low-pass, for shaping noise into a band.
+    float lowState = 0.0f;
+    float highState = 0.0f;
+
+    for (int i = 0; i < count; ++i) {
+        const float t = float(i) / float(sampleRate);
+        float value = 0.0f;
+        float decay = 1.0f;
+
+        switch (which) {
+            case DrumClass::Kick: {
+                // Low, pitched, and gone quickly. A "puh".
+                const float hz = (58.0f + 8.0f * variation) *
+                                 std::exp(-t * 24.0f);
+                decay = std::exp(-t * 26.0f);
+                value = std::sin(6.28318530718f * hz * t) * 0.9f +
+                        noise() * 0.06f * std::exp(-t * 90.0f);
+                break;
+            }
+            case DrumClass::Snare: {
+                // Mid-band noise with a body around 250 Hz. A "kuh".
+                decay = std::exp(-t * (13.0f + 2.0f * variation));
+                const float n = noise();
+                lowState += (n - lowState) * 0.30f;      // band-limited noise
+                value = lowState * 0.75f +
+                        std::sin(6.28318530718f * (215.0f + 30.0f * variation) * t) *
+                            0.35f * std::exp(-t * 22.0f);
+                break;
+            }
+            case DrumClass::HatClosed: {
+                // Bright noise, over almost at once. A "tss".
+                decay = std::exp(-t * (58.0f + 8.0f * variation));
+                const float n = noise();
+                highState += (n - highState) * 0.85f;
+                value = (n - highState) * 0.85f;         // high-passed noise
+                break;
+            }
+            default: {
+                // The same brightness, but it rings. A "tshh".
+                decay = std::exp(-t * (7.0f + 1.5f * variation));
+                const float n = noise();
+                highState += (n - highState) * 0.85f;
+                value = (n - highState) * 0.80f;
+                break;
+            }
+        }
+
+        const float attack = std::min(1.0f, t / 0.002f);
+        out[static_cast<size_t>(i)] = value * decay * attack * 0.7f;
+    }
+    return out;
+}
+
+// The features of one synthetic hit, through the same path the tracker uses.
+static TimbreFeatures featuresOf(const std::vector<float>& audio, int sampleRate) {
+    constexpr int WINDOW = 1024;
+    constexpr int BINS = WINDOW / 2;
+
+    std::vector<float> window(WINDOW, 0.0f);
+    for (int i = 0; i < WINDOW && i < int(audio.size()); ++i) {
+        window[static_cast<size_t>(i)] = audio[static_cast<size_t>(i)];
+    }
+
+    // Magnitude spectrum, Hann-windowed, as the tracker computes it.
+    std::vector<float> real(WINDOW), imag(WINDOW, 0.0f);
+    for (int i = 0; i < WINDOW; ++i) {
+        const float hann = 0.5f * (1.0f - std::cos(6.28318530718f * float(i) /
+                                                   float(WINDOW - 1)));
+        real[static_cast<size_t>(i)] = window[static_cast<size_t>(i)] * hann;
+    }
+    DSP::FFTPlan plan;
+    plan.resize(WINDOW);
+    plan.transform(real.data(), imag.data());
+
+    std::vector<float> spectrum(BINS);
+    for (int bin = 0; bin < BINS; ++bin) {
+        spectrum[static_cast<size_t>(bin)] =
+            std::sqrt(real[static_cast<size_t>(bin)] * real[static_cast<size_t>(bin)] +
+                      imag[static_cast<size_t>(bin)] * imag[static_cast<size_t>(bin)]);
+    }
+
+    // The envelope descriptors want the whole sound, not one window - the
+    // difference between a closed and an open hat is entirely in how long
+    // it rings, which 1024 samples cannot show.
+    return extractTimbre(audio.data(), int(audio.size()),
+                         spectrum.data(), BINS, sampleRate);
+}
+
+static void testVoiceTimbre() {
+    beginTest("Vocal percussion timbre and k-NN");
+
+    const int rate = 44100;
+
+    // ---- MFCCs describe spectral shape ---------------------------------------
+    {
+        // A bright sound and a dark one must not produce the same numbers.
+        const TimbreFeatures kick =
+            featuresOf(vocalPercussion(DrumClass::Kick, rate, 1, 0.0f), rate);
+        const TimbreFeatures hat =
+            featuresOf(vocalPercussion(DrumClass::HatClosed, rate, 2, 0.0f), rate);
+
+        check(kick.finite(), "a kick produces usable features");
+        check(hat.finite(), "and so does a hat");
+
+        float difference = 0.0f;
+        for (int f = 0; f < MFCC_COUNT; ++f) {
+            difference += std::fabs(kick.values[size_t(f)] - hat.values[size_t(f)]);
+        }
+        check(difference > 1.0f,
+              "a kick and a hat have visibly different spectral shape (sum of "
+              "differences " + std::to_string(difference) + ")");
+    }
+
+    // ---- The envelope descriptors separate short from long ----------------------
+    //
+    // This is the half the spectrum cannot do. A closed and an open hat are
+    // the same noise; only the ringing tells them apart.
+    {
+        const TimbreFeatures closed =
+            featuresOf(vocalPercussion(DrumClass::HatClosed, rate, 3, 0.0f), rate);
+        const TimbreFeatures open =
+            featuresOf(vocalPercussion(DrumClass::HatOpen, rate, 4, 0.0f), rate);
+
+        // Index MFCC_COUNT + 3 is the temporal centroid ratio: where the
+        // sound's weight sits along its own length.
+        const float closedCentroid = closed.values[size_t(MFCC_COUNT + 3)];
+        const float openCentroid = open.values[size_t(MFCC_COUNT + 3)];
+
+        check(openCentroid > closedCentroid,
+              "an open hat carries its weight later than a closed one (" +
+                  std::to_string(openCentroid) + " vs " +
+                  std::to_string(closedCentroid) + ") - which is the only "
+                  "thing that distinguishes them, and it is not in the spectrum");
+    }
+
+    // ---- Degenerate input ------------------------------------------------------
+    {
+        std::vector<float> silence(2048, 0.0f);
+        const TimbreFeatures quiet = featuresOf(silence, rate);
+        check(quiet.finite(),
+              "silence produces finite features rather than NaN - one NaN "
+              "makes every distance NaN and the classifier answers the same "
+              "thing forever");
+
+        float envelope[ENVELOPE_COUNT];
+        computeEnvelopeDescriptors(nullptr, 0, envelope);
+        computeEnvelopeDescriptors(silence.data(), 1, envelope);
+        check(std::isfinite(envelope[0]), "a one-sample window does not divide by zero");
+
+        computeMFCC(nullptr, 0, rate, nullptr, 0);   // must not crash
+        check(true, "null inputs are refused rather than dereferenced");
+    }
+
+    // ---- The classifier ---------------------------------------------------------
+    {
+        DrumClassifier classifier;
+        check(!classifier.trained(),
+              "an untaught classifier is not trained, so the built-in rules "
+              "are used instead of it answering confidently from nothing");
+        check(!classifier.classify(TimbreFeatures{}).valid,
+              "and it refuses to classify");
+
+        // One class is not a classifier - it would answer 'kick' to
+        // everything, with total confidence.
+        for (int i = 0; i < 5; ++i) {
+            classifier.addExample(
+                featuresOf(vocalPercussion(DrumClass::Kick, rate, uint32_t(100 + i),
+                                           float(i) * 0.2f), rate),
+                DrumClass::Kick);
+        }
+        check(!classifier.trained(),
+              "one taught class is still not a classifier");
+
+        // Teach all four, five examples each.
+        const DrumClass CLASSES[] = {DrumClass::Snare, DrumClass::HatClosed,
+                                     DrumClass::HatOpen};
+        for (DrumClass label : CLASSES) {
+            for (int i = 0; i < 5; ++i) {
+                classifier.addExample(
+                    featuresOf(vocalPercussion(label, rate,
+                                               uint32_t(int(label) * 50 + i),
+                                               float(i) * 0.2f), rate),
+                    label);
+            }
+        }
+
+        check(classifier.trained(), "four taught classes make a classifier");
+        check(classifier.exampleCount() == 20, "with twenty examples in it");
+        check(classifier.countFor(DrumClass::Snare) == 5, "five of each");
+
+        /*
+         * The measurement that matters.
+         *
+         * Held-out sounds - different seeds and variations from anything
+         * taught - so this is recognition rather than recall. A classifier
+         * that only matches the exact vectors it was given has learned
+         * nothing.
+         */
+        int correct = 0, total = 0;
+        int snareHatConfusions = 0;
+
+        const DrumClass ALL[] = {DrumClass::Kick, DrumClass::Snare,
+                                 DrumClass::HatClosed, DrumClass::HatOpen};
+        for (DrumClass truth : ALL) {
+            for (int i = 0; i < 6; ++i) {
+                const TimbreFeatures features = featuresOf(
+                    vocalPercussion(truth, rate, uint32_t(9000 + int(truth) * 31 + i),
+                                    0.1f + float(i) * 0.15f), rate);
+                const DrumClassifier::Result guess = classifier.classify(features);
+                ++total;
+                if (guess.valid && guess.label == truth) ++correct;
+
+                // The confusion the old rules could not avoid.
+                const bool truthIsSnare = (truth == DrumClass::Snare);
+                const bool guessIsHat = guess.valid &&
+                    (guess.label == DrumClass::HatClosed ||
+                     guess.label == DrumClass::HatOpen);
+                if (truthIsSnare && guessIsHat) ++snareHatConfusions;
+            }
+        }
+
+        const float accuracy = float(correct) / float(std::max(1, total));
+        std::printf("        k-NN accuracy   %d/%d (%.0f%%), %d snare-as-hat\n",
+                    correct, total, accuracy * 100.0f, snareHatConfusions);
+        std::fflush(stdout);
+
+        check(accuracy >= 0.75f,
+              "held-out sounds are classified correctly at least three times "
+              "in four - " + std::to_string(int(accuracy * 100.0f)) + "%");
+        check(snareHatConfusions <= 2,
+              "and a snare is rarely mistaken for a hi-hat, which is the "
+              "confusion the rules it replaces could not avoid (" +
+                  std::to_string(snareHatConfusions) + ")");
+
+        // ---- Persistence -------------------------------------------------------
+        {
+            const std::string path = "vocal-drums-test.ini";
+            check(classifier.save(path), "taught sounds save");
+
+            DrumClassifier reloaded;
+            check(reloaded.load(path), "and load again");
+            check(reloaded.exampleCount() == classifier.exampleCount(),
+                  "with every example intact");
+            check(reloaded.trained(), "and still trained");
+
+            // The same answer either side of a save, or the file is not
+            // actually carrying what the classifier uses.
+            const TimbreFeatures probe = featuresOf(
+                vocalPercussion(DrumClass::Snare, rate, 777, 0.3f), rate);
+            const DrumClassifier::Result before = classifier.classify(probe);
+            const DrumClassifier::Result after = reloaded.classify(probe);
+            check(before.valid && after.valid && before.label == after.label,
+                  "and gives the same answer as before it was saved");
+
+            // A file from another version loses only the lines it cannot read.
+            {
+                std::ofstream damaged(path, std::ios::app);
+                damaged << "2 1.0 2.0\n";           // too few features
+                damaged << "99 " << std::string(60, '0') << "\n";  // bad label
+                damaged << "not a number at all\n";
+            }
+            DrumClassifier tolerant;
+            check(tolerant.load(path), "a damaged file still loads");
+            check(tolerant.exampleCount() == classifier.exampleCount(),
+                  "keeping every good line and skipping the bad ones");
+
+            std::remove(path.c_str());
+            check(!reloaded.load("no-such-training-file.ini"),
+                  "a missing file is reported rather than thrown");
+        }
+
+        // ---- Undoing a bad example ---------------------------------------------
+        {
+            const int before = classifier.countFor(DrumClass::Snare);
+            check(classifier.removeLast(DrumClass::Snare),
+                  "the most recent example of a class can be taken back");
+            check(classifier.countFor(DrumClass::Snare) == before - 1,
+                  "and it is gone");
+        }
+
+        classifier.clear();
+        check(classifier.exampleCount() == 0 && !classifier.trained(),
+              "and everything can be forgotten");
+    }
+
+    // ---- The prescribed sounds are named ----------------------------------------
+    //
+    // The research is emphatic that telling people which sounds to make
+    // beats letting them choose - so the names must actually be there to
+    // show.
+    {
+        const DrumClass ALL[] = {DrumClass::Kick, DrumClass::Snare,
+                                 DrumClass::HatClosed, DrumClass::HatOpen};
+        for (DrumClass value : ALL) {
+            check(std::strlen(drumClassName(value)) > 0, "every class has a name");
+            check(std::strlen(drumClassPhoneme(value)) > 0,
+                  "and a mouth sound to teach for it");
+        }
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -19602,6 +19939,7 @@ int main(int argc, char** argv) {
     testKeyDetectionBias();
     testVoiceRoles();
     testVoiceDestination();
+    testVoiceTimbre();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

@@ -9511,6 +9511,108 @@ inline void PollVoiceCapture() {
     g_VoiceDevice.decayMeter();
 }
 
+
+// ============================================================================
+// Teaching the vocal drum classifier
+// ============================================================================
+
+static DrumClassifier g_VocalDrums;
+
+inline DrumClassifier& vocalDrumClassifier() { return g_VocalDrums; }
+
+/*
+ * The teaching block, shown in drum mode.
+ *
+ * Every example is taken from the LAST HIT the tracker heard, rather than
+ * from a separate recording mode. The user beatboxes, sees what it guessed,
+ * and corrects it - which is both less work than a training wizard and
+ * teaches on exactly the sounds they are actually going to make.
+ */
+inline void DrawVocalDrumTraining(UIState& ui) {
+    if (!ImGui::TreeNode("Teach your drum sounds")) return;
+
+    /*
+     * The prescribed sounds, said plainly.
+     *
+     * The counterintuitive research finding is that sticking to a fixed set
+     * of mouth sounds beats using whatever you like by a wide margin - so
+     * the sounds are named here rather than left to be guessed at. /t/ is
+     * deliberately not among them: it is what most people reach for and it
+     * cannot be told apart from "tss" and "tshh" reliably.
+     */
+    ImGui::TextWrapped(
+        "These four separate best. Beatbox a hit, then press the drum it "
+        "was meant to be - it learns from what you just played.");
+
+    const bool haveHit = g_Voice.tracker.haveLastTimbre();
+    if (!haveHit) {
+        ImGui::TextDisabled("Make a sound first, then teach it.");
+    }
+
+    for (int c = 0; c < int(DrumClass::Count); ++c) {
+        const DrumClass label = static_cast<DrumClass>(c);
+        ImGui::PushID(c);
+
+        const int taught = g_VocalDrums.countFor(label);
+
+        ImGui::BeginDisabled(!haveHit);
+        if (ImGui::Button(drumClassName(label), ImVec2(90, 0))) {
+            g_VocalDrums.addExample(g_Voice.tracker.lastTimbre(), label);
+            g_VocalDrums.save(drumTrainingPath(ui.settingsDirectory));
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("say %s", drumClassPhoneme(label));
+
+        ImGui::SameLine(220.0f);
+        // Green once there are enough of this one to be usable.
+        const bool enough = taught >= DrumClassifier::MIN_PER_CLASS;
+        ImGui::TextColored(enough ? ImVec4(0.5f, 0.9f, 0.5f, 1.0f)
+                                  : ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                           "%d", taught);
+
+        if (taught > 0) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("undo")) {
+                g_VocalDrums.removeLast(label);
+                g_VocalDrums.save(drumTrainingPath(ui.settingsDirectory));
+            }
+        }
+
+        ImGui::PopID();
+    }
+
+    ImGui::Separator();
+
+    /*
+     * Which classifier is actually deciding, said out loud.
+     *
+     * Teaching two examples and assuming it is now using them - when it
+     * silently needs three of two different sounds - is the kind of thing
+     * that makes people conclude the feature does not work.
+     */
+    if (g_VocalDrums.trained()) {
+        ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.5f, 1.0f),
+                           "Using your sounds (%d taught)",
+                           g_VocalDrums.exampleCount());
+    } else {
+        ImGui::TextDisabled("Using the built-in rules.");
+        ImGui::TextWrapped(
+            "Teach at least %d each of two different drums to use yours "
+            "instead.", DrumClassifier::MIN_PER_CLASS);
+    }
+
+    if (g_VocalDrums.exampleCount() > 0) {
+        if (ImGui::SmallButton("Forget everything")) {
+            g_VocalDrums.clear();
+            g_VocalDrums.save(drumTrainingPath(ui.settingsDirectory));
+        }
+    }
+
+    ImGui::TreePop();
+}
+
 inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SetNextWindowPos(ImVec2(320, 200), ImGuiCond_FirstUseEver);
     // Tall enough that the whole thing fits at the default size rather than
@@ -9649,6 +9751,9 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
     // ---- What to detect ----------------------------------------------------
     ImGui::SetNextItemWidth(150);
     const char* modes = "Melody\0Drums / beatbox\0Rhythm\0Polyphonic\0";
+    // The tracker uses the taught sounds when there are enough of them.
+    g_Voice.tracker.setClassifier(&g_VocalDrums);
+
     if (ImGui::Combo("Detect", &g_Voice.analysisMode, modes)) {
         g_Voice.tracker.setMode(g_Voice.analysisMode == 1 ? LiveVoiceMode::Drums
                                                           : LiveVoiceMode::Melodic);
@@ -9672,6 +9777,12 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
             "one hit is arriving as two.");
     }
 
+    // Teaching belongs with the other drum settings, and has nothing to say
+    // about a hummed melody.
+    if (g_Voice.analysisMode == 1) {
+        DrawVocalDrumTraining(ui);
+    }
+
     // ---- Live readout ------------------------------------------------------
     if (g_Voice.liveMode && running) {
         ImGui::Separator();
@@ -9683,6 +9794,7 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
                 switch (g_Voice.tracker.hits().back().drumType) {
                     case 0: lastHit = "KICK"; break;
                     case 2: lastHit = "HAT"; break;
+                    case 3: lastHit = "OPEN HAT"; break;
                     default: lastHit = "SNARE"; break;
                 }
             }

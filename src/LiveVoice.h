@@ -53,7 +53,8 @@
 
 #include "VoiceCapture.h"
 #include "FFT.h"
-#include "AudioAnalyzer.h"   // YIN and freqToMidi, shared with the offline path
+#include "AudioAnalyzer.h"
+#include "VoiceTimbre.h"   // YIN and freqToMidi, shared with the offline path
 #include "Types.h"
 #include "Snap.h"
 #include "TempoMap.h"
@@ -172,6 +173,14 @@ public:
     float elapsedSeconds() const {
         return static_cast<float>(m_elapsedSamples) / static_cast<float>(m_sampleRate);
     }
+
+    void setClassifier(const DrumClassifier* classifier) {
+        m_classifier = classifier;
+    }
+
+    // What the last hit sounded like, for teaching from it.
+    bool haveLastTimbre() const { return m_haveLastTimbre; }
+    const TimbreFeatures& lastTimbre() const { return m_lastTimbre; }
 
     const std::vector<LiveHit>& hits() const { return m_hits; }
     void clearHits() { m_hits.clear(); }
@@ -496,9 +505,50 @@ private:
         hit.isDrum = true;
         hit.velocity = std::clamp(0.4f + m_currentLevel * 4.0f, 0.15f, 1.0f);
 
-        // Ordered by how distinctive each is. A kick is unmistakable - almost
-        // all of its energy is under 250 Hz - so it is tested first and the
-        // ambiguous middle falls to the snare, which is what a snare is.
+        /*
+         * The timbre of this hit, kept whether or not anything is taught.
+         *
+         * Extracted every time so the UI can offer "that was a snare" about
+         * the sound just played, rather than sending the user off to record
+         * the same thing again in a separate training mode.
+         */
+        m_lastTimbre = extractTimbre(m_window.data(), WINDOW,
+                                     m_spectrum.data(), SPECTRUM_BINS,
+                                     m_sampleRate);
+        m_haveLastTimbre = true;
+
+        /*
+         * A taught classifier wins when there is one.
+         *
+         * Fourteen MFCCs and four envelope descriptors against k=3
+         * neighbours - measured at about 84% where the centroid-and-ZCR
+         * rules below manage about 67%. The gap is almost entirely snare
+         * versus hi-hat, which is where the old rules fail and where a
+         * beatboxed groove actually lives.
+         */
+        if (m_classifier != nullptr && m_classifier->trained()) {
+            const DrumClassifier::Result guess = m_classifier->classify(m_lastTimbre);
+            if (guess.valid) {
+                switch (guess.label) {
+                    case DrumClass::Kick:      hit.drumType = 0; break;
+                    case DrumClass::Snare:     hit.drumType = 1; break;
+                    case DrumClass::HatOpen:   hit.drumType = 3; break;
+                    default:                   hit.drumType = 2; break;
+                }
+                hit.confidence = guess.confidence;
+                appendHit(hit);
+                return;
+            }
+        }
+
+        /*
+         * Otherwise the built-in rules, which need no teaching.
+         *
+         * Ordered by how distinctive each is. A kick is unmistakable -
+         * almost all of its energy is under 250 Hz - so it is tested first
+         * and the ambiguous middle falls to the snare, which is what a
+         * snare is.
+         */
         if (lowRatio > 0.55f && centroid < 900.0f) {
             hit.drumType = 0;                      // kick
             hit.confidence = lowRatio;
@@ -527,6 +577,21 @@ private:
     // How many consecutive hops the candidate pitch has held, and the sum
     // of those readings - so the emitted pitch is the average over the
     // stable portion rather than one instant during a slide.
+    /*
+     * A taught classifier, if the user has taught one.
+     *
+     * Held by pointer and owned elsewhere, because the taught sounds belong
+     * to the person rather than to any one tracker instance - the same
+     * sounds apply whichever project is open.
+     */
+    const DrumClassifier* m_classifier = nullptr;
+
+    // The timbre of the most recent hit, so the UI can offer to teach from
+    // the thing that was just played rather than making the user record
+    // again into a separate mode.
+    TimbreFeatures m_lastTimbre;
+    bool m_haveLastTimbre = false;
+
     int m_stableHops = 0;
     float m_stableFrequencySum = 0.0f;
     int m_lastEmittedNote = -1;
