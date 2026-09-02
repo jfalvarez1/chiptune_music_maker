@@ -192,6 +192,27 @@ struct VoicePanelState {
     bool replacePattern = false;
     int targetChannel = 0;
 
+    /*
+     * Where the take is going.
+     *
+     * -1 means a new pattern, which is the default: a take that silently
+     * merges into whatever pattern was last selected somewhere else is how
+     * people lose work they did not know was at risk.
+     */
+    int targetPattern = -1;
+    char newPatternName[48] = {};
+
+    // Where in the pattern the take starts.
+    enum class Placement : int { PatternStart = 0, Playhead, Bar };
+    int placement = static_cast<int>(Placement::PatternStart);
+    int placementBar = 1;      // 1-based, as bars are shown everywhere else
+
+    // Renaming the pattern being written into, from here, so the take can be
+    // labelled without going to find another panel.
+    char renameBuffer[48] = {};
+    bool renaming = false;
+
+
     // Live tracking.
     LiveVoiceTracker tracker;
     bool armed = false;
@@ -200,6 +221,44 @@ struct VoicePanelState {
     std::array<float, 128> levelHistory{};
     int levelCursor = 0;
 };
+
+
+/*
+ * Shift a take to where it should start, and say how long it needs.
+ *
+ * Separate from the UI so the arithmetic can be tested: an off-by-one on
+ * the bar number puts a carefully sung part one bar out, which is the kind
+ * of thing that is obvious in a test and maddening in a session.
+ */
+inline void placeNotesAt(std::vector<Note>& notes, float startBeat) {
+    if (startBeat <= 0.0f) return;
+    for (Note& note : notes) note.startTime += startBeat;
+}
+
+// The beat a take should start on, given the placement choice.
+inline float placementStartBeat(int placement, int bar, float playheadBeat,
+                                int beatsPerMeasure) {
+    switch (static_cast<VoicePanelState::Placement>(placement)) {
+        case VoicePanelState::Placement::Playhead:
+            return std::max(0.0f, playheadBeat);
+        case VoicePanelState::Placement::Bar:
+            // Bars are 1-based in the UI and 0-based in beats, which is
+            // exactly the sort of thing that silently puts a part one bar
+            // out if it is done at the call site each time.
+            return std::max(0, bar - 1) * float(std::max(1, beatsPerMeasure));
+        default:
+            return 0.0f;
+    }
+}
+
+// How long a pattern has to be to hold these notes without clipping the end.
+inline int patternLengthFor(const std::vector<Note>& notes, int existingLength) {
+    float furthest = 0.0f;
+    for (const Note& note : notes) {
+        furthest = std::max(furthest, note.startTime + note.duration);
+    }
+    return std::max(existingLength, static_cast<int>(std::ceil(furthest)));
+}
 
 // ============================================================================
 // Turning DetectedNote (seconds) into Note (beats)

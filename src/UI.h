@@ -9513,8 +9513,38 @@ inline void PollVoiceCapture() {
 
 inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SetNextWindowPos(ImVec2(320, 200), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(430, 460), ImGuiCond_FirstUseEver);
+    // Tall enough that the whole thing fits at the default size rather than
+    // relying on the footer below to rescue it.
+    ImGui::SetNextWindowSize(ImVec2(430, 620), ImGuiCond_FirstUseEver);
     ImGui::Begin("Voice to Notes");
+
+    /*
+     * Everything above the commit block scrolls; the commit block does not.
+     *
+     * The panel's content outgrew its window, which put "Add to Pattern" -
+     * the one thing the panel exists to do - below the fold, reachable only
+     * by scrolling. A panel whose primary action is off screen is one people
+     * conclude is broken.
+     *
+     * The footer is sized from the frame height rather than a pixel count so
+     * it stays right at any font scale or theme padding.
+     */
+    float footerHeight = ImGui::GetFrameHeightWithSpacing() * 7.2f +
+                         ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+
+    /*
+     * Never more than half the panel.
+     *
+     * Docked into a short column the footer would otherwise take the whole
+     * window and leave the scrolling part zero pixels high - which trades
+     * an unreachable Add button for unreachable capture controls. The footer
+     * scrolls instead when there is genuinely no room, which is the lesser
+     * of the two failures.
+     */
+    const float available = ImGui::GetContentRegionAvail().y;
+    footerHeight = std::min(footerHeight, available * 0.55f);
+
+    ImGui::BeginChild("##voicescroll", ImVec2(0.0f, -footerHeight), false);
 
     // ---- Input device ------------------------------------------------------
     if (!g_Voice.devicesEnumerated) {
@@ -9792,14 +9822,157 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
 
     ImGui::Checkbox("Use my dynamics", &g_Voice.options.useVelocity);
     ImGui::SameLine();
-    ImGui::Checkbox("Replace pattern", &g_Voice.replacePattern);
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("On, the take replaces what is in the pattern.\n"
-                          "Off, it is added alongside.");
-    }
 
     const size_t pending = g_Voice.liveMode ? g_Voice.tracker.hits().size()
                                             : g_Voice.detected.size();
+
+    /*
+     * Where the take is going.
+     *
+     * This used to be nowhere: notes went into whatever pattern happened to
+     * be selected in another panel, under whatever name it already had,
+     * always at beat zero - and nothing here said which pattern that was.
+     * The most common outcome of a good take was discovering it had
+     * overwritten something else.
+     */
+    ImGui::EndChild();
+
+    ImGui::SeparatorText("Destination");
+
+    // ---- Which pattern -------------------------------------------------------
+    {
+        const bool toNew = (g_Voice.targetPattern < 0);
+        std::string label = "+ New pattern";
+        if (!toNew && g_Voice.targetPattern <
+                          static_cast<int>(project.patterns.size())) {
+            label = project.patterns[static_cast<size_t>(
+                        g_Voice.targetPattern)].name;
+        }
+
+        ImGui::SetNextItemWidth(-90.0f);
+        if (ImGui::BeginCombo("Pattern", label.c_str())) {
+            // New first, because it is the default and the safe choice - it
+            // cannot destroy anything that is already there.
+            if (ImGui::Selectable("+ New pattern", toNew)) {
+                g_Voice.targetPattern = -1;
+            }
+            for (size_t i = 0; i < project.patterns.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                const bool selected = (static_cast<int>(i) == g_Voice.targetPattern);
+                if (ImGui::Selectable(project.patterns[i].name.c_str(), selected)) {
+                    g_Voice.targetPattern = static_cast<int>(i);
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    // ---- What it is called ----------------------------------------------------
+    if (g_Voice.targetPattern < 0) {
+        // Named before it exists, so the take arrives with a name rather
+        // than as the fourth thing called "Pattern".
+        if (g_Voice.newPatternName[0] == '\0') {
+            snprintf(g_Voice.newPatternName, sizeof(g_Voice.newPatternName),
+                     "%s %d", voiceRoleName(g_Voice.options.role),
+                     static_cast<int>(project.patterns.size() + 1));
+        }
+        ImGui::SetNextItemWidth(-90.0f);
+        ImGui::InputText("Name", g_Voice.newPatternName,
+                         sizeof(g_Voice.newPatternName));
+    } else if (g_Voice.targetPattern < static_cast<int>(project.patterns.size())) {
+        // And an existing one can be renamed from here, rather than making
+        // somebody go and find the Patterns panel to do it.
+        Pattern& target = project.patterns[static_cast<size_t>(g_Voice.targetPattern)];
+        if (!g_Voice.renaming) {
+            ImGui::Text("Into \"%s\"", target.name.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Rename")) {
+                snprintf(g_Voice.renameBuffer, sizeof(g_Voice.renameBuffer),
+                         "%s", target.name.c_str());
+                g_Voice.renaming = true;
+            }
+        } else {
+            ImGui::SetNextItemWidth(-140.0f);
+            const bool committed = ImGui::InputText(
+                "##rename", g_Voice.renameBuffer, sizeof(g_Voice.renameBuffer),
+                ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("OK") || committed) {
+                if (g_Voice.renameBuffer[0] != '\0') {
+                    g_UndoHistory.saveState(project, "Rename Pattern");
+                    target.name = g_Voice.renameBuffer;
+                }
+                g_Voice.renaming = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Cancel")) g_Voice.renaming = false;
+        }
+    }
+
+    /*
+     * Replacing only means something when there is something there.
+     *
+     * A new pattern is empty, so "replace" and "add alongside" do exactly
+     * the same thing - and a control that visibly does nothing is one people
+     * assume is broken, or worse, one they trust to be protecting them.
+     */
+    {
+        const bool toNew = (g_Voice.targetPattern < 0);
+        if (toNew) ImGui::BeginDisabled();
+        ImGui::Checkbox("Replace what is there", &g_Voice.replacePattern);
+        if (toNew) ImGui::EndDisabled();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                toNew ? "A new pattern is empty - there is nothing to replace."
+                      : "On, the take replaces what is in the pattern.\n"
+                        "Off, it is added alongside.");
+        }
+    }
+
+    // ---- Where it starts --------------------------------------------------------
+    {
+        ImGui::SetNextItemWidth(-90.0f);
+        const char* placements = "From the start\0At the playhead\0At a bar\0";
+        ImGui::Combo("Start", &g_Voice.placement, placements);
+
+        if (g_Voice.placement ==
+            static_cast<int>(VoicePanelState::Placement::Bar)) {
+            ImGui::SetNextItemWidth(-90.0f);
+            ImGui::InputInt("Bar", &g_Voice.placementBar);
+            g_Voice.placementBar = std::max(1, g_Voice.placementBar);
+        }
+    }
+
+    const float startBeat = placementStartBeat(
+        g_Voice.placement, g_Voice.placementBar,
+        seq.getCurrentBeat(), project.beatsPerMeasure);
+
+    // ---- What is about to happen, in one line ------------------------------------
+    //
+    // Said before the button rather than discovered after it. Every question
+    // somebody has at this moment - how many, where to, called what, from
+    // which bar - answered where they are looking.
+    {
+        const int bar = static_cast<int>(startBeat /
+                            float(std::max(1, project.beatsPerMeasure))) + 1;
+        const std::string name = (g_Voice.targetPattern < 0)
+            ? std::string(g_Voice.newPatternName)
+            : project.patterns[static_cast<size_t>(
+                  std::clamp(g_Voice.targetPattern, 0,
+                             static_cast<int>(project.patterns.size()) - 1))].name;
+
+        if (pending == 0) {
+            ImGui::TextDisabled("Nothing captured yet.");
+        } else {
+            ImGui::TextWrapped("%d note%s %s \"%s\", from bar %d.",
+                               static_cast<int>(pending),
+                               pending == 1 ? "" : "s",
+                               g_Voice.replacePattern ? "replacing" : "into",
+                               name.c_str(), bar);
+        }
+    }
 
     ImGui::BeginDisabled(pending == 0);
     if (ImGui::Button("Add to Pattern", ImVec2(-1, 30))) {
@@ -9814,13 +9987,26 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
                                     g_Voice.options);
         }
 
-        if (!notes.empty() && ui.selectedPattern >= 0 &&
-            ui.selectedPattern < static_cast<int>(project.patterns.size())) {
+        if (!notes.empty()) {
             // Through the same undo history as every other edit, so a take
             // that came out wrong is one Ctrl+Z away.
             g_UndoHistory.saveState(project, "Voice to Notes");
 
-            Pattern& pattern = project.patterns[static_cast<size_t>(ui.selectedPattern)];
+            // Move it to where it was asked to start, before anything is
+            // written, so the pattern length below accounts for the offset.
+            placeNotesAt(notes, startBeat);
+
+            int index = g_Voice.targetPattern;
+            if (index < 0 || index >= static_cast<int>(project.patterns.size())) {
+                Pattern fresh;
+                fresh.name = (g_Voice.newPatternName[0] != '\0')
+                    ? g_Voice.newPatternName
+                    : (std::string(voiceRoleName(g_Voice.options.role)) + " take");
+                project.patterns.push_back(fresh);
+                index = static_cast<int>(project.patterns.size()) - 1;
+            }
+
+            Pattern& pattern = project.patterns[static_cast<size_t>(index)];
             if (g_Voice.replacePattern) pattern.notes.clear();
             for (Note& note : notes) {
                 clampNoteToValidRanges(note);
@@ -9829,12 +10015,19 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
 
             // The pattern has to be long enough to hold what was just sung,
             // or the end of the take is written and never plays.
-            float furthest = 0.0f;
-            for (const Note& note : pattern.notes) {
-                furthest = std::max(furthest, note.startTime + note.duration);
-            }
-            pattern.length = std::max(pattern.length,
-                                      static_cast<int>(std::ceil(furthest)));
+            pattern.length = patternLengthFor(pattern.notes, pattern.length);
+
+            /*
+             * Select what was just made.
+             *
+             * The piano roll draws the selected pattern, so this is what
+             * puts the take in front of the user instead of leaving them to
+             * go and find it. It is also the answer to "where did my notes
+             * go" - they are on screen.
+             */
+            ui.selectedPattern = index;
+            g_Voice.targetPattern = index;
+            g_Voice.newPatternName[0] = '\0';
 
             if (g_Voice.liveMode) g_Voice.tracker.clearHits();
             else g_Voice.detected.clear();

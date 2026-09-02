@@ -18580,6 +18580,278 @@ static void testVoiceRoles() {
     }
 }
 
+
+// ============================================================================
+// 101. Where a take goes, and what it is called
+//
+// A take used to land in whatever pattern happened to be selected in another
+// panel, under whatever name that already had, always at beat zero - with
+// nothing in the Voice panel saying which pattern that was. The most common
+// outcome of a good take was finding it had overwritten something else.
+// ============================================================================
+static void testVoiceDestination() {
+    beginTest("Voice destination: pattern, name and position");
+
+    // ---- Placement arithmetic ------------------------------------------------
+    //
+    // An off-by-one here puts a carefully sung part one bar out, which is
+    // obvious in a test and maddening in a session.
+    {
+        using P = VoicePanelState::Placement;
+
+        check(placementStartBeat(int(P::PatternStart), 5, 12.0f, 4) == 0.0f,
+              "from the start means beat zero, whatever the playhead is doing");
+        check(placementStartBeat(int(P::Playhead), 5, 12.0f, 4) == 12.0f,
+              "at the playhead means the playhead");
+
+        // Bars are 1-based where people read them, 0-based in beats.
+        check(placementStartBeat(int(P::Bar), 1, 0.0f, 4) == 0.0f,
+              "bar 1 is beat 0");
+        check(placementStartBeat(int(P::Bar), 5, 0.0f, 4) == 16.0f,
+              "bar 5 in 4/4 is beat 16 (got " +
+                  std::to_string(placementStartBeat(int(P::Bar), 5, 0.0f, 4)) + ")");
+        check(placementStartBeat(int(P::Bar), 5, 0.0f, 3) == 12.0f,
+              "bar 5 in 3/4 is beat 12 - the meter is respected");
+
+        // Nonsense must not produce a negative start.
+        check(placementStartBeat(int(P::Bar), 0, 0.0f, 4) == 0.0f,
+              "bar zero clamps to the beginning rather than going negative");
+        check(placementStartBeat(int(P::Bar), -3, 0.0f, 4) == 0.0f,
+              "a negative bar clamps too");
+        check(placementStartBeat(int(P::Playhead), 1, -5.0f, 4) == 0.0f,
+              "a negative playhead clamps");
+        check(placementStartBeat(int(P::Bar), 5, 0.0f, 0) >= 0.0f,
+              "a zero-beat meter does not divide by zero");
+    }
+
+    // ---- Moving the notes ------------------------------------------------------
+    {
+        std::vector<Note> notes;
+        for (int i = 0; i < 4; ++i) {
+            Note note;
+            note.startTime = float(i);
+            note.duration = 0.5f;
+            note.pitch = 60 + i;
+            notes.push_back(note);
+        }
+
+        placeNotesAt(notes, 16.0f);
+        check(std::fabs(notes[0].startTime - 16.0f) < 1e-4f,
+              "the take starts where it was asked to");
+        check(std::fabs(notes[3].startTime - 19.0f) < 1e-4f,
+              "and the rest follow, keeping their spacing");
+        check(std::fabs(notes[3].duration - 0.5f) < 1e-4f,
+              "durations are untouched by the move");
+
+        std::vector<Note> copy = notes;
+        placeNotesAt(copy, 0.0f);
+        check(std::fabs(copy[0].startTime - notes[0].startTime) < 1e-4f,
+              "placing at zero is a no-op");
+        placeNotesAt(copy, -8.0f);
+        check(std::fabs(copy[0].startTime - notes[0].startTime) < 1e-4f,
+              "a negative placement is refused, not applied");
+    }
+
+    // ---- Pattern length ----------------------------------------------------------
+    {
+        std::vector<Note> notes;
+        Note late;
+        late.startTime = 30.0f;
+        late.duration = 2.0f;
+        notes.push_back(late);
+
+        check(patternLengthFor(notes, 16) == 32,
+              "the pattern grows to hold a take that runs past its end (got " +
+                  std::to_string(patternLengthFor(notes, 16)) + ")");
+        check(patternLengthFor(notes, 64) == 64,
+              "and never shrinks below what was already there");
+        check(patternLengthFor({}, 16) == 16,
+              "an empty take leaves the length alone");
+    }
+
+    // ---- Findable and clickable, in the real panel --------------------------------
+    //
+    // The arithmetic being right is not the same as the button being
+    // reachable and wired to it. This drives the actual panel: it sweeps the
+    // mouse down the window until ImGui reports the Add button as hovered -
+    // which is what "findable" means - and then clicks it.
+    {
+        auto uiPtr = std::make_unique<HeadlessUI>(1400.0f, 1000.0f);
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        UIState ui;
+
+        Project& project = *projectPtr;
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&project);
+
+        VoicePanelState& voice = voicePanelState();
+        voice = VoicePanelState();
+
+        // Something captured, so the destination block is live rather than
+        // disabled - a disabled button is not clickable and proves nothing.
+        for (int i = 0; i < 6; ++i) {
+            DetectedNote note;
+            note.noteNumber = 60 + i;
+            note.startTime = 0.5f * float(i);
+            note.duration = 0.4f;
+            note.velocity = 0.8f;
+            note.isDrum = false;
+            voice.detected.push_back(note);
+        }
+        voice.liveMode = false;
+        voice.targetPattern = -1;
+        snprintf(voice.newPatternName, sizeof(voice.newPatternName), "Hummed Hook");
+        voice.placement = int(VoicePanelState::Placement::Bar);
+        voice.placementBar = 3;
+
+        auto content = [&] { DrawVoicePanel(project, ui, seq); };
+
+        auto settled = uiPtr->frames(4, content);
+        check(frameIsClean(settled),
+              "the voice panel with a destination draws cleanly: " +
+                  settled.firstProblem);
+
+        /*
+         * Find the button by asking ImGui what is under the cursor, rather
+         * than by guessing coordinates - a guess passes by accident the
+         * moment the layout moves, which is exactly what a click test is
+         * supposed to catch.
+         *
+         * The Add button spans the panel width, so sweeping straight down
+         * the middle finds it.
+         */
+        ImGuiWindow* window = nullptr;
+        uiPtr->frame(content);
+        window = ImGui::FindWindowByName("Voice to Notes");
+        check(window != nullptr, "the Voice to Notes window exists");
+
+        ImVec2 hit{0.0f, 0.0f};
+        bool found = false;
+
+        if (window != nullptr) {
+            const ImGuiID wanted = window->GetID("Add to Pattern");
+            const float x = window->Pos.x + window->Size.x * 0.5f;
+
+            for (float y = window->Pos.y; y < window->Pos.y + window->Size.y;
+                 y += 6.0f) {
+                uiPtr->setMouse(x, y, false);
+                uiPtr->frame(content);
+                if (ImGui::GetCurrentContext()->HoveredId == wanted) {
+                    hit = ImVec2(x, y);
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        check(found,
+              "the Add to Pattern button is reachable with the mouse - it is "
+              "on screen and not clipped out of the panel");
+
+        if (found) {
+            const size_t before = project.patterns.size();
+
+            // Move and press, hold, release - ImGui reports a click on
+            // release, and only if the press landed on the same widget.
+            uiPtr->setMouse(hit.x, hit.y, false);
+            uiPtr->frame(content);
+            uiPtr->setMouse(hit.x, hit.y, true);
+            uiPtr->frame(content);
+            uiPtr->frame(content);
+            uiPtr->setMouse(hit.x, hit.y, false);
+            uiPtr->frame(content);
+
+            check(project.patterns.size() == before + 1,
+                  "clicking it makes the pattern (" +
+                      std::to_string(project.patterns.size()) + ", was " +
+                      std::to_string(before) + ")");
+
+            if (project.patterns.size() == before + 1) {
+                const Pattern& made = project.patterns.back();
+                check(made.name == "Hummed Hook",
+                      "under the name typed before committing, not as the "
+                      "fourth thing called Pattern (got \"" + made.name + "\")");
+                check(!made.notes.empty(), "with the notes in it");
+                if (!made.notes.empty()) {
+                    check(std::fabs(made.notes[0].startTime - 8.0f) < 0.01f,
+                          "starting at bar 3, which is beat 8 in 4/4 (got " +
+                              std::to_string(made.notes[0].startTime) + ")");
+                }
+                check(made.length >= 8, "and long enough to hold it");
+                check(ui.selectedPattern == int(project.patterns.size()) - 1,
+                      "and it is selected, so the piano roll is showing what "
+                      "was just sung rather than leaving it to be hunted for");
+            }
+
+            // The take is consumed, so clicking again cannot silently
+            // duplicate it.
+            check(voice.detected.empty(),
+                  "the take is cleared once committed");
+        }
+
+        // ---- Every destination setting draws ----------------------------------
+        //
+        // Each is a branch in the block; one that divides by a zero count or
+        // indexes an empty pattern list would only show up here.
+        {
+            for (int placement = 0; placement <= 2; ++placement) {
+                voice.placement = placement;
+                auto result = uiPtr->frames(2, content);
+                check(frameIsClean(result),
+                      "placement " + std::to_string(placement) +
+                          " draws cleanly: " + result.firstProblem);
+            }
+
+            voice.targetPattern = 0;
+            voice.renaming = true;
+            snprintf(voice.renameBuffer, sizeof(voice.renameBuffer), "Renamed");
+            auto renaming = uiPtr->frames(2, content);
+            check(frameIsClean(renaming),
+                  "the rename field draws cleanly: " + renaming.firstProblem);
+            voice.renaming = false;
+
+            // Pointing past the end of the list, which is what happens when a
+            // pattern is deleted from another panel while this one is open.
+            voice.targetPattern = 999;
+            auto stale = uiPtr->frames(2, content);
+            check(frameIsClean(stale),
+                  "a destination pointing at a deleted pattern draws cleanly "
+                  "rather than indexing off the end: " + stale.firstProblem);
+
+            voice.targetPattern = -1;
+            voice.detected.clear();
+            auto empty = uiPtr->frames(2, content);
+            check(frameIsClean(empty),
+                  "with nothing captured it draws cleanly: " + empty.firstProblem);
+
+            /*
+             * Docked into something short.
+             *
+             * The pinned footer is what makes the Add button reachable, and
+             * it is also what could make the capture controls unreachable
+             * if it were allowed to take the whole window. This is the case
+             * where that trade goes wrong, so it is the case worth pinning.
+             */
+            uiPtr->setDisplaySize(500.0f, 260.0f);
+            auto shortDock = uiPtr->frames(3, content);
+            check(frameIsClean(shortDock),
+                  "the panel draws cleanly in a short window: " +
+                      shortDock.firstProblem);
+
+            uiPtr->setDisplaySize(400.0f, 120.0f);
+            auto tiny = uiPtr->frames(3, content);
+            check(frameIsClean(tiny),
+                  "and in one too small for either half: " + tiny.firstProblem);
+
+            uiPtr->setDisplaySize(1400.0f, 1000.0f);
+        }
+
+        voicePanelState() = VoicePanelState();
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -19329,6 +19601,7 @@ int main(int argc, char** argv) {
     testVoiceDetectionBenchmark();
     testKeyDetectionBias();
     testVoiceRoles();
+    testVoiceDestination();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();
