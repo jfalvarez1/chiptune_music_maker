@@ -577,9 +577,100 @@ private:
  * Times run through the project's tempo map rather than a single bpm, so a
  * take recorded over a tempo change lands where it was actually played.
  */
+
+// ============================================================================
+// What a hum is meant to become
+//
+// A part is not just notes, it is notes for something. The role decides the
+// register it belongs in, how long its notes are, and whether snapping it to
+// a key makes sense - and those differ enough between a bass line and a lead
+// that one set of defaults cannot serve both.
+// ============================================================================
+enum class VoiceRole : uint8_t {
+    Lead = 0,     // a melody, up where a lead sits
+    Bass,         // low, monophonic, longer notes
+    Drums,        // beatboxed; pitch is a drum choice, not a note
+    Chords,       // a hummed arpeggio, kept mid-register
+};
+
+inline const char* voiceRoleName(VoiceRole role) {
+    switch (role) {
+        case VoiceRole::Lead:   return "Lead";
+        case VoiceRole::Bass:   return "Bass";
+        case VoiceRole::Drums:  return "Drums";
+        case VoiceRole::Chords: return "Chords";
+        default:                return "?";
+    }
+}
+
+/*
+ * The middle of the register each role belongs in, as a MIDI note.
+ *
+ * People hum in a comfortable vocal range - very roughly C3 for a male
+ * voice, and lower still when they are humming a bass line, because they
+ * are already thinking low. A chiptune lead belongs around C5. Without a
+ * correction the part lands two octaves below where it should and sounds
+ * muddy and wrong, which is the most common complaint about every tool of
+ * this kind.
+ */
+inline int voiceRoleCentre(VoiceRole role) {
+    switch (role) {
+        case VoiceRole::Bass:   return 40;   // E2
+        case VoiceRole::Chords: return 60;   // C4
+        case VoiceRole::Lead:   return 72;   // C5
+        default:                return 60;
+    }
+}
+
+/*
+ * Move a whole part into its register, in octaves.
+ *
+ * By octaves and applied to the WHOLE part, for two reasons. Octaves keep
+ * the pitch classes, so a part that was in key stays in key. Applying one
+ * shift to everything keeps the melodic contour - folding each note into
+ * the register independently would flatten a rising line into a jagged one,
+ * which is a worse problem than the one being fixed.
+ *
+ * The median rather than the mean, so one stray octave error cannot drag
+ * the whole part with it.
+ */
+inline int octaveShiftForRole(const std::vector<Note>& notes, VoiceRole role) {
+    if (role == VoiceRole::Drums) return 0;   // a drum note's pitch is a choice of drum
+
+    std::vector<int> pitches;
+    pitches.reserve(notes.size());
+    for (const Note& note : notes) pitches.push_back(note.pitch);
+    if (pitches.empty()) return 0;
+
+    std::nth_element(pitches.begin(), pitches.begin() + long(pitches.size() / 2),
+                     pitches.end());
+    const int median = pitches[pitches.size() / 2];
+
+    const int centre = voiceRoleCentre(role);
+    const int octaves = static_cast<int>(
+        std::lround(double(centre - median) / 12.0));
+    return octaves * 12;
+}
+
 struct VoiceToNotesOptions {
     SnapDivision snap = SnapDivision::Sixteenth;
     int transpose = 0;
+
+    /*
+     * What the part is for. Decides its register, and how long its notes
+     * are held.
+     */
+    VoiceRole role = VoiceRole::Lead;
+
+    /*
+     * Whether to move the part into its role's register.
+     *
+     * On by default, because humming two octaves below where the part
+     * belongs is what people actually do and the result otherwise sounds
+     * wrong for a reason they cannot name. Off for anybody who wants the
+     * notes exactly where they sang them.
+     */
+    bool placeInRegister = true;
     float minDurationBeats = 0.125f;
     bool useVelocity = true;
 
@@ -654,6 +745,49 @@ inline std::vector<Note> hitsToNotes(const std::vector<LiveHit>& hits,
         }
 
         notes.push_back(note);
+    }
+
+    /*
+     * Into the register the role belongs in.
+     *
+     * After the notes are built, because it needs the median pitch of the
+     * whole part - and before the duplicate pass, because shifting by whole
+     * octaves cannot turn two different notes into the same one but the
+     * duplicate check should still see the final pitches.
+     */
+    /*
+     * An explicit transpose wins.
+     *
+     * Somebody who asked for -12 means twelve below where they sang, not
+     * twelve below wherever the placement decided - so setting a transpose
+     * turns the automatic placement off rather than fighting it. Two
+     * features silently cancelling each other is worse than either.
+     */
+    if (options.placeInRegister && options.transpose == 0 && !notes.empty()) {
+        const int shift = octaveShiftForRole(notes, options.role);
+        if (shift != 0) {
+            for (Note& note : notes) {
+                // Clamped per note: a part spanning two octaves can have
+                // its extremes fall off the keyboard when the middle is
+                // placed correctly, and a clamped note is better than a
+                // wrapped one.
+                note.pitch = std::clamp(note.pitch + shift, 0, 127);
+            }
+        }
+    }
+
+    /*
+     * A bass line is monophonic and its notes are held.
+     *
+     * A hummed bass part with sixteenth-length notes reads as a blip track
+     * rather than a bass line; holding each note until the next is what
+     * makes it sound like one.
+     */
+    if (options.role == VoiceRole::Bass) {
+        for (size_t i = 0; i + 1 < notes.size(); ++i) {
+            const float gap = notes[i + 1].startTime - notes[i].startTime;
+            if (gap > 0.0f) notes[i].duration = gap;
+        }
     }
 
     // Two hits that quantise onto the same beat with the same pitch are one

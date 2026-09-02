@@ -18380,6 +18380,206 @@ static void testKeyDetectionBias() {
     }
 }
 
+
+// ============================================================================
+// 100. Roles put a hum where it belongs
+//
+// People hum in a comfortable vocal range - around C3 - and a chiptune lead
+// belongs around C5. Without a correction every hummed part lands two
+// octaves low and sounds wrong for a reason the user cannot name. This is
+// the most common complaint about tools of this kind.
+// ============================================================================
+static void testVoiceRoles() {
+    beginTest("Voice roles and register placement");
+
+    TempoMap flat;
+    const float bpm = 120.0f;
+
+    // A hummed line around C3, which is where a person actually hums.
+    auto hummedLine = []() {
+        std::vector<LiveHit> hits;
+        const int pitches[] = {48, 50, 52, 53, 55};   // C3 up to G3
+        for (int i = 0; i < 5; ++i) {
+            LiveHit hit;
+            hit.timeSeconds = 0.5f * float(i);
+            hit.midiNote = pitches[i];
+            hit.frequency = 440.0f * std::pow(2.0f, float(pitches[i] - 69) / 12.0f);
+            hit.velocity = 0.8f;
+            hit.confidence = 1.0f;
+            hits.push_back(hit);
+        }
+        return hits;
+    };
+
+    // ---- A lead goes up ------------------------------------------------------
+    {
+        VoiceToNotesOptions options;
+        options.role = VoiceRole::Lead;
+        const std::vector<Note> notes = hitsToNotes(hummedLine(), flat, bpm, 4, options);
+
+        check(notes.size() == 5, "every hummed note became a note");
+        if (notes.size() == 5) {
+            // Hummed at 48-55, a lead belongs around 72. That is two octaves.
+            check(notes[0].pitch == 72,
+                  "a line hummed at C3 becomes a lead at C5 (got " +
+                      std::to_string(notes[0].pitch) + ")");
+
+            /*
+             * The shape must survive.
+             *
+             * This is why the shift is applied to the whole part rather
+             * than folding each note into the register on its own - folding
+             * would flatten this rising line into a jagged one, which is a
+             * worse problem than the one being fixed.
+             */
+            check(notes[4].pitch - notes[0].pitch == 55 - 48,
+                  "and the melody keeps its shape - every interval is intact");
+            for (size_t i = 1; i < notes.size(); ++i) {
+                check(notes[i].pitch > notes[i - 1].pitch,
+                      "a rising line is still rising at note " + std::to_string(i));
+            }
+        }
+    }
+
+    // ---- A bass goes down ------------------------------------------------------
+    {
+        VoiceToNotesOptions options;
+        options.role = VoiceRole::Bass;
+        const std::vector<Note> notes = hitsToNotes(hummedLine(), flat, bpm, 4, options);
+
+        check(!notes.empty(), "the bass line has notes");
+        if (!notes.empty()) {
+            check(notes[0].pitch == 36,
+                  "the same hum as a bass lands an octave below where it was "
+                  "hummed, near E2 (got " + std::to_string(notes[0].pitch) + ")");
+            check(notes[0].pitch < 48,
+                  "which is lower than a lead would be");
+
+            /*
+             * A bass note is held until the next one.
+             *
+             * A hummed bass with sixteenth-length notes reads as a blip
+             * track. Holding each note is what makes it sound like a bass
+             * line rather than a sequence of clicks.
+             */
+            const float gap = notes[1].startTime - notes[0].startTime;
+            check(std::fabs(notes[0].duration - gap) < 1e-3f,
+                  "and is held until the next note rather than clipped short");
+        }
+    }
+
+    // ---- The two roles really differ ----------------------------------------------
+    {
+        VoiceToNotesOptions lead;
+        lead.role = VoiceRole::Lead;
+        VoiceToNotesOptions bass;
+        bass.role = VoiceRole::Bass;
+
+        const std::vector<Note> asLead = hitsToNotes(hummedLine(), flat, bpm, 4, lead);
+        const std::vector<Note> asBass = hitsToNotes(hummedLine(), flat, bpm, 4, bass);
+
+        check(!asLead.empty() && !asBass.empty(), "both roles produced notes");
+        if (!asLead.empty() && !asBass.empty()) {
+            check(asLead[0].pitch > asBass[0].pitch + 24,
+                  "the same hum lands three octaves apart depending on what "
+                  "it is for (" + std::to_string(asBass[0].pitch) + " vs " +
+                  std::to_string(asLead[0].pitch) + ")");
+
+            // Same pitch classes either way: the shift is in whole octaves,
+            // so a part that was in key stays in key.
+            check(asLead[0].pitch % 12 == asBass[0].pitch % 12,
+                  "and both keep the pitch class that was hummed");
+        }
+    }
+
+    // ---- Placement can be turned off ------------------------------------------------
+    {
+        VoiceToNotesOptions options;
+        options.role = VoiceRole::Lead;
+        options.placeInRegister = false;
+        const std::vector<Note> notes = hitsToNotes(hummedLine(), flat, bpm, 4, options);
+
+        check(!notes.empty() && notes[0].pitch == 48,
+              "with placement off the notes stay exactly where they were sung");
+    }
+
+    // ---- An explicit transpose wins --------------------------------------------------
+    //
+    // Two features silently cancelling each other is worse than either.
+    {
+        VoiceToNotesOptions options;
+        options.role = VoiceRole::Lead;
+        options.transpose = -12;
+        const std::vector<Note> notes = hitsToNotes(hummedLine(), flat, bpm, 4, options);
+
+        check(!notes.empty() && notes[0].pitch == 36,
+              "asking for -12 gives twelve below what was sung, not twelve "
+              "below wherever placement would have put it (got " +
+                  std::to_string(notes.empty() ? -1 : notes[0].pitch) + ")");
+    }
+
+    // ---- Drums are not transposed ------------------------------------------------------
+    //
+    // A drum note's pitch chooses which drum, so moving it would change a
+    // kick into a snare.
+    {
+        std::vector<LiveHit> hits;
+        for (int i = 0; i < 4; ++i) {
+            LiveHit hit;
+            hit.timeSeconds = 0.25f * float(i);
+            hit.isDrum = true;
+            hit.drumType = (i % 2 == 0) ? 0 : 1;   // kick, snare, kick, snare
+            hit.velocity = 0.8f;
+            hits.push_back(hit);
+        }
+
+        VoiceToNotesOptions options;
+        options.role = VoiceRole::Drums;
+        const std::vector<Note> notes = hitsToNotes(hits, flat, bpm, 4, options);
+
+        check(notes.size() == 4, "four beatboxed hits became four notes");
+        if (notes.size() == 4) {
+            check(notes[0].pitch == options.kickPitch,
+                  "the kick is still on the kick key - a drum's pitch chooses "
+                  "which drum, so placing it in a register would change it "
+                  "into a different instrument");
+            check(notes[1].pitch == options.snarePitch, "and the snare on the snare key");
+        }
+    }
+
+    // ---- Nothing in, nothing out --------------------------------------------------------
+    {
+        VoiceToNotesOptions options;
+        const std::vector<Note> notes = hitsToNotes({}, flat, bpm, 4, options);
+        check(notes.empty(), "no hits produce no notes rather than a crash");
+
+        // And a single note still gets placed - the median of one is itself.
+        std::vector<LiveHit> one;
+        LiveHit hit;
+        hit.timeSeconds = 0.0f;
+        hit.midiNote = 48;
+        hit.velocity = 0.8f;
+        one.push_back(hit);
+        const std::vector<Note> single = hitsToNotes(one, flat, bpm, 4, options);
+        check(single.size() == 1 && single[0].pitch == 72,
+              "a single hummed note is placed like any other part");
+    }
+
+    // ---- The role names are all there ------------------------------------------------------
+    {
+        const VoiceRole ROLES[] = {VoiceRole::Lead, VoiceRole::Bass,
+                                   VoiceRole::Drums, VoiceRole::Chords};
+        for (VoiceRole role : ROLES) {
+            check(std::strlen(voiceRoleName(role)) > 0,
+                  "every role has a name to show");
+        }
+        check(voiceRoleCentre(VoiceRole::Bass) < voiceRoleCentre(VoiceRole::Chords),
+              "bass sits below chords");
+        check(voiceRoleCentre(VoiceRole::Chords) < voiceRoleCentre(VoiceRole::Lead),
+              "and chords below the lead");
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -19128,6 +19328,7 @@ int main(int argc, char** argv) {
     testPluginsPanel();
     testVoiceDetectionBenchmark();
     testKeyDetectionBias();
+    testVoiceRoles();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();
