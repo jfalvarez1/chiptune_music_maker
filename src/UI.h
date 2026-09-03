@@ -20,6 +20,7 @@
 #include "TakeLanes.h"
 #include "Browser.h"
 #include "PluginHost.h"
+#include "VoiceMode.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -5729,6 +5730,7 @@ inline void registerDefaultActions(ActionRegistry& registry) {
         {"view.arrangement", "Arrangement",    ViewMode::Arrangement,  ImGuiKey_F3},
         {"view.mixer",       "Mixer",          ViewMode::Mixer,        ImGuiKey_F5},
         {"view.pad",         "Pad Controller", ViewMode::PadController, ImGuiKey_F6},
+        {"view.voice",       "Voice",          ViewMode::Voice,         ImGuiKey_F11},
     };
     for (const ViewEntry& entry : VIEWS) {
         const ViewMode mode = entry.mode;
@@ -10970,6 +10972,293 @@ inline void PollTakeRecording(Project& project, float beat) {
     state.lastBeat = beat;
 }
 
+
+// ============================================================================
+// Voice Mode
+//
+// One decision at a time: what are you making, make it, keep it. Everything
+// else - the detector, the register, the note lengths, the instrument, the
+// channel - follows from the first answer.
+//
+// See VoiceMode.h for why this exists alongside the Voice to Notes panel
+// rather than instead of it.
+// ============================================================================
+
+static VoiceModeState g_VoiceMode;
+
+inline VoiceModeState& voiceModeState() { return g_VoiceMode; }
+
+// Convert whatever is captured, with the settings the role implies.
+inline std::vector<Note> voiceModeConvert(Project& project, VoiceModeState& mode) {
+    VoiceToNotesOptions options = g_Voice.options;
+    options.role = mode.role;
+    options.placeInRegister = true;
+    options.transpose = 0;      // the role decides the register, not a nudge
+
+    std::vector<Note> notes;
+    if (g_Voice.liveMode) {
+        notes = hitsToNotes(g_Voice.tracker.hits(), project.tempoMap, project.bpm,
+                            project.beatsPerMeasure, options);
+    } else {
+        notes = detectedToNotes(g_Voice.detected, project.tempoMap, project.bpm,
+                                project.beatsPerMeasure, options);
+    }
+
+    for (Note& note : notes) clampNoteToValidRanges(note);
+    return notes;
+}
+
+inline void DrawVoiceMode(Project& project, UIState& ui, Sequencer& seq) {
+    ImGui::Begin("Voice");
+
+    VoiceModeState& mode = g_VoiceMode;
+    VoiceCaptureDevice& device = g_VoiceDevice;
+
+    // The tracker needs to know what it is listening for, and the taught
+    // drum sounds apply here exactly as they do in the panel.
+    g_Voice.tracker.setClassifier(&g_VocalDrums);
+
+    ImGui::TextWrapped(
+        "Sing your song a part at a time. Each one plays while you record "
+        "the next, so you are playing along with what you have made rather "
+        "than into silence.");
+    ImGui::Separator();
+
+    // ---- What the song is so far ---------------------------------------------
+    if (!mode.parts.empty()) {
+        ImGui::TextUnformatted("Your song so far");
+
+        int removeAt = -1;
+        for (size_t i = 0; i < mode.parts.size(); ++i) {
+            VoicePart& part = mode.parts[i];
+            ImGui::PushID(static_cast<int>(3300 + i));
+
+            ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "%s",
+                               voiceRoleName(part.role));
+            ImGui::SameLine(110.0f);
+            ImGui::Text("%s", part.name.c_str());
+            ImGui::SameLine(300.0f);
+            ImGui::TextDisabled("%d notes", part.noteCount);
+
+            ImGui::SameLine(390.0f);
+            if (part.channelIndex >= 0 && part.channelIndex < Project::MAX_CHANNELS) {
+                ChannelConfig& channel =
+                    project.channels[static_cast<size_t>(part.channelIndex)];
+                if (ImGui::SmallButton(channel.muted ? "unmute" : "mute")) {
+                    channel.muted = !channel.muted;
+                    seq.updateChannelConfigs();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("remove")) removeAt = static_cast<int>(i);
+
+            ImGui::PopID();
+        }
+
+        if (removeAt >= 0) {
+            g_UndoHistory.saveState(project, "Remove Voice Part");
+            removeVoicePart(project, mode, removeAt);
+            seq.updateChannelConfigs();
+        }
+        ImGui::Separator();
+    }
+
+    // ---- Step 1: what are you making? -------------------------------------------
+    ImGui::TextUnformatted("What are you making?");
+
+    const VoiceRole ROLES[] = {VoiceRole::Drums, VoiceRole::Bass,
+                               VoiceRole::Lead, VoiceRole::Chords};
+    for (VoiceRole role : ROLES) {
+        const bool selected = (mode.role == role);
+        if (selected) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.55f, 0.35f, 1.0f));
+        }
+        if (ImGui::Button(voiceRoleName(role), ImVec2(110, 34))) {
+            mode.role = role;
+            // The role decides what to listen for. Asking the user to also
+            // pick a detector is asking them to know something they should
+            // not have to.
+            g_Voice.analysisMode = analysisModeForRole(role);
+            g_Voice.tracker.setMode(role == VoiceRole::Drums
+                                        ? LiveVoiceMode::Drums
+                                        : LiveVoiceMode::Melodic);
+        }
+        if (selected) ImGui::PopStyleColor();
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    ImGui::TextDisabled("%s", roleHint(mode.role));
+
+    ImGui::Spacing();
+
+    // ---- Step 2: make it ----------------------------------------------------------
+    const bool recording = (mode.step == VoiceModeStep::Recording);
+
+    if (!recording) {
+        if (ImGui::Button("Record", ImVec2(160, 44))) {
+            mode.warning.clear();
+            mode.message.clear();
+
+            if (!device.running()) {
+                const VoiceCaptureDevice::DeviceInfo* input = nullptr;
+                if (g_Voice.selectedDevice >= 0 &&
+                    g_Voice.selectedDevice <
+                        static_cast<int>(g_Voice.devices.size())) {
+                    input = &g_Voice.devices[
+                        static_cast<size_t>(g_Voice.selectedDevice)];
+                }
+                device.start(input);
+            }
+
+            if (!device.running()) {
+                // Said plainly. A record button that does nothing is the
+                // worst possible failure here, because the user will sing a
+                // whole part before finding out.
+                mode.warning =
+                    "No microphone. Pick one in the Voice to Notes panel.";
+            } else {
+                g_Voice.tracker.setSampleRate(device.sampleRate());
+                g_Voice.tracker.reset();
+                g_Voice.take.clear();
+                g_Voice.takeSampleRate = device.sampleRate();
+                g_Voice.capturingTake = true;
+                g_Voice.liveMode = true;
+                mode.step = VoiceModeStep::Recording;
+
+                // Play what is already there, so the next part is sung
+                // against the song rather than into silence.
+                if (!mode.parts.empty()) {
+                    seq.setPosition(0.0f);
+                    seq.play();
+                }
+            }
+        }
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::Button("Stop", ImVec2(160, 44))) {
+            g_Voice.capturingTake = false;
+            seq.stop();
+
+            mode.pending = voiceModeConvert(project, mode);
+            mode.step = VoiceModeStep::Review;
+
+            if (mode.pending.empty()) {
+                mode.warning = "Nothing was heard. Try singing a little louder, "
+                               "or turn Sensitivity up in the panel.";
+                mode.step = VoiceModeStep::Choose;
+            }
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "listening...");
+
+        // What it is hearing right now, so a take that is going wrong can be
+        // abandoned rather than discovered afterwards.
+        ImGui::SameLine(340.0f);
+        if (mode.role == VoiceRole::Drums) {
+            ImGui::Text("%d hits", static_cast<int>(g_Voice.tracker.hits().size()));
+        } else {
+            const int note = g_Voice.tracker.currentNote();
+            if (note >= 0) {
+                static const char* NAMES[] = {"C", "C#", "D", "D#", "E", "F",
+                                              "F#", "G", "G#", "A", "A#", "B"};
+                ImGui::Text("%s%d", NAMES[note % 12], (note / 12) - 1);
+            } else {
+                ImGui::TextDisabled("-");
+            }
+        }
+    }
+
+    // ---- Step 3: keep it? ------------------------------------------------------------
+    if (mode.step == VoiceModeStep::Review && !mode.pending.empty()) {
+        ImGui::Spacing();
+        ImGui::SeparatorText("Here is what it heard");
+
+        ImGui::Text("%d note%s", static_cast<int>(mode.pending.size()),
+                    mode.pending.size() == 1 ? "" : "s");
+
+        /*
+         * A small picture of the take.
+         *
+         * Counting notes tells you almost nothing about whether the take is
+         * any good; seeing its shape tells you at a glance whether the tune
+         * you sang came back as the tune you sang.
+         */
+        {
+            const ImVec2 canvas = ImGui::GetCursorScreenPos();
+            const float width = std::max(120.0f, ImGui::GetContentRegionAvail().x - 20.0f);
+            const float height = 90.0f;
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+
+            draw->AddRectFilled(canvas, ImVec2(canvas.x + width, canvas.y + height),
+                                IM_COL32(22, 22, 28, 255));
+
+            float lastBeat = 1.0f;
+            int lowest = 127, highest = 0;
+            for (const Note& note : mode.pending) {
+                lastBeat = std::max(lastBeat, note.startTime + note.duration);
+                lowest = std::min(lowest, note.pitch);
+                highest = std::max(highest, note.pitch);
+            }
+            if (highest <= lowest) highest = lowest + 12;
+
+            for (const Note& note : mode.pending) {
+                const float x0 = canvas.x + (note.startTime / lastBeat) * width;
+                const float x1 = canvas.x +
+                    ((note.startTime + note.duration) / lastBeat) * width;
+                const float t = float(note.pitch - lowest) /
+                                float(std::max(1, highest - lowest));
+                const float y = canvas.y + height - 6.0f - t * (height - 14.0f);
+
+                draw->AddRectFilled(ImVec2(x0, y), ImVec2(std::max(x1, x0 + 2.0f),
+                                                          y + 4.0f),
+                                    IM_COL32(120, 200, 255, 255));
+            }
+            ImGui::Dummy(ImVec2(width, height + 6.0f));
+        }
+
+        if (ImGui::Button("Keep it", ImVec2(120, 32))) {
+            g_UndoHistory.saveState(project, "Voice Part");
+
+            const VoicePart part = commitVoicePart(project, mode, mode.pending);
+            if (part.channelIndex < 0) {
+                mode.warning = "No free channel left for another part.";
+            } else {
+                mode.parts.push_back(part);
+                mode.message = part.name + " added";
+                seq.updateChannelConfigs();
+            }
+
+            mode.pending.clear();
+            g_Voice.tracker.clearHits();
+            g_Voice.detected.clear();
+            mode.step = VoiceModeStep::Choose;
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Try again", ImVec2(120, 32))) {
+            // Only the take in hand is thrown away. Nothing already kept is
+            // ever at risk from this button.
+            mode.pending.clear();
+            g_Voice.tracker.clearHits();
+            g_Voice.detected.clear();
+            mode.step = VoiceModeStep::Choose;
+        }
+    }
+
+    if (!mode.warning.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+                           mode.warning.c_str());
+    } else if (!mode.message.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", mode.message.c_str());
+    }
+
+    ImGui::End();
+}
+
 inline void DrawTrackerView(Project& project, UIState& ui, Sequencer& seq) {
     ImGui::SetNextWindowPos(ImVec2(930, 645), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(700, 400), ImGuiCond_FirstUseEver);
@@ -15102,6 +15391,15 @@ inline void DrawViewTabs(Project& project, UIState& ui) {
         ui.currentView = ViewMode::PadController;
     }
 
+    // Voice Mode belongs beside the other views, not only behind a shortcut
+    // and a palette entry - a mode nobody can find is a mode nobody uses.
+    ImGui::SameLine();
+    if (ImGui::Button("Voice", ImVec2(100, 30))) {
+        ui.currentView = ViewMode::Voice;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Build a song by singing it, a part at a time.");
+    }
 
     ImGui::End();
 }

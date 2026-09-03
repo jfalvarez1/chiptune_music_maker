@@ -219,6 +219,13 @@ foreach ($panel in $panels) {
     args = "--demo --focus `"Project Check`""
 })
 
+# Voice Mode, which is a whole view rather than a panel - so it has its own
+# layout to get wrong, and an empty state that is what every user sees first.
+[void]$cases.Add(@{
+    name = "voice-mode"
+    args = "--view voice"
+})
+
 # The browser, the command palette and the shortcut list. The palette is the
 # one worth a shot of its own: it is a modal over the whole window with a
 # focused search box, which is a different code path from a docked panel.

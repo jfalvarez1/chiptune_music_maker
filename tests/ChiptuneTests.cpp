@@ -19949,6 +19949,313 @@ static void testTempoDetection() {
     }
 }
 
+
+// ============================================================================
+// 106. Voice Mode - a song built a part at a time
+//
+// The promise is that each kept part is safe: a later take can never land
+// on top of an earlier one, and "Try again" throws away only the take in
+// hand. That is what the tests here are mostly about, because losing a part
+// you liked to a take you were experimenting with is the failure that would
+// stop anybody using this.
+// ============================================================================
+static void testVoiceMode() {
+    beginTest("Voice Mode");
+
+    auto makeNotes = [](int count, int basePitch) {
+        std::vector<Note> notes;
+        for (int i = 0; i < count; ++i) {
+            Note note;
+            note.pitch = basePitch + (i % 5);
+            note.startTime = float(i) * 0.5f;
+            note.duration = 0.4f;
+            note.velocity = 0.8f;
+            notes.push_back(note);
+        }
+        return notes;
+    };
+
+    // ---- Each part gets its own channel ---------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+        VoiceModeState mode;
+
+        mode.role = VoiceRole::Drums;
+        const VoicePart drums = commitVoicePart(project, mode, makeNotes(8, 36));
+        check(drums.channelIndex >= 0, "the first part lands on a channel");
+        mode.parts.push_back(drums);
+
+        mode.role = VoiceRole::Bass;
+        const VoicePart bass = commitVoicePart(project, mode, makeNotes(6, 40));
+        check(bass.channelIndex >= 0, "and so does the second");
+        mode.parts.push_back(bass);
+
+        /*
+         * The promise of the mode.
+         *
+         * A second take landing on the channel the first is using would
+         * destroy a part the user had already decided to keep, which is the
+         * one failure that would stop anybody using this.
+         */
+        check(drums.channelIndex != bass.channelIndex,
+              "and never on top of a part already kept (" +
+                  std::to_string(drums.channelIndex) + " vs " +
+                  std::to_string(bass.channelIndex) + ")");
+
+        check(drums.patternIndex != bass.patternIndex,
+              "each part is its own pattern too");
+
+        // Both audible: a pattern nobody triggers is not a song.
+        int clipsForDrums = 0, clipsForBass = 0;
+        for (const Clip& clip : project.arrangement) {
+            if (clip.channelIndex == drums.channelIndex) ++clipsForDrums;
+            if (clip.channelIndex == bass.channelIndex) ++clipsForBass;
+        }
+        check(clipsForDrums == 1 && clipsForBass == 1,
+              "both parts are on the timeline, so the song plays rather than "
+              "the notes merely existing");
+    }
+
+    // ---- The role decides the setup ----------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+        VoiceModeState mode;
+
+        mode.role = VoiceRole::Bass;
+        const VoicePart bass = commitVoicePart(project, mode, makeNotes(4, 40));
+        mode.parts.push_back(bass);
+
+        check(project.channels[size_t(bass.channelIndex)].oscillator.type ==
+                  OscillatorType::SynthBass,
+              "a bass part sets its channel to a bass instrument");
+
+        mode.role = VoiceRole::Lead;
+        const VoicePart lead = commitVoicePart(project, mode, makeNotes(4, 72));
+        mode.parts.push_back(lead);
+        check(project.channels[size_t(lead.channelIndex)].oscillator.type ==
+                  OscillatorType::SynthLead,
+              "and a lead part a lead instrument");
+
+        /*
+         * Drums are the exception, and it matters.
+         *
+         * A beatboxed part carries its own oscillator per hit - a kick, a
+         * snare and a hat are three different instruments - so overwriting
+         * the channel's type would be meaningless at best.
+         */
+        mode.role = VoiceRole::Drums;
+        auto drumProject = std::make_unique<Project>();
+        VoiceModeState drumMode;
+        const OscillatorType before =
+            drumProject->channels[0].oscillator.type;
+        drumMode.role = VoiceRole::Drums;
+        const VoicePart drums = commitVoicePart(*drumProject, drumMode,
+                                                makeNotes(4, 36));
+        check(drumProject->channels[size_t(drums.channelIndex)].oscillator.type ==
+                  before,
+              "a drum part leaves the channel instrument alone - the hits "
+              "carry their own");
+
+        check(analysisModeForRole(VoiceRole::Drums) == 1,
+              "and drums listen with the drum detector");
+        check(analysisModeForRole(VoiceRole::Lead) == 0,
+              "while a hum listens with the melodic one");
+    }
+
+    // ---- Names, and something to see -----------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+        VoiceModeState mode;
+        mode.role = VoiceRole::Lead;
+
+        const VoicePart part = commitVoicePart(project, mode, makeNotes(5, 72));
+        check(!part.name.empty(), "a part arrives with a name");
+        check(part.name.find("Lead") != std::string::npos,
+              "named after what it is (got \"" + part.name + "\")");
+        check(part.noteCount == 5, "and knows how big it is");
+
+        const Pattern& pattern = project.patterns[size_t(part.patternIndex)];
+        check(pattern.name == part.name, "the pattern carries the same name");
+        check(pattern.length >= mode.barsPerPart * project.beatsPerMeasure,
+              "and is at least a full loop long, so the parts stack rather "
+              "than one ending early");
+    }
+
+    // ---- Nothing in, nothing kept ------------------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+        VoiceModeState mode;
+
+        const size_t patternsBefore = project.patterns.size();
+        const VoicePart empty = commitVoicePart(project, mode, {});
+        check(empty.channelIndex < 0, "an empty take is not committed");
+        check(project.patterns.size() == patternsBefore,
+              "and makes no pattern");
+    }
+
+    // ---- Running out of channels is reported, not ignored --------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+        VoiceModeState mode;
+        mode.role = VoiceRole::Lead;
+
+        int committed = 0;
+        for (int i = 0; i < Project::MAX_CHANNELS + 4; ++i) {
+            const VoicePart part = commitVoicePart(project, mode, makeNotes(3, 60));
+            if (part.channelIndex < 0) break;
+            mode.parts.push_back(part);
+            ++committed;
+        }
+
+        check(committed > 0, "parts are committed while there is room");
+        check(committed <= project.activeChannelCount(),
+              "and never more than there are channels (" +
+                  std::to_string(committed) + ")");
+
+        const VoicePart overflow = commitVoicePart(project, mode, makeNotes(3, 60));
+        check(overflow.channelIndex < 0,
+              "once full it refuses rather than overwriting channel 0");
+    }
+
+    // ---- Removing a part -----------------------------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+        VoiceModeState mode;
+
+        mode.role = VoiceRole::Drums;
+        mode.parts.push_back(commitVoicePart(project, mode, makeNotes(8, 36)));
+        mode.role = VoiceRole::Bass;
+        mode.parts.push_back(commitVoicePart(project, mode, makeNotes(6, 40)));
+
+        const size_t clipsBefore = project.arrangement.size();
+        const size_t patternsBefore = project.patterns.size();
+
+        removeVoicePart(project, mode, 0);
+
+        check(mode.parts.size() == 1, "the part is gone from the list");
+        check(project.arrangement.size() == clipsBefore - 1,
+              "and its clip from the timeline, so it stops playing");
+
+        /*
+         * The pattern stays.
+         *
+         * Deleting it would renumber every clip referring to a later one -
+         * and somebody removing a part from the mode has not necessarily
+         * decided to throw the notes away.
+         */
+        check(project.patterns.size() == patternsBefore,
+              "but the pattern is kept, so the notes are not lost and no "
+              "other clip is renumbered out from under itself");
+
+        // The one that remains still points at its own pattern.
+        const VoicePart& remaining = mode.parts[0];
+        bool stillPlaying = false;
+        for (const Clip& clip : project.arrangement) {
+            if (clip.channelIndex == remaining.channelIndex &&
+                clip.patternIndex == remaining.patternIndex) stillPlaying = true;
+        }
+        check(stillPlaying, "and the other part is untouched");
+
+        // Out of range must not walk off the end.
+        removeVoicePart(project, mode, 99);
+        removeVoicePart(project, mode, -1);
+        check(mode.parts.size() == 1, "a bad index removes nothing");
+    }
+
+    // ---- A channel somebody already used by hand is left alone --------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        Project& project = *projectPtr;
+        VoiceModeState mode;
+
+        // A clip written by hand on channel 0.
+        Clip existing;
+        existing.channelIndex = 0;
+        existing.patternIndex = 0;
+        existing.startBeat = 0.0f;
+        existing.lengthBeats = 16.0f;
+        project.arrangement.push_back(existing);
+
+        mode.role = VoiceRole::Lead;
+        const VoicePart part = commitVoicePart(project, mode, makeNotes(4, 72));
+        check(part.channelIndex != 0,
+              "a channel already written to by hand is not taken over (went "
+              "to " + std::to_string(part.channelIndex) + ")");
+    }
+
+    // ---- The view draws in every step ---------------------------------------------------------
+    {
+        auto uiPtr = std::make_unique<HeadlessUI>();
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        UIState ui;
+
+        Project& project = *projectPtr;
+        Sequencer& seq = *seqPtr;
+        seq.setSampleRate(44100.0f);
+        seq.setProject(&project);
+
+        VoiceModeState& mode = voiceModeState();
+        mode = VoiceModeState();
+
+        auto content = [&] { DrawVoiceMode(project, ui, seq); };
+
+        // Empty, which is what everybody sees first.
+        auto fresh = uiPtr->frames(3, content);
+        check(frameIsClean(fresh),
+              "Voice Mode draws cleanly with nothing done yet: " +
+                  fresh.firstProblem);
+        check(fresh.vertexCount > 0, "and draws something");
+
+        // Every role.
+        for (VoiceRole role : {VoiceRole::Drums, VoiceRole::Bass,
+                               VoiceRole::Lead, VoiceRole::Chords}) {
+            mode.role = role;
+            auto result = uiPtr->frames(2, content);
+            check(frameIsClean(result),
+                  std::string("the ") + voiceRoleName(role) +
+                      " role draws cleanly: " + result.firstProblem);
+        }
+
+        // Recording, reviewing, and with parts already laid down.
+        mode.step = VoiceModeStep::Recording;
+        auto rec = uiPtr->frames(2, content);
+        check(frameIsClean(rec), "recording draws cleanly: " + rec.firstProblem);
+
+        mode.step = VoiceModeStep::Review;
+        mode.pending = makeNotes(9, 64);
+        auto review = uiPtr->frames(2, content);
+        check(frameIsClean(review),
+              "the review with its preview draws cleanly: " + review.firstProblem);
+
+        // A single-note take: the preview's pitch range collapses to zero,
+        // which is where a divide by zero would live.
+        mode.pending = makeNotes(1, 60);
+        auto single = uiPtr->frames(2, content);
+        check(frameIsClean(single),
+              "a one-note take draws cleanly - the preview's pitch range is "
+              "zero there: " + single.firstProblem);
+
+        mode.pending.clear();
+        mode.step = VoiceModeStep::Choose;
+
+        mode.parts.push_back(commitVoicePart(project, mode, makeNotes(6, 60)));
+        mode.warning = "Something went wrong";
+        auto withParts = uiPtr->frames(2, content);
+        check(frameIsClean(withParts),
+              "with parts and a warning it draws cleanly: " +
+                  withParts.firstProblem);
+
+        voiceModeState() = VoiceModeState();
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -20703,6 +21010,7 @@ int main(int argc, char** argv) {
     testGroove();
     testVoicePostProcessing();
     testTempoDetection();
+    testVoiceMode();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

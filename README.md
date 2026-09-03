@@ -181,6 +181,23 @@ ruler draws.
 
 ![Song structure](docs/images/song-structure.png)
 
+### Voice Mode — sing your song
+
+Build a whole song a part at a time, without touching a note editor.
+Beatbox a groove, keep it, hum a bass line against what you just made, keep
+that, then a melody over both. Each part plays while you record the next, so
+you are playing along with your own song rather than into silence.
+
+You make one decision — drums, bass, lead or chords — and it sets everything
+else: what to listen for, which octave the part belongs in, how long the
+notes are held, the instrument, and the channel. A part you have kept is
+never overwritten by a later take.
+
+It will also work out what tempo you played at, so there is no click to hum
+along to, and keep a hummed line in key if you ask it to.
+
+![Voice Mode](docs/images/voice-mode.png)
+
 ### Voice to notes
 
 Sing a line or beatbox a groove and get notes — live as you make them, or

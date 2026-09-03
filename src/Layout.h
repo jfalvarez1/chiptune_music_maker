@@ -56,7 +56,7 @@ inline constexpr int WORKSPACE_COUNT = 3;
 // The editor views share one dock slot: only one is shown at a time, and
 // which one is chosen by the View menu rather than by a dock tab.
 inline constexpr const char* EDITOR_VIEWS[] = {
-    "Piano Roll", "Tracker", "Arrangement", "Mixer", "Pad Controller"
+    "Piano Roll", "Tracker", "Arrangement", "Mixer", "Pad Controller", "Voice"
 };
 
 // ============================================================================

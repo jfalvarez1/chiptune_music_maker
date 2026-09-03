@@ -1336,7 +1336,16 @@ enum class ViewMode : uint8_t {
     Tracker,
     Arrangement,
     Mixer,
-    PadController   // Live performance pad controller (MPC-style)
+    PadController,  // Live performance pad controller (MPC-style)
+
+    /*
+     * Build a song by singing it, one part at a time.
+     *
+     * LAST, and every future view must be too - this enum is written into
+     * project files and indexed by the view tables in Layout.h and
+     * Screenshot.h. Inserting a value renames every view after it.
+     */
+    Voice
 };
 
 // ============================================================================

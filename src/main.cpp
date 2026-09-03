@@ -1092,6 +1092,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             case ChiptuneTracker::ViewMode::PadController:
                 ChiptuneTracker::DrawPadController(project, uiState, sequencer);
                 break;
+            case ChiptuneTracker::ViewMode::Voice:
+                ChiptuneTracker::DrawVoiceMode(project, uiState, sequencer);
+                break;
         }
 
         // Floating tool windows are submitted AFTER the main editor view.

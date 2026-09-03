@@ -413,6 +413,7 @@ inline void applyCaptureState(const CaptureRequest& request,
         {"arrangement", ViewMode::Arrangement},
         {"mixer",       ViewMode::Mixer},
         {"pad",         ViewMode::PadController},
+        {"voice",       ViewMode::Voice},
     };
     for (const ViewName& entry : views) {
         if (request.viewName == entry.name) {

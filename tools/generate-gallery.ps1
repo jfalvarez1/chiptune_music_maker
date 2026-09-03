@@ -87,6 +87,7 @@ $shots = @(
 
     # Voice to notes, and the check panel with real findings in it.
     @{ name = "voice-to-notes";  args = "--demo --theme stock --focus `"Voice to Notes`"" }
+    @{ name = "voice-mode";      args = "--theme stock --view voice" }
     @{ name = "project-check";   args = "--demo --theme stock --conflicts --focus `"Project Check`"" }
 
     # The Engines row in the palette, which is where they are found.
