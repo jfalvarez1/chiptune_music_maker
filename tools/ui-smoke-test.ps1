@@ -219,6 +219,28 @@ foreach ($panel in $panels) {
     args = "--demo --focus `"Project Check`""
 })
 
+# The drum kit picker and the teaching block. Both live inside the Voice
+# panel, only appear in drum mode, and are the newest UI - so they have the
+# most layout to get wrong and the least wear.
+[void]$cases.Add(@{
+    name = "voice-drum-kit"
+    args = "--demo --show drumkit --focus `"Voice to Notes`""
+})
+
+# The Master Bus with a real chain on it. Empty it is every section
+# collapsed and disabled, which tells a reader nothing about what it does -
+# and would hide a control that fails to draw when it is switched on.
+[void]$cases.Add(@{
+    name = "master-bus-mastered"
+    args = "--demo --mastered --workspace mix"
+})
+
+# The demo buttons in the File panel, which is the tallest that panel gets.
+[void]$cases.Add(@{
+    name = "file-demos"
+    args = "--demo --focus `"File`""
+})
+
 # Voice Mode, which is a whole view rather than a panel - so it has its own
 # layout to get wrong, and an empty state that is what every user sees first.
 [void]$cases.Add(@{

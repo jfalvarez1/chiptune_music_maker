@@ -9950,6 +9950,15 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
     // The tracker uses the taught sounds when there are enough of them.
     g_Voice.tracker.setClassifier(&g_VocalDrums);
 
+    /*
+     * Publish the kit for Project Check.
+     *
+     * The kit is a property of how somebody is recording rather than of the
+     * song, so it lives here rather than in the project - but the audit
+     * still has to see it to report a kit with everything switched off.
+     */
+    voiceKitForAudit() = g_Voice.options.kit;
+
     if (ImGui::Combo("Detect", &g_Voice.analysisMode, modes)) {
         g_Voice.tracker.setMode(g_Voice.analysisMode == 1 ? LiveVoiceMode::Drums
                                                           : LiveVoiceMode::Melodic);

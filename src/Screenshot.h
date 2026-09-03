@@ -23,6 +23,7 @@
 #include "Types.h"
 #include "Macros.h"
 #include "TakeLanes.h"
+#include "Mastering.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -191,6 +192,7 @@ struct CaptureRequest {
     // findings in it rather than its empty-state paragraph.
     bool addConflicts = false;
     bool addComp = false;
+    bool addMastering = false;
 
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
@@ -230,6 +232,7 @@ struct CaptureRequest {
 //                        modmatrix|pitchtime
 //   --conflicts          settings that trip the Project Check panel
 //   --comp               a take-lane comp built from four passes
+//   --mastered           a project with a full master chain on it
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -286,6 +289,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.addConflicts = true;
         } else if (arg == "--comp") {
             request.addComp = true;
+        } else if (arg == "--mastered") {
+            request.addMastering = true;
         } else if (arg == "--genre") {
             next(request.genreFocus);
         } else if (arg == "--focus") {
@@ -455,6 +460,14 @@ inline void applyCaptureState(const CaptureRequest& request,
         if (window == "browser")   ui.showBrowser = true;
         if (window == "shortcuts") ui.showShortcuts = true;
         if (window == "plugins")   ui.showPlugins = true;
+
+        // The drum kit picker and the teaching block live inside the Voice
+        // panel and only appear in drum mode, so a shot of them needs the
+        // mode set as well as the panel open.
+        if (window == "drumkit") {
+            voicePanelState().analysisMode = 1;
+            voicePanelState().tracker.setMode(LiveVoiceMode::Drums);
+        }
 
         // The palette is opened rather than flagged, because opening it is
         // what focuses its search box - a screenshot of it without the
@@ -679,6 +692,16 @@ inline void applyCaptureState(const CaptureRequest& request,
 
         project.compGroups.push_back(group);
         comp::flattenAll(project);
+    }
+
+    /*
+     * A full master chain, so the Master Bus panel draws its controls with
+     * something in them rather than every section collapsed and disabled -
+     * which is the state the panel is in for a fresh project and tells a
+     * reader nothing about what it does.
+     */
+    if (request.addMastering) {
+        applyMastering(project, "Synthwave");
     }
 
     // --- Song structure ---

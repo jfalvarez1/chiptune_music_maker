@@ -196,7 +196,11 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Automation", centre);
             ImGui::DockBuilderDockWindow("Wavetable Editor", centre);
             ImGui::DockBuilderDockWindow("MIDI Input", rightLower);
-            ImGui::DockBuilderDockWindow("Voice to Notes", leftLower);
+            // The Voice panel is a substantial tool now - kit, teaching, quantise,
+            // tempo, tidying and destination - and a narrow side column leaves its
+            // scrolling half about a hundred pixels tall, which puts the kit picker
+            // out of reach. It goes in the centre with the editors, where it has room.
+            ImGui::DockBuilderDockWindow("Voice to Notes", centre);
             ImGui::DockBuilderDockWindow("Project Check", rightLower);
             ImGui::DockBuilderDockWindow("Take Lanes", centre);
             ImGui::DockBuilderDockWindow("Browser", leftUpper);
@@ -238,7 +242,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Automation", lowerMid);
             ImGui::DockBuilderDockWindow("Master Bus", lowerMid);
             ImGui::DockBuilderDockWindow("MIDI Input", upperLeft);
-            ImGui::DockBuilderDockWindow("Voice to Notes", upperLeft);
+            ImGui::DockBuilderDockWindow("Voice to Notes", lowerRight);
             ImGui::DockBuilderDockWindow("Project Check", lowerMid);
             ImGui::DockBuilderDockWindow("Take Lanes", lowerRight);
             ImGui::DockBuilderDockWindow("Browser", lowerLeft);
@@ -274,7 +278,7 @@ inline void BuildWorkspaceLayout(ImGuiID dockspaceId, Workspace workspace, ImVec
             ImGui::DockBuilderDockWindow("Tools", lowerLeft);
             ImGui::DockBuilderDockWindow("Wavetable Editor", lowerLeft);
             ImGui::DockBuilderDockWindow("MIDI Input", upperRight);
-            ImGui::DockBuilderDockWindow("Voice to Notes", upperRight);
+            ImGui::DockBuilderDockWindow("Voice to Notes", lowerLeft);
             ImGui::DockBuilderDockWindow("Project Check", lowerRight);
             ImGui::DockBuilderDockWindow("Take Lanes", lowerLeft);
             ImGui::DockBuilderDockWindow("Browser", lowerLeft);
@@ -317,7 +321,7 @@ inline int AdoptOrphanedWindows() {
         {"Spectrum Analyzer", "Piano Roll"},
         {"Automation",        "Piano Roll"},
         {"MIDI Input",        "Channel Editor"},
-        {"Voice to Notes",    "Tools"},
+        {"Voice to Notes",    "Piano Roll"},
         {"Project Check",     "Master Bus"},
         {"Take Lanes",        "Arrangement"},
         {"Browser",           "Sound Palette"},

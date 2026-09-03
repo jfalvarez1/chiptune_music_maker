@@ -21272,6 +21272,206 @@ static void testMastering() {
     }
 }
 
+
+// ============================================================================
+// 110. The audit knows about the new features
+//
+// Project Check exists to find settings that are on and doing nothing, or
+// quietly cancelling something else. Every feature added since it was
+// written brought more of those, and an audit that does not know about them
+// gets progressively less trustworthy - a clean report starts meaning
+// "nothing I know about" rather than "nothing".
+// ============================================================================
+static void testAuditCoverage() {
+    beginTest("Project Check covers the new settings");
+
+    // Does any finding mention this?
+    auto mentions = [](const std::vector<AuditFinding>& findings,
+                       const std::string& needle) {
+        for (const AuditFinding& finding : findings) {
+            if (finding.what.find(needle) != std::string::npos) return true;
+        }
+        return false;
+    };
+
+    auto worstSeverity = [](const std::vector<AuditFinding>& findings,
+                            const std::string& needle) {
+        for (const AuditFinding& finding : findings) {
+            if (finding.what.find(needle) != std::string::npos) {
+                return finding.severity;
+            }
+        }
+        return AuditSeverity::Note;
+    };
+
+    // ---- A clean project reports nothing about any of this --------------------
+    //
+    // The check that matters most: a panel that cries wolf on a healthy
+    // project is one people stop reading.
+    {
+        auto projectPtr = std::make_unique<Project>();
+        const std::vector<AuditFinding> findings = auditProject(*projectPtr);
+
+        check(!mentions(findings, "Stereo width"),
+              "a fresh project says nothing about width");
+        check(!mentions(findings, "Saturation"),
+              "or about saturation");
+        check(!mentions(findings, "compressor"),
+              "or about the compressor");
+        check(!mentions(findings, "plugin"),
+              "or about plugins");
+    }
+
+    // ---- Width that is on and doing nothing -----------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        projectPtr->masterWidthEnabled = true;
+        projectPtr->masterWidth = 1.0f;
+
+        check(mentions(auditProject(*projectPtr), "Stereo width is on"),
+              "a widener at 1.0 is reported - it is running and changing "
+              "nothing, which is exactly what this panel is for");
+
+        // And once it is actually doing something, it stops complaining.
+        projectPtr->masterWidth = 1.4f;
+        check(!mentions(auditProject(*projectPtr), "Stereo width is on but"),
+              "a widener that is actually widening is not reported");
+    }
+
+    // ---- Width far enough to hollow out the middle ------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        projectPtr->masterWidthEnabled = true;
+        projectPtr->masterWidth = 1.9f;
+
+        const std::vector<AuditFinding> findings = auditProject(*projectPtr);
+        check(mentions(findings, "very high"),
+              "an extreme width is reported");
+        check(worstSeverity(findings, "very high") == AuditSeverity::Warning,
+              "as a warning rather than a note - it makes the mix worse "
+              "rather than merely doing nothing");
+    }
+
+    // ---- Saturation at its clean setting -----------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        projectPtr->masterSaturationEnabled = true;
+        projectPtr->masterSaturationDrive = 1.0f;
+
+        check(mentions(auditProject(*projectPtr), "Saturation is on"),
+              "saturation at drive 1 is reported - the curve passes the "
+              "signal through untouched at that setting");
+
+        projectPtr->masterSaturationDrive = 2.0f;
+        check(!mentions(auditProject(*projectPtr), "Saturation is on but"),
+              "and is not reported once it is driving");
+    }
+
+    // ---- A compressor that cannot compress ------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        projectPtr->masterCompressorEnabled = true;
+        projectPtr->masterCompRatio = 1.0f;
+
+        check(mentions(auditProject(*projectPtr), "ratio of 1:1"),
+              "a compressor at 1:1 is reported - no threshold makes a ratio "
+              "of one do anything");
+    }
+
+    // ---- Makeup gain the limiter has to clean up -------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+        projectPtr->masterCompressorEnabled = true;
+        projectPtr->masterCompMakeup = 12.0f;
+        projectPtr->masterLimiterEnabled = true;
+
+        check(mentions(auditProject(*projectPtr), "makeup gain is very high"),
+              "makeup gain large enough that the limiter does the mastering "
+              "is reported");
+    }
+
+    // ---- A kit with every drum switched off ---------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+
+        DrumKit& kit = voiceKitForAudit();
+        const DrumKit saved = kit;
+
+        kit.useKick = kit.useSnare = false;
+        kit.useHatClosed = kit.useHatOpen = false;
+
+        const std::vector<AuditFinding> findings = auditProject(*projectPtr);
+        check(mentions(findings, "Every drum is switched off"),
+              "an empty voice kit is reported");
+        check(worstSeverity(findings, "Every drum") == AuditSeverity::Problem,
+              "as a problem - a take that produces nothing looks like the "
+              "microphone having failed, not like a setting");
+
+        kit = saved;
+        check(!mentions(auditProject(*projectPtr), "Every drum is switched off"),
+              "and a usable kit is not reported");
+    }
+
+    // ---- A plugin this build cannot host --------------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>();
+
+        PluginSlot slot;
+        slot.format = PluginFormat::VST3;
+        slot.path = "C:/VST3/Something.vst3";
+        slot.uid = "something";
+        slot.name = "Big Reverb";
+        slot.enabled = true;
+        projectPtr->channels[2].plugins.push_back(slot);
+
+        const std::vector<AuditFinding> findings = auditProject(*projectPtr);
+        check(mentions(findings, "Big Reverb"),
+              "a plugin in a project this build cannot host is reported by "
+              "name - silence about it is worse, because the channel simply "
+              "sounds wrong with no explanation");
+
+        /*
+         * A note, not a problem.
+         *
+         * Nothing is broken and nothing is lost: the settings are kept and
+         * the project will sound right again on a build that can load it.
+         */
+        check(worstSeverity(findings, "Big Reverb") == AuditSeverity::Note,
+              "as a note rather than a problem - nothing is lost, and it "
+              "will come back on a build that can load it");
+
+        // A disabled slot is the user's own choice and says nothing.
+        projectPtr->channels[2].plugins[0].enabled = false;
+        check(!mentions(auditProject(*projectPtr), "Big Reverb"),
+              "a plugin the user switched off is not reported");
+    }
+
+    // ---- Every finding is actionable ---------------------------------------------------
+    //
+    // A finding with no fix is a complaint. The panel's whole value is that
+    // it says what to do.
+    {
+        auto projectPtr = std::make_unique<Project>();
+        projectPtr->masterWidthEnabled = true;
+        projectPtr->masterWidth = 1.0f;
+        projectPtr->masterSaturationEnabled = true;
+        projectPtr->masterSaturationDrive = 1.0f;
+        projectPtr->masterCompressorEnabled = true;
+        projectPtr->masterCompRatio = 1.0f;
+
+        const std::vector<AuditFinding> findings = auditProject(*projectPtr);
+        check(findings.size() >= 3, "several findings at once");
+
+        for (const AuditFinding& finding : findings) {
+            check(!finding.what.empty(), "every finding says what is wrong");
+            check(!finding.why.empty(), "and why it matters");
+            check(!finding.fix.empty(),
+                  "and what to do about it - a finding with no fix is a "
+                  "complaint");
+        }
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -22030,6 +22230,7 @@ int main(int argc, char** argv) {
     testDrumKits();
     testShowcases();
     testMastering();
+    testAuditCoverage();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

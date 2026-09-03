@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "Types.h"
+#include "DrumKit.h"
 #include "Effects.h"
 
 namespace ChiptuneTracker {
@@ -112,6 +113,20 @@ inline bool destinationApplies(const ChannelConfig& channel,
  * Returns an empty list for a fresh project. That is a hard requirement: a
  * panel that always has something in it is a panel nobody reads.
  */
+/*
+ * The voice kit the audit consults.
+ *
+ * The kit lives in the Voice panel's own state rather than in the project,
+ * because it is a property of how somebody is recording rather than of the
+ * song. The audit still needs to see it, so it is reached through a hook
+ * the UI sets - and defaults to a usable kit, so a headless caller with no
+ * UI never reports a problem that does not exist.
+ */
+inline DrumKit& voiceKitForAudit() {
+    static DrumKit kit;
+    return kit;
+}
+
 inline std::vector<AuditFinding> auditProject(const Project& project) {
     std::vector<AuditFinding> findings;
 
@@ -439,6 +454,124 @@ inline std::vector<AuditFinding> auditProject(const Project& project) {
                          if (a.severity != b.severity) return a.severity < b.severity;
                          return a.channel < b.channel;
                      });
+
+    // ---- Mastering that is switched on and doing nothing --------------------
+    //
+    // Both of these are the exact shape this panel exists for: a control
+    // that is on, that the user believes is working, and that is a no-op at
+    // its current value.
+    if (project.masterWidthEnabled &&
+        std::fabs(project.masterWidth - 1.0f) < 0.02f) {
+        findings.push_back({
+            AuditSeverity::Note, -1,
+            "Stereo width is on but set to 1.0",
+            "At 1.0 the sides are scaled by exactly one, so the widener is "
+            "running and changing nothing.",
+            "Raise the width above 1.0 on the Master Bus, or switch it off."
+        });
+    }
+
+    if (project.masterSaturationEnabled &&
+        project.masterSaturationDrive <= 1.001f) {
+        findings.push_back({
+            AuditSeverity::Note, -1,
+            "Saturation is on but its drive is at the minimum",
+            "Drive 1 passes the signal through untouched by design, so the "
+            "saturator is doing nothing at all.",
+            "Raise the drive above 1, or switch saturation off."
+        });
+    }
+
+    /*
+     * Width far enough to hollow out the centre.
+     *
+     * Anything mono - which on a chiptune project is most of it - loses
+     * level as the sides are pushed out, and past about 1.7 that is audible
+     * as the middle of the mix going thin.
+     */
+    if (project.masterWidthEnabled && project.masterWidth > 1.7f) {
+        findings.push_back({
+            AuditSeverity::Warning, -1,
+            "Stereo width is very high",
+            "Pushing the sides this far thins anything sitting in the "
+            "centre, which on a mostly-mono project is the kick, the bass "
+            "and often the lead.",
+            "Try a width nearer 1.3, and check the mix still holds up in "
+            "mono."
+        });
+    }
+
+    // Makeup gain large enough that the limiter is doing the mastering.
+    if (project.masterCompressorEnabled && project.masterLimiterEnabled &&
+        project.masterCompMakeup > 8.0f) {
+        findings.push_back({
+            AuditSeverity::Warning, -1,
+            "Master makeup gain is very high",
+            "The limiter will be catching most of this rather than the "
+            "compressor shaping it, which flattens the mix instead of "
+            "gluing it.",
+            "Lower the makeup gain, or lower the compressor threshold so it "
+            "does the work."
+        });
+    }
+
+    // A compressor with nothing to compress.
+    if (project.masterCompressorEnabled && project.masterCompRatio <= 1.05f) {
+        findings.push_back({
+            AuditSeverity::Note, -1,
+            "Master compressor is on at a ratio of 1:1",
+            "A ratio of one applies no compression whatever the threshold "
+            "is, so the compressor is running and doing nothing.",
+            "Raise the ratio, or switch the compressor off."
+        });
+    }
+
+    // ---- Voice: a drum kit with nothing in it -------------------------------
+    //
+    // A kit with no drums enabled produces no notes from a beatboxed take,
+    // which looks exactly like the microphone having failed.
+    {
+        const DrumKit& kit = voiceKitForAudit();
+        if (kit.count() == 0) {
+            findings.push_back({
+                AuditSeverity::Problem, -1,
+                "Every drum is switched off in the voice kit",
+                "A beatboxed take cannot become any drum, so recording one "
+                "produces nothing - which looks like the microphone not "
+                "working rather than a setting.",
+                "Switch at least one drum back on in Voice to Notes."
+            });
+        }
+    }
+
+    // ---- Plugins that cannot be loaded --------------------------------------
+    for (int ch = 0; ch < Project::MAX_CHANNELS; ++ch) {
+        const ChannelConfig& channel = project.channels[static_cast<size_t>(ch)];
+        for (const PluginSlot& plugin : channel.plugins) {
+            if (!plugin.enabled) continue;
+
+            /*
+             * A plugin in a project this build cannot host.
+             *
+             * Reported as a Note rather than a Problem: the settings are
+             * safe, and the project will sound right again on a machine
+             * that can load it. Silence about it would be worse, because
+             * the channel simply sounds wrong with no explanation.
+             */
+            findings.push_back({
+                AuditSeverity::Note, ch,
+                "Channel " + channel.name + " uses the plugin \"" +
+                    (plugin.name.empty() ? std::string("(unnamed)") : plugin.name) +
+                    "\"",
+                "This build cannot host plugins, so it is not in the signal "
+                "path. Its settings are kept and will come back on a build "
+                "that can load it.",
+                "Nothing to do - the channel will simply sound as it does "
+                "without that plugin."
+            });
+        }
+    }
+
     return findings;
 }
 
