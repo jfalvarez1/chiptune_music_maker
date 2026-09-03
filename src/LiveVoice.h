@@ -55,7 +55,8 @@
 #include "FFT.h"
 #include "AudioAnalyzer.h"
 #include "VoiceTimbre.h"
-#include "Groove.h"   // YIN and freqToMidi, shared with the offline path
+#include "Groove.h"
+#include "VoicePost.h"
 #include "Types.h"
 #include "Snap.h"
 #include "TempoMap.h"

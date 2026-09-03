@@ -32,6 +32,7 @@
 
 #include "Types.h"
 #include "LiveVoice.h"
+#include "VoicePost.h"
 #include "VoiceCapture.h"
 #include "AudioAnalyzer.h"
 #include "UndoHistory.h"
@@ -215,6 +216,19 @@ struct VoicePanelState {
     // What "Match the take" found, so the answer is visible rather than
     // silently applied to a combo the user then has to notice moved.
     std::string gridMessage;
+
+    /*
+     * Optional tidying, applied on the way into the pattern.
+     *
+     * Both are off by default. They change what the user played - one
+     * alters notes, the other invents them - and a correction that is
+     * confidently wrong costs more to find and undo than it saved.
+     */
+    KeySnapOptions keySnap;
+    DrumFillOptions drumFill;
+
+    // What the last tidy actually did, so it is visible rather than guessed at.
+    std::string postMessage;
 
 
     // Live tracking.

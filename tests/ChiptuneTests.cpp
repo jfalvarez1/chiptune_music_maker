@@ -7031,6 +7031,20 @@ static void testEffectRackStability() {
             }
         });
 
+        /*
+         * Wait for the editor to actually get going before timing anything.
+         *
+         * Without this the test is a race it usually wins: on a loaded
+         * machine the audio loop can finish before the editor thread is
+         * ever scheduled, and the run then fails on "did it reorder at
+         * all" while proving nothing either way. Bounded, so a thread that
+         * never starts fails the assertion below rather than hanging the
+         * suite forever.
+         */
+        for (int spins = 0; spins < 100000 && reorders.load() == 0; ++spins) {
+            std::this_thread::yield();
+        }
+
         for (int block = 0; block < blocks; ++block) {
             for (int i = 0; i < 64; ++i) {
                 const float time = static_cast<float>(block * 64 + i) / 44100.0f;
@@ -19417,6 +19431,270 @@ static void testGroove() {
     }
 }
 
+
+// ============================================================================
+// 104. Optional tidying: staying in key, and staying on the beat
+//
+// Both of these change what the user played - one alters notes, the other
+// invents them - so what is asserted here is mostly the guards. A
+// correction that is confidently wrong is worse than no correction, because
+// somebody has to find it and undo it, and may not notice for a long time.
+// ============================================================================
+static void testVoicePostProcessing() {
+    beginTest("Auto-tune to key and drum gap filling");
+
+    auto makeNote = [](int pitch, float start, float duration) {
+        Note note;
+        note.pitch = pitch;
+        note.startTime = start;
+        note.duration = duration;
+        note.velocity = 0.8f;
+        return note;
+    };
+
+    // ---- Off by default -------------------------------------------------------
+    {
+        std::vector<Note> notes = {makeNote(61, 0.0f, 0.25f)};   // C# in C major
+
+        KeySnapOptions keyOptions;                // enabled defaults to false
+        const KeySnapReport report = snapNotesToKey(notes, keyOptions, 1.0f);
+
+        check(report.moved == 0 && notes[0].pitch == 61,
+              "key snapping does nothing until it is switched on");
+        check(!report.ranAtAll, "and reports that it did not run");
+
+        std::vector<Note> drums = {makeNote(36, 0.0f, 0.1f),
+                                   makeNote(36, 1.0f, 0.1f)};
+        DrumFillOptions fillOptions;
+        const DrumFillReport fill = fillDrumGaps(drums, fillOptions);
+        check(fill.added == 0 && drums.size() == 2,
+              "and nor does gap filling");
+    }
+
+    // ---- Auto-tune: the wrong note moves ---------------------------------------
+    {
+        KeySnapOptions options;
+        options.enabled = true;
+        options.scaleRoot = 0;      // C
+        options.scaleType = 0;      // major
+
+        // C# is not in C major and is one semitone from both C and D.
+        std::vector<Note> notes = {makeNote(61, 0.0f, 0.25f)};
+        const KeySnapReport report = snapNotesToKey(notes, options, 1.0f);
+
+        check(report.moved == 1, "an out-of-key note is pulled into the scale");
+        check(isNoteInScale(notes[0].pitch, 0, 0),
+              "and it really is in the scale afterwards (got " +
+                  std::to_string(notes[0].pitch) + ")");
+        check(std::abs(notes[0].pitch - 61) <= 1,
+              "having moved by no more than a semitone");
+    }
+
+    // ---- Auto-tune: what it leaves alone ------------------------------------------
+    {
+        KeySnapOptions options;
+        options.enabled = true;
+        options.scaleRoot = 0;
+        options.scaleType = 0;
+        options.maxDurationBeats = 1.0f;
+
+        /*
+         * A long out-of-scale note is a structural choice - a blue note, a
+         * suspension, the colour of a whole phrase. Ironing those out is
+         * what makes an auto-tuned part sound characterless.
+         */
+        std::vector<Note> held = {makeNote(61, 0.0f, 2.0f)};
+        const KeySnapReport report = snapNotesToKey(held, options, 1.0f);
+        check(held[0].pitch == 61,
+              "a long out-of-key note is left alone - it was a choice");
+        check(report.leftLong == 1, "and counted as such");
+
+        // A note already in key is not touched at all.
+        std::vector<Note> fine = {makeNote(60, 0.0f, 0.25f),
+                                  makeNote(64, 0.5f, 0.25f)};
+        const KeySnapReport clean = snapNotesToKey(fine, options, 1.0f);
+        check(clean.moved == 0 && fine[0].pitch == 60 && fine[1].pitch == 64,
+              "notes already in key are untouched");
+
+        // Timing is never altered by a pitch correction.
+        std::vector<Note> timed = {makeNote(61, 1.375f, 0.25f)};
+        snapNotesToKey(timed, options, 1.0f);
+        check(std::fabs(timed[0].startTime - 1.375f) < 1e-5f,
+              "and being out of key says nothing about the timing, which is "
+              "not touched");
+    }
+
+    // ---- Auto-tune: an unsure key does nothing -----------------------------------
+    //
+    // The guard that matters most. Snapping to a confidently wrong key
+    // destroys a take, and a short hum is often genuinely ambiguous between
+    // relative major and minor.
+    {
+        KeySnapOptions options;
+        options.enabled = true;
+        options.minKeyConfidence = 0.05f;
+
+        std::vector<Note> notes = {makeNote(61, 0.0f, 0.25f)};
+        const KeySnapReport report = snapNotesToKey(notes, options, 0.01f);
+
+        check(report.moved == 0 && notes[0].pitch == 61,
+              "nothing is snapped when the key is not clear");
+        check(!report.ranAtAll,
+              "and it says so, rather than appearing to have worked");
+    }
+
+    // ---- Auto-tune: a minor key is a different answer -------------------------------
+    {
+        KeySnapOptions options;
+        options.enabled = true;
+        options.scaleRoot = 9;      // A
+        options.scaleType = 1;      // minor
+
+        // C natural is in A minor; C# is not.
+        std::vector<Note> notes = {makeNote(60, 0.0f, 0.25f),
+                                   makeNote(61, 0.5f, 0.25f)};
+        snapNotesToKey(notes, options, 1.0f);
+
+        check(notes[0].pitch == 60, "C is already in A minor and stays");
+        check(isNoteInScale(notes[1].pitch, 9, 1),
+              "and C# is pulled into it");
+    }
+
+    // ---- Filling: a steady pattern with one hole -------------------------------------
+    {
+        DrumFillOptions options;
+        options.enabled = true;
+
+        // A hi-hat every half beat, with the one at 1.5 missing.
+        std::vector<Note> notes;
+        const float times[] = {0.0f, 0.5f, 1.0f, /* 1.5 missing */ 2.0f, 2.5f, 3.0f};
+        for (float time : times) notes.push_back(makeNote(42, time, 0.125f));
+
+        const size_t before = notes.size();
+        const DrumFillReport report = fillDrumGaps(notes, options);
+
+        check(report.added == 1,
+              "one missing hit in a steady pattern is filled (added " +
+                  std::to_string(report.added) + ")");
+        check(notes.size() == before + 1, "and the note is really there");
+
+        bool atTheHole = false;
+        for (const Note& note : notes) {
+            if (std::fabs(note.startTime - 1.5f) < 1e-3f) atTheHole = true;
+        }
+        check(atTheHole, "in the hole, at 1.5");
+
+        // Quieter than what was played, so a filled hit sits underneath
+        // rather than pretending to be one of them.
+        for (const Note& note : notes) {
+            if (std::fabs(note.startTime - 1.5f) < 1e-3f) {
+                check(note.velocity < 0.8f,
+                      "and quieter than the hits either side of it");
+            }
+        }
+
+        // Still in time order, or every consumer walking the pattern in
+        // order sees the notes out of sequence.
+        bool ordered = true;
+        for (size_t i = 1; i < notes.size(); ++i) {
+            if (notes[i].startTime < notes[i - 1].startTime) ordered = false;
+        }
+        check(ordered, "and the pattern is still in time order");
+    }
+
+    // ---- Filling: what it refuses to do ------------------------------------------------
+    {
+        DrumFillOptions options;
+        options.enabled = true;
+
+        /*
+         * A real rest is not a mistake.
+         *
+         * A gap of three or more periods is space the person meant, and
+         * filling it turns a groove with room to breathe into a machine
+         * pattern.
+         */
+        std::vector<Note> rested;
+        const float withRest[] = {0.0f, 0.5f, 1.0f, 1.5f, /* a whole bar off */ 4.0f,
+                                  4.5f, 5.0f, 5.5f};
+        for (float time : withRest) rested.push_back(makeNote(42, time, 0.125f));
+
+        const DrumFillReport restReport = fillDrumGaps(rested, options);
+        check(restReport.added == 0,
+              "a rest of several beats is left as a rest, not filled in "
+              "(added " + std::to_string(restReport.added) + ")");
+
+        // An irregular groove has no pattern to complete.
+        std::vector<Note> loose;
+        const float uneven[] = {0.0f, 0.31f, 0.94f, 1.12f, 1.88f, 2.41f};
+        for (float time : uneven) loose.push_back(makeNote(42, time, 0.125f));
+
+        const DrumFillReport looseReport = fillDrumGaps(loose, options);
+        check(looseReport.added == 0,
+              "an irregular groove is not regularised into one it never was");
+
+        // Too few hits to judge a pattern from.
+        std::vector<Note> sparse = {makeNote(42, 0.0f, 0.1f),
+                                    makeNote(42, 1.0f, 0.1f)};
+        check(fillDrumGaps(sparse, options).added == 0,
+              "two hits are not a pattern");
+
+        std::vector<Note> nothing;
+        check(fillDrumGaps(nothing, options).added == 0,
+              "and nothing at all is handled without crashing");
+    }
+
+    // ---- Filling: each drum is judged on its own ----------------------------------------
+    //
+    // A kick and a hi-hat have different patterns; judging them together
+    // would find a period belonging to neither.
+    {
+        DrumFillOptions options;
+        options.enabled = true;
+
+        std::vector<Note> notes;
+        // Hats every half beat with one missing at 1.5.
+        for (float time : {0.0f, 0.5f, 1.0f, 2.0f, 2.5f, 3.0f}) {
+            notes.push_back(makeNote(42, time, 0.125f));
+        }
+        // Kicks every two beats, complete - and interleaved in time with the
+        // hats, which is what would confuse a single-period analysis.
+        for (float time : {0.0f, 2.0f, 4.0f, 6.0f}) {
+            notes.push_back(makeNote(36, time, 0.125f));
+        }
+
+        const DrumFillReport report = fillDrumGaps(notes, options);
+        check(report.added == 1,
+              "only the hi-hat's hole is filled, not an imagined kick (added " +
+                  std::to_string(report.added) + ")");
+
+        int kicks = 0;
+        for (const Note& note : notes) if (note.pitch == 36) ++kicks;
+        check(kicks == 4, "the complete kick pattern is untouched");
+    }
+
+    // ---- Filling: invention is bounded -----------------------------------------------------
+    {
+        DrumFillOptions options;
+        options.enabled = true;
+        options.maxAddedFraction = 0.25f;
+
+        // A pattern that is more hole than pattern. Completing it would
+        // produce something nobody played.
+        std::vector<Note> gappy;
+        for (float time : {0.0f, 0.5f, 1.5f, 2.5f, 3.5f, 4.5f}) {
+            gappy.push_back(makeNote(42, time, 0.125f));
+        }
+
+        const size_t before = gappy.size();
+        const DrumFillReport report = fillDrumGaps(gappy, options);
+        check(report.added <= int(float(before) * 0.25f) + 1,
+              "no more than a quarter of what was played can be invented "
+              "(added " + std::to_string(report.added) + " to " +
+                  std::to_string(before) + ")");
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -20169,6 +20447,7 @@ int main(int argc, char** argv) {
     testVoiceDestination();
     testVoiceTimbre();
     testGroove();
+    testVoicePostProcessing();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

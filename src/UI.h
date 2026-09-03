@@ -10039,6 +10039,61 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
      * The most common outcome of a good take was discovering it had
      * overwritten something else.
      */
+
+    /*
+     * Optional tidying.
+     *
+     * Both off by default: they change what was played, and a correction
+     * that is confidently wrong is worse than none because somebody has to
+     * find it and undo it.
+     */
+    if (g_Voice.analysisMode == 1) {
+        // Beatboxing: complete a steady pattern that dropped a hit.
+        ImGui::Checkbox("Fill missing hits", &g_Voice.drumFill.enabled);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Beatbox a steady hi-hat and drop one, and this puts it back.\n"
+                "Only where the pattern is already steady and exactly one hit\n"
+                "is missing - a real rest is left as a rest, and it never\n"
+                "adds more than a quarter of what you played.");
+        }
+    } else {
+        // Humming: keep the line in key.
+        ImGui::Checkbox("Keep in key", &g_Voice.keySnap.enabled);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Pulls notes that fell out of the key back into it.\n"
+                "Long notes are left alone - a held note outside the key is a\n"
+                "choice, not a mistake - and nothing is snapped at all when\n"
+                "the key is unclear.");
+        }
+
+        if (g_Voice.keySnap.enabled) {
+            ImGui::SameLine();
+
+            /*
+             * Which key it will snap to, said out loud.
+             *
+             * Snapping to a key the user did not expect is the way this
+             * feature ruins a take, so the answer is on screen before the
+             * button is pressed rather than after.
+             */
+            if (g_Voice.keyDetected) {
+                static const char* NAMES[] = {"C", "C#", "D", "D#", "E", "F",
+                                              "F#", "G", "G#", "A", "A#", "B"};
+                ImGui::TextDisabled("%s %s",
+                                    NAMES[g_Voice.detectedKey.root % 12],
+                                    g_Voice.detectedKey.isMinor ? "minor" : "major");
+            } else {
+                ImGui::TextDisabled("(analyse a take to find the key)");
+            }
+        }
+    }
+
+    if (!g_Voice.postMessage.empty()) {
+        ImGui::TextDisabled("%s", g_Voice.postMessage.c_str());
+    }
+
     ImGui::SeparatorText("Destination");
 
     // ---- Which pattern -------------------------------------------------------
@@ -10189,6 +10244,46 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
             notes = detectedToNotes(g_Voice.detected, project.tempoMap,
                                     project.bpm, project.beatsPerMeasure,
                                     g_Voice.options);
+        }
+
+        /*
+         * The optional tidying, before anything is written.
+         *
+         * Here rather than inside hitsToNotes because these are choices
+         * about the result, not part of the conversion - and because doing
+         * them here keeps the conversion a pure function of the take, which
+         * is what makes the strength dial reversible.
+         */
+        g_Voice.postMessage.clear();
+
+        if (g_Voice.keySnap.enabled && !notes.empty()) {
+            g_Voice.keySnap.scaleRoot = g_Voice.detectedKey.root;
+            // The scale tables put major at 0 and minor at 1.
+            g_Voice.keySnap.scaleType = g_Voice.detectedKey.isMinor ? 1 : 0;
+
+            const KeySnapReport report = snapNotesToKey(
+                notes, g_Voice.keySnap,
+                g_Voice.keyDetected ? g_Voice.detectedKey.confidence : 0.0f);
+
+            if (!report.ranAtAll) {
+                g_Voice.postMessage = "Key unclear - nothing snapped";
+            } else if (report.moved > 0) {
+                char text[96];
+                snprintf(text, sizeof(text), "Snapped %d note%s into key",
+                         report.moved, report.moved == 1 ? "" : "s");
+                g_Voice.postMessage = text;
+            }
+        }
+
+        if (g_Voice.drumFill.enabled && !notes.empty()) {
+            const DrumFillReport report = fillDrumGaps(notes, g_Voice.drumFill);
+            if (report.added > 0) {
+                char text[96];
+                snprintf(text, sizeof(text), "Filled %d missing hit%s",
+                         report.added, report.added == 1 ? "" : "s");
+                if (!g_Voice.postMessage.empty()) g_Voice.postMessage += ", ";
+                g_Voice.postMessage += text;
+            }
         }
 
         if (!notes.empty()) {
