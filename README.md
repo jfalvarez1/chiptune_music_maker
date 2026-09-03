@@ -2,6 +2,14 @@
 
 A tracker-style DAW for creating authentic chiptune music, built from scratch in C++20.
 
+# ⬇️ [Download latest release HERE](https://github.com/jfalvarez1/chiptune_music_maker/releases/latest/download/ChiptuneTracker-Windows.zip)
+
+### **[Download latest release HERE](https://github.com/jfalvarez1/chiptune_music_maker/releases/latest/download/ChiptuneTracker-Windows.zip)** — Windows, no installer, no dependencies
+
+Unzip and run `ChiptuneTracker.exe`. Everything is statically linked, so
+there is nothing else to install. [All releases and release
+notes.](https://github.com/jfalvarez1/chiptune_music_maker/releases)
+
 ## Overview
 
 Chiptune Tracker is a real-time digital audio workstation for writing

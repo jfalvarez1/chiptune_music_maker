@@ -17856,6 +17856,18 @@ struct HumOptions {
     float secondHarmonic = 0.55f;   // the octave-error maker
     float thirdHarmonic = 0.30f;
     float amplitude = 0.30f;
+
+    /*
+     * Slow, aimless pitch drift within a single note, in cents.
+     *
+     * Distinct from vibrato, which is periodic and centred. Nobody holds a
+     * hummed note perfectly still - it wanders - and this is the property
+     * that decides whether a detector reports one note or none. A tracker
+     * that requires several consecutive frames to agree on the same
+     * semitone never sees them agree once the wander crosses a semitone
+     * boundary, and emits nothing at all.
+     */
+    float wanderCents = 0.0f;
 };
 
 /*
@@ -17916,6 +17928,15 @@ static std::vector<float> synthesiseHum(const std::vector<BenchNote>& notes,
                 const float cents = options.vibratoCents *
                     std::sin(6.28318530718f * options.vibratoHz * t);
                 frequency *= std::pow(2.0f, cents / 1200.0f);
+            }
+
+            // A slow wander, from two slow sines rather than filtered noise
+            // so the benchmark stays deterministic.
+            if (options.wanderCents > 0.0f) {
+                const float wander = options.wanderCents *
+                    (0.6f * std::sin(6.28318530718f * 0.7f * t + float(n)) +
+                     0.4f * std::sin(6.28318530718f * 1.3f * t + float(n) * 2.1f));
+                frequency *= std::pow(2.0f, wander / 1200.0f);
             }
 
             phase += 6.28318530718 * double(frequency) / double(sampleRate);
@@ -18143,6 +18164,63 @@ static void testVoiceDetectionBenchmark() {
                   score.summary());
     }
 
+
+    /*
+     * ---- An actual voice ---------------------------------------------------
+     *
+     * Everything at once and at realistic depths: a wide vibrato, pitch
+     * that wanders within each note, audible breath, and a lower level.
+     *
+     * This is the case that matters, because it is the one a person
+     * produces. A tracker can score perfectly on every case above and be
+     * unusable here - and the two symptoms that combination produces,
+     * missed notes and jumpy notes, are exactly what came back from real
+     * use.
+     */
+    {
+        HumOptions options;
+        options.vibratoCents = 55.0f;       // a real singing vibrato is wide
+        options.wanderCents = 40.0f;        // and it does not sit still
+        options.portamentoSeconds = 0.07f;
+        options.breathNoise = 0.010f;
+        options.amplitude = 0.18f;          // people hum quietly
+        options.secondHarmonic = 0.75f;     // a voice is harmonic-rich
+        options.thirdHarmonic = 0.45f;
+
+        const BenchScore score = scoreHits(SCALE, runTracker(
+            synthesiseHum(SCALE, rate, options)));
+        reportBench("real voice", score);
+
+        check(score.recall() >= 0.80f,
+              "a voice that wobbles and wanders is still transcribed - this "
+              "is the case people actually produce - " + score.summary());
+        /*
+         * A KNOWN GAP, recorded rather than tuned away.
+         *
+         * Roughly half the notes on this case are extras: a note whose
+         * pitch wanders far enough, for long enough, is emitted twice at
+         * two different grid positions. Every local rule has been tried -
+         * a wider stability tolerance merges genuine neighbours, a longer
+         * smoothing window fixes this case and breaks the slide, and the
+         * monophonic merge only catches splits landing on the same grid
+         * step, which these do not.
+         *
+         * Fixing it properly means segmenting the whole take at once -
+         * looking at the entire pitch contour and choosing note boundaries
+         * globally - rather than deciding note by note as the audio
+         * arrives. That is a real change and worth making; it is not worth
+         * faking with a threshold chosen to make this generator pass.
+         *
+         * This case is also deliberately harsher than most singing: 55
+         * cents of vibrato and 40 of wander at once. The cases above it are
+         * all at 100%, and every one of them was below 60% before this
+         * work.
+         */
+        check(score.precision() >= 0.50f,
+              "and no worse than half extras on the harshest case - the "
+              "known gap, which needs whole-take segmentation rather than a "
+              "better threshold - " + score.summary());
+    }
 
     // ---- Short notes ---------------------------------------------------------
     //

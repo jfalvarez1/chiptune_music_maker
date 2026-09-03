@@ -123,7 +123,11 @@ public:
         m_candidateNote = -1;
         m_currentFrequency = 0.0f;
         m_stableHops = 0;
-        m_stableFrequencySum = 0.0f;
+        m_stableRefHz = 0.0f;
+        m_stableCount = 0;
+        m_pitchCursor = 0;
+        m_pitchRing.fill(0.0f);
+        m_emittedThisRun = false;
         m_lastEmittedNote = -1;
         m_currentLevel = 0.0f;
         m_previousLevel = 0.0f;
@@ -214,7 +218,11 @@ private:
             m_candidateNote = -1;
             m_currentFrequency = 0.0f;
             m_stableHops = 0;
-            m_stableFrequencySum = 0.0f;
+            m_stableRefHz = 0.0f;
+            m_stableCount = 0;
+            m_pitchCursor = 0;
+            m_pitchRing.fill(0.0f);
+            m_emittedThisRun = false;
             // Silence ends the note. Without this, humming the same pitch
             // either side of a rest produces one note, not two.
             m_lastEmittedNote = -1;
@@ -384,6 +392,46 @@ private:
      */
     static constexpr int STABLE_HOPS = 9;
 
+    /*
+     * How far the pitch may wander and still count as the same held note.
+     *
+     * Measured in cents rather than as a semitone match, and this is the
+     * whole point. Requiring consecutive frames to report the IDENTICAL
+     * semitone works on a synthesised tone and fails on a voice: vibrato
+     * and drift carry the pitch back and forth across a semitone boundary,
+     * so the run resets on every crossing and the note is either never
+     * emitted or emitted on whichever reading happened to hold. Those are
+     * exactly the two complaints a real singer produces - missed notes, and
+     * jumpy ones.
+     *
+     * Well under a semitone, which is only possible because the pitch is
+     * smoothed before it is compared - the raw contour of a sung note
+     * swings further than this on vibrato alone.
+     */
+    static constexpr float STABLE_TOLERANCE_CENTS = 55.0f;
+
+    /*
+     * How many readings the smoothing median spans.
+     *
+     * 16 hops is about 85 ms at a 256-sample hop and 48 kHz, which is
+     * roughly half a cycle of a 5-6 Hz vibrato - enough to average the
+     * wobble away without blurring the step to the next note.
+     */
+    static constexpr int SMOOTH_HOPS = 16;
+
+    /*
+     * How far the pitch may travel across a run and still count as arrived.
+     *
+     * Below a quarter tone. A held note wanders less than this even on a
+     * voice; a glide between two notes covers a whole semitone or more, and
+     * is still covering it while it passes through.
+     */
+    static constexpr float MOVING_CENTS = 45.0f;
+
+    // An onset may emit before the pitch settles, but only very early in a
+    // run - otherwise every onset during a long held note re-emits it.
+    static constexpr int STABIL_RESTATE_LIMIT = 3;
+
     void trackPitch(bool onset) {
         const float frequency = AudioAnalyzer::getPitchYIN(m_window, m_sampleRate);
         if (frequency <= 0.0f) {
@@ -399,26 +447,69 @@ private:
             return;
         }
 
+        // The readout follows the instant, so the display stays responsive.
+        m_candidateNote = note;
+        m_currentNote = note;
+        m_currentFrequency = frequency;
+
         /*
-         * Two consecutive hops must agree before the READOUT changes.
+         * The smoothed pitch: the median of the last SMOOTH_HOPS readings.
          *
-         * YIN reports the octave below on a single frame often enough that
-         * without this the readout flickers between the note and its octave
-         * while a perfectly steady note is being sung. One extra hop is
-         * 5.3 ms, which is a cheap price for a readout that holds still.
+         * This is the step that makes the rest work. A singer's vibrato is
+         * about as wide as the interval being detected, so no tolerance can
+         * separate "wobbling on one note" from "stepping to the next" while
+         * looking at single frames. Smoothing first removes the wobble - a
+         * 5 Hz vibrato averages away over 90 ms - and a step to the next
+         * note survives it.
+         *
+         * A median rather than a mean, so a single octave-halved frame from
+         * YIN is discarded rather than dragging the answer a long way.
          */
-        if (note != m_candidateNote) {
-            m_candidateNote = note;
+        m_pitchRing[static_cast<size_t>(m_pitchCursor % SMOOTH_HOPS)] = frequency;
+        ++m_pitchCursor;
+
+        const int filled = std::min(m_pitchCursor, SMOOTH_HOPS);
+        if (filled < SMOOTH_HOPS / 2) return;   // not enough yet to smooth
+
+        std::array<float, SMOOTH_HOPS> window{};
+        for (int i = 0; i < filled; ++i) {
+            window[static_cast<size_t>(i)] = m_pitchRing[static_cast<size_t>(i)];
+        }
+        std::sort(window.begin(), window.begin() + filled);
+        const float smoothed = window[static_cast<size_t>(filled / 2)];
+        if (smoothed <= 0.0f) return;
+
+        /*
+         * Is this still the same note?
+         *
+         * Compared against the pitch the run STARTED on, which does not
+         * move. Letting the reference follow the pitch was the second
+         * failure: a glide then stays inside a moving gate the whole way,
+         * and the slide plus the note after it become one late note.
+         *
+         * A fixed reference with a tolerance below a semitone separates a
+         * held note from a step, and the smoothing above is what makes that
+         * tolerance survivable.
+         */
+        bool continues = false;
+        if (m_stableHops > 0 && m_stableRefHz > 0.0f) {
+            const float cents = 1200.0f * std::log2(smoothed / m_stableRefHz);
+            continues = std::fabs(cents) <= STABLE_TOLERANCE_CENTS;
+        }
+
+        if (!continues) {
             m_stableHops = 1;
-            m_stableFrequencySum = frequency;
+            m_stableRefHz = smoothed;
+            m_stableRing[0] = smoothed;
+            m_stableCount = 1;
+            m_emittedThisRun = false;
             if (!onset) return;
         } else {
             ++m_stableHops;
-            m_stableFrequencySum += frequency;
+            if (m_stableCount < static_cast<int>(m_stableRing.size())) {
+                m_stableRing[static_cast<size_t>(m_stableCount++)] = smoothed;
+            }
         }
-
-        m_currentNote = note;
-        m_currentFrequency = frequency;
 
         /*
          * A hit is emitted once, when the pitch has held long enough to be
@@ -429,17 +520,83 @@ private:
          * settled, and waiting on those would drop every repeated note in a
          * line sung on one pitch.
          */
-        const bool settled = (m_stableHops == STABLE_HOPS);
-        const bool restated = onset && (m_stableHops < STABLE_HOPS);
+        /*
+         * Has the pitch actually ARRIVED, or is it still travelling?
+         *
+         * Being near a value for a while and having settled on one are
+         * different things, and only the second is a note. A slow glide
+         * sits inside the tolerance long enough to look settled, and the
+         * tracker then emits whatever pitch it happened to be passing
+         * through - which is where the wrong notes in a hummed slide come
+         * from.
+         *
+         * During a glide the readings in the run march steadily in one
+         * direction. On a held note they do not. Comparing the start of the
+         * run against its end says which is happening.
+         */
+        bool arrived = true;
+        if (m_pitchCursor >= SMOOTH_HOPS) {
+            /*
+             * Measured on the RAW readings, not the smoothed ones.
+             *
+             * The smoothing that fixed the missed notes also flattens a
+             * glide: across one run the smoothed pitch through a slide
+             * barely moves, so it looks exactly like a held note and the
+             * gate passes it. The raw contour still shows the motion.
+             *
+             * Half-window means, so a periodic vibrato cancels out of both
+             * halves while a glide - which has a direction - does not.
+             */
+            const int half = SMOOTH_HOPS / 2;
+            float older = 0.0f, newer = 0.0f;
+
+            for (int i = 0; i < half; ++i) {
+                const int oldStep = m_pitchCursor - SMOOTH_HOPS + i;
+                const int newStep = m_pitchCursor - half + i;
+                older += m_pitchRing[static_cast<size_t>(
+                    ((oldStep % SMOOTH_HOPS) + SMOOTH_HOPS) % SMOOTH_HOPS)];
+                newer += m_pitchRing[static_cast<size_t>(
+                    ((newStep % SMOOTH_HOPS) + SMOOTH_HOPS) % SMOOTH_HOPS)];
+            }
+            older /= float(half);
+            newer /= float(half);
+
+            if (older > 0.0f && newer > 0.0f) {
+                const float travelled =
+                    std::fabs(1200.0f * std::log2(newer / older));
+                arrived = (travelled < MOVING_CENTS);
+            }
+        }
+
+        const bool settled = (m_stableHops >= STABLE_HOPS) && arrived;
+        const bool restated = onset && (m_stableHops < STABIL_RESTATE_LIMIT);
         if (!settled && !restated) return;
 
-        // Not the frequency of this instant, but the average across the
-        // hops that agreed - which is the note's stable portion, and is what
-        // the pitch should have been read from all along.
-        const float stableFrequency =
-            m_stableFrequencySum / float(std::max(1, m_stableHops));
+        // Emitted once per run: without this a long held note re-emits on
+        // every hop after it settles.
+        if (settled) {
+            if (m_emittedThisRun) return;
+            m_emittedThisRun = true;
+        }
 
-        // The note this actually settled on, which after averaging can
+        /*
+         * The MEDIAN of the run, not its average.
+         *
+         * YIN reports the octave below on the odd single frame, and one
+         * such reading drags a mean far enough to change the note. A median
+         * throws it out entirely, which is the cheapest octave-error
+         * defence available.
+         */
+        float stableFrequency = frequency;
+        if (m_stableCount > 0) {
+            std::array<float, 32> sorted = m_stableRing;
+            const int count = std::min(m_stableCount,
+                                       static_cast<int>(sorted.size()));
+            std::sort(sorted.begin(), sorted.begin() + count);
+            stableFrequency = sorted[static_cast<size_t>(count / 2)];
+        }
+
+        // The note this actually settled on, which after the median can
         // differ from the instantaneous reading at the edge of a bin.
         const int settledNote = AudioAnalyzer::freqToMidi(stableFrequency);
         if (settledNote < 0 || settledNote > 127) return;
@@ -596,7 +753,27 @@ private:
     bool m_haveLastTimbre = false;
 
     int m_stableHops = 0;
-    float m_stableFrequencySum = 0.0f;
+
+    /*
+     * The pitch the current run is centred on, and the readings in it.
+     *
+     * A ring rather than a running sum because the emitted note comes from
+     * the median: a single octave-halved frame from YIN drags a mean far
+     * enough to change the note, and a median discards it.
+     */
+    float m_stableRefHz = 0.0f;
+    std::array<float, 32> m_stableRing{};
+    int m_stableCount = 0;
+
+    // The smoothing window: the last SMOOTH_HOPS raw readings, and how many
+    // have been seen. Written round-robin, so no shuffling per hop.
+    std::array<float, SMOOTH_HOPS> m_pitchRing{};
+    int m_pitchCursor = 0;
+
+    // Whether this run has already produced its note. A run outlives the
+    // moment it settles, so without this a held note emits on every hop.
+    bool m_emittedThisRun = false;
+
     int m_lastEmittedNote = -1;
 
     int m_sampleRate = 48000;
@@ -764,6 +941,16 @@ struct VoiceToNotesOptions {
      * is wrong more often than it is right.
      */
     float swingRatio = 0.5f;
+
+    /*
+     * Whether to merge a note that came back twice a semitone apart.
+     *
+     * On by default: it is an artefact of pitch estimation rather than
+     * anything a person sang, and leaving it in means every hummed line
+     * needs hand-cleaning. Off for anybody transcribing something that
+     * really does contain semitone grace notes.
+     */
+    bool mergeSplitNotes = true;
 
     /*
      * Whether to move the part into its role's register.
@@ -946,7 +1133,63 @@ inline std::vector<Note> hitsToNotes(const std::vector<LiveHit>& hits,
                                            mergeWindow;
                             }),
                 notes.end());
-    return notes;
+
+    /*
+     * A note reported twice a semitone apart is one note, not two.
+     *
+     * A sung pitch estimate wobbles, and near a semitone boundary it lands
+     * either side of one - so a single held note comes back as two, a
+     * semitone and a few milliseconds apart. Nobody sings that: a real
+     * restatement of a neighbouring note is separated by an audible gap,
+     * not by 40 milliseconds.
+     *
+     * The longer of the two survives, because a note that was held is the
+     * one that was meant and the fragment is the artefact. This is done
+     * here rather than by moving the tracker's thresholds because those
+     * trade one case against another - a window that fixes a wandering
+     * voice breaks a slide - while this addresses the actual shape of the
+     * error.
+     */
+    if (!options.mergeSplitNotes || notes.size() < 2) return notes;
+
+    std::vector<Note> merged;
+    merged.reserve(notes.size());
+
+    for (const Note& note : notes) {
+        if (!merged.empty()) {
+            Note& previous = merged.back();
+            const float gap = note.startTime - previous.startTime;
+            const int interval = std::abs(note.pitch - previous.pitch);
+
+            /*
+             * A hum is monophonic. Two notes at the same moment is not a
+             * chord somebody sang, it is one note whose pitch estimate
+             * landed on both sides of a boundary - so the interval between
+             * them does not matter and is not tested.
+             *
+             * Drums are exempt: a kick and a hat together at the same
+             * instant is an ordinary thing to beatbox, and merging those
+             * would silently thin out every groove.
+             */
+            const bool monophonic = (options.role != VoiceRole::Drums);
+
+            if (monophonic && gap >= 0.0f && gap < mergeWindow && interval > 0) {
+                // Keep whichever was held longer, and let it cover both.
+                if (note.duration > previous.duration) {
+                    const float start = previous.startTime;
+                    previous = note;
+                    previous.startTime = start;
+                }
+                previous.duration = std::max(previous.duration,
+                                             note.startTime + note.duration -
+                                                 previous.startTime);
+                continue;
+            }
+        }
+        merged.push_back(note);
+    }
+
+    return merged;
 }
 
 } // namespace ChiptuneTracker
