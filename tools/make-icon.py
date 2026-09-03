@@ -1,172 +1,187 @@
-"""Draw the ChiptuneTracker icon as pixel art, and build a Windows .ico.
+"""A synthwave app-tile icon, in the modern rounded-square style.
 
-Hand-drawn rather than generated, for a reason that is technical rather
-than aesthetic: an app icon has to read at 16x16 in a taskbar and a title
-bar, and a large image downscaled to 16 pixels is mush. Pixel art is drawn
-at the size it is shown, and scales UP by integer factors with no loss - so
-one 32x32 master serves 32, 64, 128 and 256 exactly, and a 16x16 master
-serves 16 and 48.
+The shape language is the one every modern music app uses - a rounded
+square, a strong gradient, one bold centred subject - and the subject is
+the synthwave sunset: a sliced sun over a perspective grid.
 
-The subject is a pulse wave, which is the sound a 2A03 is known for and the
-first thing this program makes. Two of them, because the NES had two pulse
-channels, in the two colours the app's own themes use for channels 1 and 2.
+DRAWN, not generated, and at two levels of detail. A tile like this has
+gradients and glow, so the large sizes are supersampled and downscaled for
+smooth edges. The small ones cannot be: at 16 pixels a grid and a horizon
+are three grey smudges, so 16 and 32 get their own simplified drawing with
+a bigger sun and no grid at all. Same colours, same subject, less of it.
 """
-import io
 import os
+import sys
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
-# The palette. Dark navy ground, the two channel colours, and a frame that
-# reads as a screen bezel without drawing attention to itself.
-BG      = (18, 18, 30, 255)
-FRAME   = (44, 46, 78, 255)
-PULSE_A = (74, 227, 181, 255)    # mint - channel 1
-PULSE_B = (231, 108, 189, 255)   # pink - channel 2
-GLOW    = (30, 34, 56, 255)
-CLEAR   = (0, 0, 0, 0)
+# The synthwave palette. Deep indigo at the top through magenta to a hot
+# orange at the horizon, which is the gradient the whole look rests on.
+SKY_TOP    = (26, 11, 61)
+SKY_MID    = (94, 23, 122)
+SKY_LOW    = (214, 41, 128)
+HORIZON    = (255, 122, 51)
+
+SUN_TOP    = (255, 233, 122)
+SUN_BOTTOM = (255, 61, 122)
+
+GRID       = (94, 231, 255)
+GROUND_TOP = (36, 12, 66)
+GROUND_LOW = (12, 5, 28)
 
 
-def blank(size):
-    return Image.new("RGBA", (size, size), CLEAR)
+def lerp(a, b, t):
+    return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
 
 
-def rounded_ground(image, size, inset=0):
-    """A filled square with the four corner pixels dropped.
+def sky_colour(t):
+    """The vertical gradient, in three legs so the sunset bends properly."""
+    if t < 0.45:
+        return lerp(SKY_TOP, SKY_MID, t / 0.45)
+    if t < 0.80:
+        return lerp(SKY_MID, SKY_LOW, (t - 0.45) / 0.35)
+    return lerp(SKY_LOW, HORIZON, (t - 0.80) / 0.20)
 
-    A one-pixel corner notch is all it takes to stop a small icon looking
-    like a rectangle of colour, and it survives every scale factor because
-    it is part of the artwork rather than an anti-aliased radius.
-    """
-    px = image.load()
-    lo = inset
-    hi = size - 1 - inset
-    for y in range(lo, hi + 1):
-        for x in range(lo, hi + 1):
-            corner = ((x == lo or x == hi) and (y == lo or y == hi))
-            if corner:
+
+def rounded_mask(size, radius):
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, size - 1, size - 1], radius=radius, fill=255)
+    return mask
+
+
+def draw_tile(size, detailed):
+    """One icon at `size`. `detailed` adds the grid, horizon glow and slices."""
+    image = Image.new("RGB", (size, size), SKY_TOP)
+    draw = ImageDraw.Draw(image)
+
+    horizon_y = int(size * 0.62)
+
+    # ---- Sky -----------------------------------------------------------------
+    for y in range(horizon_y):
+        draw.line([(0, y), (size, y)], fill=sky_colour(y / max(1, horizon_y)))
+
+    # ---- Sun -----------------------------------------------------------------
+    #
+    # Sized so it still reads when the tile is tiny: at small sizes it is
+    # most of the artwork, because a grid and a horizon at 16 pixels are
+    # three grey smudges.
+    sun_r = size * (0.30 if detailed else 0.36)
+    cx = size * 0.5
+    cy = horizon_y - sun_r * (0.28 if detailed else 0.18)
+
+    top = int(cy - sun_r)
+    bottom = int(cy + sun_r)
+    for y in range(max(0, top), min(horizon_y, bottom + 1)):
+        dy = (y - cy) / sun_r
+        if abs(dy) > 1.0:
+            continue
+        half = sun_r * (1.0 - dy * dy) ** 0.5
+        colour = lerp(SUN_TOP, SUN_BOTTOM, (y - top) / max(1.0, bottom - top))
+        draw.line([(cx - half, y), (cx + half, y)], fill=colour)
+
+    if detailed:
+        # The slices: horizontal cuts through the lower half of the sun,
+        # widening as they descend. This is the single detail that makes a
+        # circle read as a synthwave sun rather than as a dot.
+        slices = 5
+        for i in range(slices):
+            t = (i + 1) / (slices + 1)
+            y = cy + sun_r * t * 0.95
+            thickness = max(1, int(size * (0.006 + 0.010 * t)))
+            dy = (y - cy) / sun_r
+            if abs(dy) >= 1.0:
                 continue
-            edge = (x == lo or x == hi or y == lo or y == hi)
-            px[x, y] = FRAME if edge else BG
+            half = sun_r * (1.0 - dy * dy) ** 0.5
+            draw.rectangle([cx - half, y, cx + half, y + thickness],
+                           fill=sky_colour(y / max(1, horizon_y)))
 
+    # ---- Ground --------------------------------------------------------------
+    for y in range(horizon_y, size):
+        t = (y - horizon_y) / max(1, size - horizon_y)
+        draw.line([(0, y), (size, y)], fill=lerp(GROUND_TOP, GROUND_LOW, t))
 
-def hline(px, x0, x1, y, colour):
-    for x in range(x0, x1 + 1):
-        px[x, y] = colour
+    if detailed:
+        # A bright horizon line, which is what separates sky from ground and
+        # gives the tile its glow.
+        glow = max(1, int(size * 0.012))
+        draw.rectangle([0, horizon_y - glow // 2, size, horizon_y + glow // 2],
+                       fill=(255, 210, 170))
 
+        # ---- Perspective grid ------------------------------------------------
+        line_w = max(1, int(size * 0.008))
 
-def vline(px, x, y0, y1, colour):
-    for y in range(min(y0, y1), max(y0, y1) + 1):
-        px[x, y] = colour
+        # Fewer lines when the tile is small: six converging lines at 32
+        # pixels is a smear, and three reads as a grid.
+        small = size < 64 * 4      # `size` here is the supersampled width
+        spread = 3 if small else 6
+        rows = 3 if small else 6
 
+        # Verticals, converging on a vanishing point at the horizon.
+        for i in range(-spread, spread + 1):
+            x_bottom = cx + i * size * (0.34 if small else 0.22)
+            draw.line([(cx, horizon_y), (x_bottom, size)],
+                      fill=GRID, width=line_w)
 
-def pulse(px, points, colour, thickness=1):
-    """Draw a square wave from (x, level) points.
-
-    `points` is a list of (start_x, end_x, y). Consecutive segments are
-    joined with a vertical edge, which is what makes a square wave look
-    square rather than like a dotted line.
-    """
-    previous = None
-    for (x0, x1, y) in points:
-        for t in range(thickness):
-            hline(px, x0, x1, y + t, colour)
-        if previous is not None:
-            py, px0 = previous
-            for t in range(thickness):
-                vline(px, x0, min(py, y) + t, max(py, y) + t, colour)
-        previous = (y, x0)
-
-
-def master16():
-    """The 16x16 master. Serves 16 and, tripled, 48.
-
-    Deliberately not a shrunken version of the 32. At this size there are
-    fourteen usable pixels across, so the wave is drawn two pixels thick and
-    everything else is removed: the second wave, the inner glow and the
-    playhead all became noise rather than detail. An icon that is legible at
-    16 and plain at 256 is a better icon than the reverse.
-    """
-    image = blank(16)
-    px = image.load()
-    rounded_ground(image, 16)
-
-    # One bold pulse wave, two pixels thick so it survives being 16 pixels
-    # tall on a bright taskbar as well as a dark one.
-    pulse(px, [(2, 5, 4), (6, 9, 9), (10, 13, 4)], PULSE_A, thickness=2)
-    return image
-
-
-def master32():
-    """The 32x32 master. Serves 32, 64, 128 and 256 by doubling."""
-    image = blank(32)
-    px = image.load()
-    rounded_ground(image, 32)
-
-    # A soft inner glow, so the waves sit in a screen rather than on a flat
-    # square. One shade, because a gradient would not survive 8x scaling as
-    # anything but banding.
-    for y in range(3, 29):
-        for x in range(3, 29):
-            if 4 <= x <= 27 and 6 <= y <= 25:
-                px[x, y] = GLOW
-
-    # Two pulse waves, for the two pulse channels a 2A03 had. The second is
-    # a narrower duty cycle, which is a real difference between them and not
-    # only a visual one.
-    pulse(px, [(4, 10, 11), (11, 17, 19), (18, 24, 11), (25, 27, 19)],
-          PULSE_A, thickness=2)
-
-    # Two pixels thick as well, so it reads as the other channel rather than
-    # as a hairline that disappears the moment the icon is scaled down.
-    pulse(px, [(4, 7, 21), (8, 16, 25), (17, 20, 21), (21, 27, 25)],
-          PULSE_B, thickness=2)
+        # Horizontals, spaced so they bunch up toward the horizon.
+        for i in range(1, rows + 1):
+            t = (i / rows) ** 2.1
+            y = horizon_y + t * (size - horizon_y)
+            draw.line([(0, y), (size, y)], fill=GRID, width=line_w)
 
     return image
 
 
-def upscale(image, factor):
-    size = image.width * factor
-    return image.resize((size, size), Image.NEAREST)
+def build_size(size, supersample=4):
+    """One finished icon, rounded and antialiased."""
+    detailed = size >= 32
+
+    # Supersampled so the circle, the grid and the corner radius are smooth.
+    # The small sizes are drawn simplified but still supersampled, which is
+    # what keeps the sun's edge clean at 16.
+    big = size * supersample
+    tile = draw_tile(big, detailed)
+
+    # A soft bloom around the sun and grid, which is most of what makes this
+    # look lit rather than flat.
+    # Bloom is what makes the large tile look lit and what turns a small
+    # one to fog - there are not enough pixels at 16 for a glow to be
+    # anything but a loss of contrast. Scaled down accordingly.
+    bloomAmount = 0.32 if size >= 64 else (0.18 if size >= 32 else 0.06)
+    bloom = tile.filter(ImageFilter.GaussianBlur(radius=big * 0.02))
+    tile = Image.blend(tile, bloom, bloomAmount)
+
+    radius = int(big * 0.20)
+    mask = rounded_mask(big, radius)
+
+    out = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    out.paste(tile, (0, 0), mask)
+
+    return out.resize((size, size), Image.LANCZOS)
 
 
 def build(out_dir):
     os.makedirs(out_dir, exist_ok=True)
 
-    small = master16()
-    large = master32()
+    sizes = [16, 32, 48, 64, 128, 256]
+    images = {s: build_size(s) for s in sizes}
 
-    # Every size from an integer multiple of a master, so nothing is ever
-    # resampled to a fractional grid.
-    sizes = {
-        16:  small,
-        32:  large,
-        48:  upscale(small, 3),
-        64:  upscale(large, 2),
-        128: upscale(large, 4),
-        256: upscale(large, 8),
-    }
-
-    for size, image in sizes.items():
+    for size, image in images.items():
         image.save(os.path.join(out_dir, "icon_%d.png" % size))
 
     ico_path = os.path.join(out_dir, "ChiptuneTracker.ico")
-    # Pillow writes a multi-image .ico from the largest and a size list, but
-    # that resamples. Passing the frames explicitly keeps each hand-made.
-    sizes[256].save(
+    images[256].save(
         ico_path,
         format="ICO",
-        sizes=[(s, s) for s in sorted(sizes)],
-        append_images=[sizes[s] for s in sorted(sizes) if s != 256],
+        sizes=[(s, s) for s in sizes],
+        append_images=[images[s] for s in sizes if s != 256],
     )
-
-    # A flat PNG for the README and anywhere else a picture is wanted.
-    sizes[256].save(os.path.join(out_dir, "icon.png"))
+    images[256].save(os.path.join(out_dir, "icon.png"))
 
     print("wrote", ico_path)
-    for size in sorted(sizes):
-        print("  %dx%d" % (size, size))
+    for size in sizes:
+        print("  %dx%d%s" % (size, size, "" if size >= 48 else "  (simplified)"))
 
 
 if __name__ == "__main__":
-    import sys
     build(sys.argv[1] if len(sys.argv) > 1 else ".")
