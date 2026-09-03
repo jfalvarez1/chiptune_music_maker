@@ -9825,7 +9825,7 @@ static void testVoiceToNotes() {
         }
 
         // The mapping is configurable, because a genre kit may want 808s.
-        options.kick = OscillatorType::Kick808;
+        options.kit.kickInstrument = OscillatorType::Kick808;
         const std::vector<Note> eightOhEight = hitsToNotes(hits, flat, bpm, 4, options);
         check(!eightOhEight.empty() &&
               eightOhEight[0].oscillatorType == OscillatorType::Kick808,
@@ -18631,11 +18631,11 @@ static void testVoiceRoles() {
 
         check(notes.size() == 4, "four beatboxed hits became four notes");
         if (notes.size() == 4) {
-            check(notes[0].pitch == options.kickPitch,
+            check(notes[0].pitch == options.kit.kickPitch,
                   "the kick is still on the kick key - a drum's pitch chooses "
                   "which drum, so placing it in a register would change it "
                   "into a different instrument");
-            check(notes[1].pitch == options.snarePitch, "and the snare on the snare key");
+            check(notes[1].pitch == options.kit.snarePitch, "and the snare on the snare key");
         }
     }
 
@@ -20334,6 +20334,323 @@ static void testVoiceMode() {
     }
 }
 
+
+
+/*
+ * A snare and a hi-hat that genuinely overlap.
+ *
+ * The clean synthetic drums above are separable enough that four-way
+ * classification of them is perfect, which makes "narrowing the kit helps"
+ * impossible to demonstrate - there is nothing left to improve.
+ *
+ * This is the case the claim is actually about, and the one a mouth
+ * produces: a breathy "kuh" and a soft "tss" share most of their spectrum
+ * and differ mainly in how much body sits under the noise. `blend` moves a
+ * sound between the two, so examples near the middle are genuinely
+ * ambiguous rather than merely noisy.
+ */
+static std::vector<float> ambiguousPercussion(bool towardSnare, int sampleRate,
+                                              uint32_t seed, float blend) {
+    const int count = sampleRate / 4;
+    std::vector<float> out(static_cast<size_t>(count), 0.0f);
+
+    uint32_t rng = seed * 2654435761u + 7u;
+    auto noise = [&rng]() {
+        rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+        return (float(rng & 0xFFFFFF) / 8388608.0f) - 1.0f;
+    };
+
+    // How much low body there is, and how fast it dies - the two things
+    // that separate the pair. Overlapped on purpose.
+    const float body = towardSnare ? (0.42f - 0.16f * blend)
+                                   : (0.20f + 0.16f * blend);
+    const float decay = towardSnare ? (17.0f + 10.0f * blend)
+                                    : (34.0f - 10.0f * blend);
+
+    float lowState = 0.0f;
+    float highState = 0.0f;
+
+    for (int i = 0; i < count; ++i) {
+        const float t = float(i) / float(sampleRate);
+        const float n = noise();
+
+        lowState += (n - lowState) * 0.30f;
+        highState += (n - highState) * 0.85f;
+
+        const float value = body * lowState + (1.0f - body) * (n - highState);
+        const float attack = std::min(1.0f, t / 0.002f);
+        out[static_cast<size_t>(i)] = value * std::exp(-t * decay) * attack * 0.7f;
+    }
+    return out;
+}
+
+// An empty kit must not crash anything that touches it. Nothing here can
+// return a wrong answer - the point is only that it returns.
+static bool kit_isHandled(const DrumKit& kit) {
+    (void)kit.firstEnabled();
+    (void)kit.instrumentFor(DrumClass::Kick);
+    (void)kit.pitchFor(DrumClass::Snare);
+    (void)foldIntoKit(DrumClass::HatOpen, kit);
+
+    DrumClassifier untaught;
+    float confidence = 0.0f;
+    (void)classifyWithinKit(untaught, TimbreFeatures{}, kit, confidence);
+    return true;
+}
+
+// ============================================================================
+// 107. Drum kits - isolating an instrument, and what it buys
+//
+// Two claims to check. That a kit really does constrain what a take can
+// become, and that narrowing it makes classification measurably better -
+// which is the non-obvious half, and the reason this is worth doing beyond
+// convenience.
+// ============================================================================
+static void testDrumKits() {
+    beginTest("Drum kits and constrained classification");
+
+    const int rate = 44100;
+
+    // ---- A kit constrains what a hit can become ------------------------------
+    {
+        DrumClassifier classifier;
+        const DrumClass ALL[] = {DrumClass::Kick, DrumClass::Snare,
+                                 DrumClass::HatClosed, DrumClass::HatOpen};
+        for (DrumClass label : ALL) {
+            for (int i = 0; i < 5; ++i) {
+                classifier.addExample(
+                    featuresOf(vocalPercussion(label, rate,
+                                               uint32_t(int(label) * 70 + i),
+                                               float(i) * 0.2f), rate),
+                    label);
+            }
+        }
+        check(classifier.trained(), "the classifier is taught");
+
+        // A hi-hat sound, put to a kit that has no hi-hats in it.
+        const TimbreFeatures hat = featuresOf(
+            vocalPercussion(DrumClass::HatClosed, rate, 4242, 0.3f), rate);
+
+        const DrumKit full = kitFullFour();
+        float confidence = 0.0f;
+        const DrumClass unconstrained =
+            classifyWithinKit(classifier, hat, full, confidence);
+        check(unconstrained == DrumClass::HatClosed,
+              "with a full kit a hat is a hat");
+
+        const DrumKit kickSnare = kitKickSnare();
+        const DrumClass constrained =
+            classifyWithinKit(classifier, hat, kickSnare, confidence);
+        check(constrained == DrumClass::Kick || constrained == DrumClass::Snare,
+              "and with kick and snare only it must become one of those - a "
+              "hit is never discarded for being the wrong kind");
+    }
+
+    // ---- The claim: a narrower kit classifies better ----------------------------
+    //
+    // The non-obvious half. Most of the error in four-way vocal percussion
+    // is snare against hi-hat, and a kit containing only one of them cannot
+    // make that mistake at all.
+    {
+        DrumClassifier classifier;
+        const DrumClass ALL[] = {DrumClass::Kick, DrumClass::Snare,
+                                 DrumClass::HatClosed, DrumClass::HatOpen};
+        for (DrumClass label : ALL) {
+            for (int i = 0; i < 6; ++i) {
+                classifier.addExample(
+                    featuresOf(vocalPercussion(label, rate,
+                                               uint32_t(int(label) * 91 + i),
+                                               float(i) * 0.17f), rate),
+                    label);
+            }
+        }
+
+        /*
+         * Taught on the ambiguous pair, so the classifier's picture of a
+         * snare and a hat is as overlapped as a real mouth makes them.
+         */
+        DrumClassifier blurred;
+        for (int i = 0; i < 8; ++i) {
+            blurred.addExample(
+                featuresOf(ambiguousPercussion(true, rate, uint32_t(300 + i),
+                                               float(i) / 8.0f), rate),
+                DrumClass::Snare);
+            blurred.addExample(
+                featuresOf(ambiguousPercussion(false, rate, uint32_t(400 + i),
+                                               float(i) / 8.0f), rate),
+                DrumClass::HatClosed);
+        }
+        // Kicks and open hats too, so the four-way choice has all four.
+        for (int i = 0; i < 8; ++i) {
+            blurred.addExample(
+                featuresOf(vocalPercussion(DrumClass::Kick, rate,
+                                           uint32_t(500 + i), float(i) * 0.1f), rate),
+                DrumClass::Kick);
+            blurred.addExample(
+                featuresOf(vocalPercussion(DrumClass::HatOpen, rate,
+                                           uint32_t(600 + i), float(i) * 0.1f), rate),
+                DrumClass::HatOpen);
+        }
+
+        /*
+         * Snare sounds only, scored two ways.
+         *
+         * Narrowing helps exactly when the class being WRONGLY chosen is
+         * one of the ones removed. Comparing a four-way choice against a
+         * snare-and-hat kit shows nothing, because the errors there are
+         * snare mistaken for hat and a kit with both still offers both -
+         * that was the first thing measured here and it correctly found no
+         * difference.
+         *
+         * A kick-and-snare kit is the case: the hat that these breathy
+         * snares get mistaken for is not in it to be chosen.
+         */
+        auto scoreSnares = [&](const DrumKit& kit) {
+            int correct = 0, total = 0;
+            for (int i = 0; i < 16; ++i) {
+                // Blends well toward the hat end, which is where a snare
+                // gets misheard.
+                const float blend = 0.55f + float(i % 5) * 0.09f;
+                const TimbreFeatures features = featuresOf(
+                    ambiguousPercussion(true, rate, uint32_t(7000 + i * 13), blend),
+                    rate);
+
+                float confidence = 0.0f;
+                const DrumClass guess =
+                    classifyWithinKit(blurred, features, kit, confidence);
+                if (guess == DrumClass::Snare) ++correct;
+                ++total;
+            }
+            return float(correct) / float(std::max(1, total));
+        };
+
+        const float fourWay = scoreSnares(kitFullFour());
+        const float twoWay = scoreSnares(kitKickSnare());
+
+        std::printf("        breathy snares: four-way %.0f%%, "
+                    "kick+snare kit %.0f%%\n",
+                    fourWay * 100.0f, twoWay * 100.0f);
+        std::fflush(stdout);
+
+        check(twoWay >= fourWay,
+              "taking the hi-hat out of the kit never makes a snare harder "
+              "to recognise (" + std::to_string(int(twoWay * 100.0f)) +
+                  "% vs " + std::to_string(int(fourWay * 100.0f)) + "%)");
+        check(twoWay > fourWay + 0.10f,
+              "and when the sound was being mistaken for a hi-hat, removing "
+              "the hi-hat fixes it - which is the accuracy argument for "
+              "narrowing a kit (" + std::to_string(int(twoWay * 100.0f)) +
+                  "% vs " + std::to_string(int(fourWay * 100.0f)) + "%)");
+
+        // A one-drum kit has nothing to get wrong: whatever it hears,
+        // there is only one answer available.
+        {
+            float confidence = 0.0f;
+            const TimbreFeatures anything = featuresOf(
+                ambiguousPercussion(false, rate, 999, 0.5f), rate);
+            check(classifyWithinKit(blurred, anything, kitKickOnly(),
+                                    confidence) == DrumClass::Kick,
+                  "and a one-drum kit cannot be wrong at all");
+        }
+    }
+
+    // ---- Every hit lands somewhere -----------------------------------------------
+    //
+    // Silently producing nothing would look like the microphone had failed.
+    {
+        const DrumKit KITS[] = {kitFullFour(), kitKickSnare(), kitKickHat(),
+                                kitSnareHat(), kitKickOnly(), kitHatsOnly(),
+                                kit808()};
+        for (const DrumKit& kit : KITS) {
+            check(kit.count() > 0, "every preset kit has a drum in it");
+
+            for (int c = 0; c < int(DrumClass::Count); ++c) {
+                const DrumClass folded =
+                    foldIntoKit(static_cast<DrumClass>(c), kit);
+                check(kit.enabled(folded),
+                      std::string("a ") + drumClassName(static_cast<DrumClass>(c)) +
+                          " folds into a kit that has no room for it");
+            }
+        }
+
+        // Even a kit somebody has switched everything off in.
+        DrumKit empty;
+        empty.useKick = empty.useSnare = false;
+        empty.useHatClosed = empty.useHatOpen = false;
+        check(empty.count() == 0, "an empty kit is possible to construct");
+        check(kit_isHandled(empty), "and does not crash anything");
+    }
+
+    // ---- What to say depends on the kit ---------------------------------------------
+    //
+    // Not the four-piece advice with entries deleted: with no kick present,
+    // the best kick sound is free and the snare should use it.
+    {
+        const DrumKit full = kitFullFour();
+        const DrumKit noKick = kitSnareHat();
+
+        check(std::string(kitPhonemeFor(full, DrumClass::Snare)) !=
+                  std::string(kitPhonemeFor(noKick, DrumClass::Snare)),
+              "the snare is made with a different sound when there is no "
+              "kick competing for the best one");
+
+        for (int c = 0; c < int(DrumClass::Count); ++c) {
+            check(std::strlen(kitPhonemeFor(full,
+                                            static_cast<DrumClass>(c))) > 0,
+                  "every drum in a kit has a sound to make for it");
+        }
+    }
+
+    // ---- The instruments are a separate choice ---------------------------------------
+    {
+        const DrumKit standard = kitKickSnare();
+        const DrumKit eights = kit808();
+
+        check(standard.instrumentFor(DrumClass::Kick) == OscillatorType::Kick,
+              "a standard kit uses the standard kick");
+        check(eights.instrumentFor(DrumClass::Kick) == OscillatorType::Kick808,
+              "and an 808 kit an 808 - which changes nothing about detection, "
+              "since what you say is identical");
+
+        check(standard.pitchFor(DrumClass::Kick) !=
+                  standard.pitchFor(DrumClass::Snare),
+              "each drum has its own key, so the piano roll stays readable");
+    }
+
+    // ---- Through the conversion --------------------------------------------------------
+    {
+        TempoMap flat;
+        std::vector<LiveHit> hits;
+        for (int i = 0; i < 4; ++i) {
+            LiveHit hit;
+            hit.timeSeconds = 0.25f * float(i);
+            hit.isDrum = true;
+            hit.drumType = i % 4;      // one of each, including the open hat
+            hit.velocity = 0.8f;
+            hits.push_back(hit);
+        }
+
+        VoiceToNotesOptions options;
+        options.role = VoiceRole::Drums;
+        options.kit = kit808();
+
+        const std::vector<Note> notes = hitsToNotes(hits, flat, 120.0f, 4, options);
+        check(notes.size() == 4, "four hits become four notes");
+
+        bool sawEightOhEight = false;
+        for (const Note& note : notes) {
+            if (note.oscillatorType == OscillatorType::Kick808) sawEightOhEight = true;
+            // Nothing may come back as a drum the kit does not contain.
+            check(note.oscillatorType == options.kit.kickInstrument ||
+                      note.oscillatorType == options.kit.snareInstrument ||
+                      note.oscillatorType == options.kit.hatClosedInstrument,
+                  "every note is a drum the kit actually contains - the open "
+                  "hat hit folded in rather than vanishing");
+        }
+        check(sawEightOhEight, "and the kit's instruments are the ones used");
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -21089,6 +21406,7 @@ int main(int argc, char** argv) {
     testVoicePostProcessing();
     testTempoDetection();
     testVoiceMode();
+    testDrumKits();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

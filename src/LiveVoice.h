@@ -56,6 +56,7 @@
 #include "AudioAnalyzer.h"
 #include "VoiceTimbre.h"
 #include "Groove.h"
+#include "DrumKit.h"
 #include "VoicePost.h"
 #include "TempoDetect.h"
 #include "Types.h"
@@ -184,6 +185,16 @@ public:
     void setClassifier(const DrumClassifier* classifier) {
         m_classifier = classifier;
     }
+
+    /*
+     * Which drums a hit is allowed to become.
+     *
+     * Set rather than passed per call because classification happens deep
+     * in the analysis loop, and threading it through would mean the
+     * detector knowing about the UI.
+     */
+    void setKit(const DrumKit& kit) { m_kit = kit; }
+    const DrumKit& kit() const { return m_kit; }
 
     // What the last hit sounded like, for teaching from it.
     bool haveLastTimbre() const { return m_haveLastTimbre; }
@@ -686,19 +697,29 @@ private:
          * versus hi-hat, which is where the old rules fail and where a
          * beatboxed groove actually lives.
          */
-        if (m_classifier != nullptr && m_classifier->trained()) {
-            const DrumClassifier::Result guess = m_classifier->classify(m_lastTimbre);
-            if (guess.valid) {
-                switch (guess.label) {
-                    case DrumClass::Kick:      hit.drumType = 0; break;
-                    case DrumClass::Snare:     hit.drumType = 1; break;
-                    case DrumClass::HatOpen:   hit.drumType = 3; break;
-                    default:                   hit.drumType = 2; break;
-                }
-                hit.confidence = guess.confidence;
-                appendHit(hit);
-                return;
+        /*
+         * Only ever answers with a drum the kit contains.
+         *
+         * Narrowing the kit is not just a filter on the output - it removes
+         * the confusions between classes that are not in play, which for
+         * vocal percussion is where most of the error lives. A kit of kick
+         * and snare cannot make the snare-versus-hi-hat mistake at all.
+         */
+        if (m_classifier != nullptr && m_classifier->trained() &&
+            m_kit.count() > 0) {
+            float confidence = 0.0f;
+            const DrumClass label =
+                classifyWithinKit(*m_classifier, m_lastTimbre, m_kit, confidence);
+
+            switch (label) {
+                case DrumClass::Kick:      hit.drumType = 0; break;
+                case DrumClass::Snare:     hit.drumType = 1; break;
+                case DrumClass::HatOpen:   hit.drumType = 3; break;
+                default:                   hit.drumType = 2; break;
             }
+            hit.confidence = confidence;
+            appendHit(hit);
+            return;
         }
 
         /*
@@ -709,16 +730,28 @@ private:
          * and the ambiguous middle falls to the snare, which is what a
          * snare is.
          */
+        DrumClass guess = DrumClass::Snare;
         if (lowRatio > 0.55f && centroid < 900.0f) {
-            hit.drumType = 0;                      // kick
+            guess = DrumClass::Kick;
             hit.confidence = lowRatio;
         } else if ((zcr > 0.16f || centroid > 4200.0f) &&
                    (lowRatio + midRatio) < 0.35f) {
-            hit.drumType = 2;                      // hat
+            guess = DrumClass::HatClosed;
             hit.confidence = std::min(1.0f, zcr * 4.0f);
         } else {
-            hit.drumType = 1;                      // snare
+            guess = DrumClass::Snare;
             hit.confidence = 0.4f + midRatio;
+        }
+
+        // Folded into the kit, so switching hats off produces no hats even
+        // when nothing has been taught and these rules are deciding.
+        if (m_kit.count() > 0) guess = foldIntoKit(guess, m_kit);
+
+        switch (guess) {
+            case DrumClass::Kick:      hit.drumType = 0; break;
+            case DrumClass::Snare:     hit.drumType = 1; break;
+            case DrumClass::HatOpen:   hit.drumType = 3; break;
+            default:                   hit.drumType = 2; break;
         }
         appendHit(hit);
     }
@@ -745,6 +778,9 @@ private:
      * sounds apply whichever project is open.
      */
     const DrumClassifier* m_classifier = nullptr;
+
+    // Which drums a hit may become, and what each sounds like.
+    DrumKit m_kit;
 
     // The timbre of the most recent hit, so the UI can offer to teach from
     // the thing that was just played rather than making the user record
@@ -964,17 +1000,17 @@ struct VoiceToNotesOptions {
     float minDurationBeats = 0.125f;
     bool useVelocity = true;
 
-    // Drum mode: which oscillator each of the three classes becomes.
-    OscillatorType kick = OscillatorType::Kick;
-    OscillatorType snare = OscillatorType::Snare;
-    OscillatorType hat = OscillatorType::HiHat;
+    /*
+     * The kit: which drums exist, what each one sounds like, and where each
+     * sits on the keyboard.
+     *
+     * Replaces three loose oscillator fields. They could not express an
+     * open hi-hat, could not say that a drum was switched off, and had
+     * their pitches kept separately - so the four facts about one drum
+     * lived in four places.
+     */
+    DrumKit kit;
 
-    // Where drum hits sit on the keyboard. A drum oscillator ignores pitch,
-    // but the note still has to have one, and putting all three on the same
-    // key makes the piano roll unreadable.
-    int kickPitch = 36;      // C2, the General MIDI kick
-    int snarePitch = 38;
-    int hatPitch = 42;
 };
 
 // Convert detected hits into notes, in beats, ready to append to a pattern.
@@ -1048,20 +1084,24 @@ inline std::vector<Note> hitsToNotes(const std::vector<LiveHit>& hits,
             // would make every kick a whole note, and a drum oscillator that
             // is retriggered while still sounding chokes itself.
             note.duration = std::max(options.minDurationBeats, 0.125f);
+
+            DrumClass drum = DrumClass::Snare;
             switch (hit.drumType) {
-                case 0:
-                    note.pitch = options.kickPitch;
-                    note.oscillatorType = options.kick;
-                    break;
-                case 2:
-                    note.pitch = options.hatPitch;
-                    note.oscillatorType = options.hat;
-                    break;
-                default:
-                    note.pitch = options.snarePitch;
-                    note.oscillatorType = options.snare;
-                    break;
+                case 0:  drum = DrumClass::Kick; break;
+                case 2:  drum = DrumClass::HatClosed; break;
+                case 3:  drum = DrumClass::HatOpen; break;
+                default: drum = DrumClass::Snare; break;
             }
+
+            // A hit for a drum the kit no longer contains - the kit can be
+            // changed after a take was recorded - becomes the nearest thing
+            // that is in it, rather than vanishing.
+            if (!options.kit.enabled(drum)) {
+                drum = foldIntoKit(drum, options.kit);
+            }
+
+            note.pitch = options.kit.pitchFor(drum);
+            note.oscillatorType = options.kit.instrumentFor(drum);
         } else {
             note.pitch = std::clamp(hit.midiNote + options.transpose, 0, 127);
         }

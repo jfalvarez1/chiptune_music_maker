@@ -412,9 +412,39 @@ public:
     };
 
     Result classify(const TimbreFeatures& features) const {
+        return classifyAmong(features, true, true, true, true);
+    }
+
+    /*
+     * Classify among only some of the classes.
+     *
+     * This is where the accuracy of a narrowed kit comes from, and it has
+     * to be done HERE rather than by classifying four ways and discarding
+     * unwanted answers. Discarding throws away real hits; restricting the
+     * vote cannot produce an answer that needs discarding, and removes the
+     * confusions between classes that are not in play at all - which for
+     * vocal percussion is most of the error, since snare against hi-hat is
+     * where the mistakes live.
+     *
+     * The neighbours are still searched over every taught example: an
+     * example of a class that is switched off is simply not counted. A "tss"
+     * taught as a hat still informs the geometry even when hats are off,
+     * because it tells the normalisation what the spread of the features
+     * is.
+     */
+    Result classifyAmong(const TimbreFeatures& features, bool allowKick,
+                         bool allowSnare, bool allowHatClosed,
+                         bool allowHatOpen) const {
         Result result;
         if (!trained() || !features.finite()) return result;
         if (!m_normalised) computeNormalisation();
+
+        const bool allowed[int(DrumClass::Count)] = {
+            allowKick, allowSnare, allowHatClosed, allowHatOpen};
+
+        bool any = false;
+        for (bool value : allowed) any = any || value;
+        if (!any) return result;
 
         // The k nearest, kept as a tiny insertion-sorted list rather than by
         // sorting every example - k is 3 and the example count is small.
@@ -426,6 +456,8 @@ public:
         }
 
         for (size_t e = 0; e < m_examples.size(); ++e) {
+            if (!allowed[int(m_examples[e].label)]) continue;
+
             float distance = 0.0f;
             for (int f = 0; f < TIMBRE_FEATURES; ++f) {
                 const float scale = m_scale[static_cast<size_t>(f)];

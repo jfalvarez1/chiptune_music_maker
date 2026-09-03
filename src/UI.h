@@ -9530,6 +9530,112 @@ inline DrumClassifier& vocalDrumClassifier() { return g_VocalDrums; }
  * and corrects it - which is both less work than a training wizard and
  * teaches on exactly the sounds they are actually going to make.
  */
+
+/*
+ * The kit picker.
+ *
+ * Two independent choices, presented as such: which drums are in play, and
+ * what each one sounds like. Only the first affects detection, and it
+ * affects it a great deal - taking the hi-hat out of the kit takes breathy
+ * snares from being wrong a third of the time to never.
+ */
+inline void DrawDrumKitPicker(UIState& ui) {
+    DrumKit& kit = g_Voice.options.kit;
+
+    if (!ImGui::TreeNode("Kit")) return;
+
+    // ---- Ready-made kits -----------------------------------------------------
+    int presetCount = 0;
+    const DrumKitPreset* presets = drumKitPresets(presetCount);
+
+    for (int i = 0; i < presetCount; ++i) {
+        ImGui::PushID(i);
+        if (ImGui::SmallButton(presets[i].name)) {
+            // The instruments are kept when only the shape is being chosen,
+            // so picking "Kick + Snare" does not silently undo somebody's
+            // 808 selection.
+            const DrumKit chosen = presets[i].make();
+            const bool changesVoices =
+                (std::string(presets[i].name) == "808s");
+
+            kit.useKick = chosen.useKick;
+            kit.useSnare = chosen.useSnare;
+            kit.useHatClosed = chosen.useHatClosed;
+            kit.useHatOpen = chosen.useHatOpen;
+
+            if (changesVoices) {
+                kit.kickInstrument = chosen.kickInstrument;
+                kit.snareInstrument = chosen.snareInstrument;
+                kit.hatClosedInstrument = chosen.hatClosedInstrument;
+            }
+            g_Voice.tracker.setKit(kit);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", presets[i].description);
+        ImGui::PopID();
+
+        if ((i % 3) != 2 && i + 1 < presetCount) ImGui::SameLine();
+    }
+
+    ImGui::Spacing();
+
+    // ---- Which drums, and what they sound like --------------------------------
+    struct Row { DrumClass drum; bool* enabled; OscillatorType* instrument; };
+    const Row ROWS[] = {
+        {DrumClass::Kick,      &kit.useKick,      &kit.kickInstrument},
+        {DrumClass::Snare,     &kit.useSnare,     &kit.snareInstrument},
+        {DrumClass::HatClosed, &kit.useHatClosed, &kit.hatClosedInstrument},
+        {DrumClass::HatOpen,   &kit.useHatOpen,   &kit.hatOpenInstrument},
+    };
+
+    for (const Row& row : ROWS) {
+        ImGui::PushID(static_cast<int>(row.drum));
+
+        if (ImGui::Checkbox(drumClassName(row.drum), row.enabled)) {
+            /*
+             * A kit with nothing in it would produce no notes at all, which
+             * looks exactly like the microphone having failed. Switching
+             * off the last drum is refused rather than allowed to produce
+             * silence.
+             */
+            if (kit.count() == 0) *row.enabled = true;
+            g_Voice.tracker.setKit(kit);
+        }
+
+        if (*row.enabled) {
+            ImGui::SameLine(110.0f);
+            // What to say for this drum, given what else is in the kit -
+            // the best sound for a snare depends on whether a kick is
+            // there competing for it.
+            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.95f, 1.0f), "say %s",
+                               kitPhonemeFor(kit, row.drum));
+
+            ImGui::SameLine(210.0f);
+            ImGui::SetNextItemWidth(-1);
+            int type = static_cast<int>(*row.instrument);
+            if (ImGui::Combo("##voice", &type, OSC_NAMES, OSC_NAME_COUNT)) {
+                *row.instrument = static_cast<OscillatorType>(
+                    std::clamp(type, 0, OSC_NAME_COUNT - 1));
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Which instrument this drum becomes. Taste only - it\n"
+                    "changes nothing about how the sound is recognised.");
+            }
+        }
+
+        ImGui::PopID();
+    }
+
+    // The accuracy argument, said where the decision is made.
+    if (kit.count() >= 4) {
+        ImGui::TextDisabled(
+            "All four is the least reliable. Fewer drums are recognised\n"
+            "better, because the ones you take out cannot be chosen wrongly.");
+    }
+
+    ImGui::TreePop();
+}
+
 inline void DrawVocalDrumTraining(UIState& ui) {
     if (!ImGui::TreeNode("Teach your drum sounds")) return;
 
@@ -9553,6 +9659,11 @@ inline void DrawVocalDrumTraining(UIState& ui) {
 
     for (int c = 0; c < int(DrumClass::Count); ++c) {
         const DrumClass label = static_cast<DrumClass>(c);
+
+        // Teaching a drum that is not in the kit cannot affect anything,
+        // so offering it is an invitation to waste time.
+        if (!g_Voice.options.kit.enabled(label)) continue;
+
         ImGui::PushID(c);
 
         const int taught = g_VocalDrums.countFor(label);
@@ -9565,7 +9676,10 @@ inline void DrawVocalDrumTraining(UIState& ui) {
         ImGui::EndDisabled();
 
         ImGui::SameLine();
-        ImGui::TextDisabled("say %s", drumClassPhoneme(label));
+        // From the kit, so this agrees with the picker above rather than
+        // always naming the four-piece sounds.
+        ImGui::TextDisabled("say %s",
+                            kitPhonemeFor(g_Voice.options.kit, label));
 
         ImGui::SameLine(220.0f);
         // Green once there are enough of this one to be usable.
@@ -9779,9 +9893,10 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
             "one hit is arriving as two.");
     }
 
-    // Teaching belongs with the other drum settings, and has nothing to say
-    // about a hummed melody.
+    // The kit and the teaching belong with the other drum settings, and
+    // have nothing to say about a hummed melody.
     if (g_Voice.analysisMode == 1) {
+        DrawDrumKitPicker(ui);
         DrawVocalDrumTraining(ui);
     }
 
