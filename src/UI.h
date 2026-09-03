@@ -21,6 +21,7 @@
 #include "Browser.h"
 #include "PluginHost.h"
 #include "VoiceMode.h"
+#include "Showcase.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -5572,6 +5573,33 @@ inline const char* oscillatorTypeName(OscillatorType type) {
  */
 inline void ApplyPluginChanges(Project& project, Sequencer& seq);
 
+/*
+ * Load a showcase over the current project.
+ *
+ * Through the undo history like any other edit, which is what makes trying
+ * one safe: somebody curious about the FM engine should not have to think
+ * about whether they are about to lose what they were working on.
+ */
+inline void LoadShowcase(Project& project, UIState& ui, Sequencer& seq,
+                         Showcase which) {
+    g_UndoHistory.saveState(project, "Load Demo");
+
+    project = makeShowcase(which);
+    clampProjectToValidRanges(project);
+
+    ui.selectedPattern = 0;
+    ui.selectedChannel = 0;
+    ui.selectedNoteIndex = -1;
+    ui.selectedNoteIndices.clear();
+
+    // Not the path of whatever was open before, or saving would write the
+    // demo over the user's own file.
+    ui.projectFilePath.clear();
+
+    seq.setPosition(0.0f);
+    seq.updateChannelConfigs();
+}
+
 // ============================================================================
 // Commands
 //
@@ -5825,9 +5853,17 @@ inline void registerDefaultActions(ActionRegistry& registry) {
         "Hosted VST and CLAP plugins on this channel", Shortcut(),
         [](ActionContext& c) { c.ui->showPlugins = !c.ui->showPlugins; });
 
-    add("panel.plugins", "Plugins", "Panels",
-        "Hosted VST and CLAP plugins on this channel", Shortcut(),
-        [](ActionContext& c) { c.ui->showPlugins = !c.ui->showPlugins; });
+    // The demos, each reachable by name. A demo nobody can find
+    // demonstrates nothing.
+    for (int s = 0; s < int(Showcase::Count); ++s) {
+        const Showcase which = static_cast<Showcase>(s);
+        add((std::string("demo.") + std::to_string(s)).c_str(),
+            (std::string("Demo: ") + showcaseName(which)).c_str(),
+            "File", showcaseDescription(which), Shortcut(),
+            [which](ActionContext& c) {
+                LoadShowcase(*c.project, *c.ui, *c.seq, which);
+            });
+    }
 
     add("help.browser", "Browser", "Help",
         "Samples, instruments, presets and files", key(ImGuiKey_B, true),
@@ -6802,7 +6838,8 @@ inline void DrawPluginsPanel(Project& project, UIState& ui, Sequencer& seq) {
 inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
     // Set initial window position on first use (top, next to Transport)
     ImGui::SetNextWindowPos(ImVec2(370, 35), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400, 90), ImGuiCond_FirstUseEver);
+    // Tall enough for the demo buttons underneath the file and export rows.
+    ImGui::SetNextWindowSize(ImVec2(400, 190), ImGuiCond_FirstUseEver);
     ImGui::Begin("File", nullptr, ImGuiWindowFlags_NoCollapse);
 
     // New project
@@ -7102,6 +7139,36 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
             ? ui.projectFilePath.substr(lastSlash + 1)
             : ui.projectFilePath;
         ImGui::TextDisabled("| %s", filename.c_str());
+    }
+
+    /*
+     * The demos.
+     *
+     * Five engines, four equalisers and six reverb algorithms are all
+     * reachable from a dropdown and invisible until somebody happens to
+     * choose one. These are complete mastered pieces built around them, so
+     * a person can hear what the program does inside a minute rather than
+     * by poking at panels.
+     */
+    ImGui::Separator();
+    ImGui::TextUnformatted("Demos");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Finished, mastered pieces showing what the engines sound like.\n"
+            "Loading one replaces the project - Ctrl+Z brings yours back.");
+    }
+
+    for (int s = 0; s < int(Showcase::Count); ++s) {
+        const Showcase which = static_cast<Showcase>(s);
+        ImGui::PushID(4400 + s);
+        if (ImGui::Button(showcaseName(which), ImVec2(150, 24))) {
+            LoadShowcase(project, ui, seq, which);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", showcaseDescription(which));
+        }
+        ImGui::PopID();
+        if ((s % 2) == 0) ImGui::SameLine();
     }
 
     ImGui::End();

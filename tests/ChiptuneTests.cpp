@@ -32,6 +32,7 @@
 #include "Genres.h"
 #include "Settings.h"
 #include "Templates.h"
+#include "Showcase.h"
 #include "GenreKits.h"
 #include "NextStep.h"
 #include "GroovePresets.h"
@@ -20651,6 +20652,273 @@ static void testDrumKits() {
     }
 }
 
+
+// ============================================================================
+// 108. The showcase songs
+//
+// A demo that does not play is worse than no demo: it is the first thing
+// somebody tries and it teaches them the program does not work. So these
+// are checked for actually making sound, for using the engine each one
+// claims to be about, and for being mixed and mastered rather than merely
+// loud.
+// ============================================================================
+static void testShowcases() {
+    beginTest("Showcase songs");
+
+    for (int s = 0; s < int(Showcase::Count); ++s) {
+        const Showcase which = static_cast<Showcase>(s);
+        const std::string label = showcaseName(which);
+
+        auto projectPtr = std::make_unique<Project>(makeShowcase(which));
+        Project& project = *projectPtr;
+
+        check(!project.name.empty(), label + " has a name");
+        check(std::strlen(showcaseDescription(which)) > 0,
+              label + " says what it demonstrates");
+
+        // ---- It is a song -----------------------------------------------------
+        check(!project.patterns.empty(), label + " has patterns");
+        check(!project.arrangement.empty(),
+              label + " is arranged - a pattern nobody triggers is not a song");
+
+        int totalNotes = 0;
+        for (const Pattern& pattern : project.patterns) {
+            totalNotes += static_cast<int>(pattern.notes.size());
+        }
+        check(totalNotes > 20, label + " has enough notes to be music (" +
+                                   std::to_string(totalNotes) + ")");
+
+        check(project.bpm >= 40.0f && project.bpm <= 220.0f,
+              label + " has a sensible tempo");
+        check(project.songLength > 0.0f, label + " has a length");
+
+        // Every clip must point at a pattern that exists, or the arrangement
+        // silently plays nothing where the demo is supposed to be.
+        for (const Clip& clip : project.arrangement) {
+            check(clip.patternIndex >= 0 &&
+                      clip.patternIndex < int(project.patterns.size()),
+                  label + " has no clip pointing at a missing pattern");
+            check(clip.channelIndex >= 0 &&
+                      clip.channelIndex < Project::MAX_CHANNELS,
+                  label + " has no clip on a channel that does not exist");
+        }
+
+        // ---- It survives the validator ------------------------------------------
+        //
+        // A shipped demo that the loader would clamp on the way in is a demo
+        // that does not sound the way it was written.
+        {
+            auto copyPtr = std::make_unique<Project>(project);
+            clampProjectToValidRanges(*copyPtr);
+
+            check(copyPtr->patterns.size() == project.patterns.size(),
+                  label + " keeps every pattern through validation");
+            check(copyPtr->arrangement.size() == project.arrangement.size(),
+                  label + " keeps every clip through validation");
+            check(std::fabs(copyPtr->bpm - project.bpm) < 0.01f,
+                  label + " keeps its tempo through validation");
+        }
+
+        // ---- It is mastered -----------------------------------------------------
+        //
+        // The thing that separates a demo from a test tone.
+        check(project.masterLimiterEnabled,
+              label + " has a limiter on the master");
+        check(project.masterCompressorEnabled,
+              label + " has bus compression");
+        check(project.masterEQEnabled, label + " has master tone shaping");
+
+        // Conservative, not squashed. A demonstration that arrives crushed
+        // teaches the wrong thing about the engine it is demonstrating.
+        check(project.masterCompRatio <= 4.0f,
+              label + " is compressed gently rather than squashed (" +
+                  std::to_string(project.masterCompRatio) + ":1)");
+        check(project.masterLimiterCeiling <= 0.0f,
+              label + " leaves headroom below full scale");
+
+        // ---- It actually makes sound ----------------------------------------------
+        {
+            auto seqPtr = std::make_unique<Sequencer>();
+            Sequencer& seq = *seqPtr;
+            seq.setSampleRate(44100.0f);
+            seq.setProject(&project);
+            seq.updateChannelConfigs();
+            seq.setPosition(0.0f);
+            seq.play();
+
+            // Four seconds, which covers at least a bar of every one of them.
+            const int frames = 44100 * 4;
+            std::vector<float> left(512), right(512);
+
+            float peak = 0.0f;
+            double energy = 0.0;
+            bool finite = true;
+            int rendered = 0;
+
+            while (rendered < frames) {
+                const int block = std::min(512, frames - rendered);
+                seq.process(left.data(), right.data(), block);
+                for (int i = 0; i < block; ++i) {
+                    if (!std::isfinite(left[size_t(i)]) ||
+                        !std::isfinite(right[size_t(i)])) finite = false;
+                    peak = std::max(peak, std::fabs(left[size_t(i)]));
+                    energy += double(left[size_t(i)]) * double(left[size_t(i)]);
+                }
+                rendered += block;
+            }
+            seq.stop();
+
+            const float rms = float(std::sqrt(energy / double(frames)));
+
+            std::printf("        %-18s peak %.2f  rms %.3f\n",
+                        label.c_str(), peak, rms);
+            std::fflush(stdout);
+
+            check(finite, label + " produces finite audio");
+            check(peak > 0.02f,
+                  label + " actually makes sound - a demo that plays silence "
+                  "is the first thing somebody tries (peak " +
+                      std::to_string(peak) + ")");
+            check(rms > 0.005f,
+                  label + " is not one stray click (rms " +
+                      std::to_string(rms) + ")");
+
+            /*
+             * Not clipping.
+             *
+             * The limiter's ceiling is below full scale, so anything above
+             * 1.0 means it is not doing its job - and a demo that clips is
+             * the worst possible advertisement for a mastering chain.
+             */
+            check(peak <= 1.0f,
+                  label + " does not clip (peak " + std::to_string(peak) + ")");
+        }
+    }
+
+
+    // ---- They export, not just play ------------------------------------------
+    //
+    // Rendering runs the sequencer offline and through the file writer,
+    // which is a different path from live playback. A demo that plays in the
+    // app and exports silence is a specific and embarrassing failure, and
+    // only exporting one catches it.
+    {
+        for (int s = 0; s < int(Showcase::Count); ++s) {
+            const Showcase which = static_cast<Showcase>(s);
+            const std::string label = showcaseName(which);
+
+            auto projectPtr = std::make_unique<Project>(makeShowcase(which));
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(projectPtr.get());
+            seqPtr->updateChannelConfigs();
+
+            const std::string path = testPath("showcase_" + std::to_string(s) + ".wav");
+            const bool exported = exportWav(*projectPtr, *seqPtr, path, 8.0f);
+            check(exported, label + " exports to WAV");
+
+            if (exported) {
+                std::ifstream file(path, std::ios::binary | std::ios::ate);
+                const std::streamsize size = file.tellg();
+
+                // Eight beats at 96-124 bpm is several seconds of stereo
+                // 16-bit audio; a header-only file would be 44 bytes.
+                check(size > 100000,
+                      label + " exports real audio rather than an empty file (" +
+                          std::to_string(long(size)) + " bytes)");
+            }
+            std::remove(path.c_str());
+        }
+    }
+
+    // ---- Each demonstrates the engine it is named after --------------------------
+    //
+    // A showcase for an engine that does not contain that engine is a
+    // showcase for nothing, and it is exactly the sort of thing that rots
+    // silently when a preset index moves.
+    {
+        auto fm = std::make_unique<Project>(makeShowcase(Showcase::FMBells));
+        int fmChannels = 0;
+        for (const ChannelConfig& channel : fm->channels) {
+            if (channel.oscillator.type == OscillatorType::FMSynth) ++fmChannels;
+        }
+        check(fmChannels >= 2,
+              "FM Bells is built on the FM engine (" +
+                  std::to_string(fmChannels) + " channels)");
+
+        auto wavetable =
+            std::make_unique<Project>(makeShowcase(Showcase::WavetableMotion));
+        bool sweeps = false;
+        for (const ChannelConfig& channel : wavetable->channels) {
+            if (channel.oscillator.type == OscillatorType::Custom &&
+                std::fabs(channel.oscillator.wavetableMorphSweep) > 0.01f) {
+                sweeps = true;
+            }
+        }
+        check(sweeps,
+              "Wavetable Motion actually moves its morph - a wavetable "
+              "parked at one position is a sampled waveform, and "
+              "demonstrates nothing");
+
+        auto granular =
+            std::make_unique<Project>(makeShowcase(Showcase::GranularClouds));
+        int granularChannels = 0;
+        for (const ChannelConfig& channel : granular->channels) {
+            if (channel.oscillator.type == OscillatorType::Granular) {
+                ++granularChannels;
+            }
+        }
+        check(granularChannels >= 2,
+              "Granular Clouds is built on the granular engine");
+
+        auto drums = std::make_unique<Project>(makeShowcase(Showcase::ModelledDrums));
+        int modelChannels = 0;
+        for (const ChannelConfig& channel : drums->channels) {
+            if (channel.oscillator.type == OscillatorType::DrumModel) {
+                ++modelChannels;
+            }
+        }
+        check(modelChannels >= 3,
+              "Modelled Drums uses the drum model on three channels - one "
+              "algorithm tuned three ways is the point of a modelled drum, "
+              "and a single channel would hide it");
+    }
+
+    // ---- They are mixed, not just present ------------------------------------------
+    {
+        for (int s = 0; s < int(Showcase::Count); ++s) {
+            auto projectPtr =
+                std::make_unique<Project>(makeShowcase(static_cast<Showcase>(s)));
+            const std::string label = showcaseName(static_cast<Showcase>(s));
+
+            // Channels carrying notes must differ in level, or nothing has
+            // been mixed - everything at 0.8 is a default, not a decision.
+            std::vector<float> levels;
+            for (const Clip& clip : projectPtr->arrangement) {
+                const ChannelConfig& channel =
+                    projectPtr->channels[size_t(clip.channelIndex)];
+                levels.push_back(channel.volume);
+            }
+
+            float lowest = 1.0f, highest = 0.0f;
+            for (float level : levels) {
+                lowest = std::min(lowest, level);
+                highest = std::max(highest, level);
+            }
+            check(highest - lowest > 0.05f,
+                  label + " has a balance rather than every channel at the "
+                  "same level");
+
+            // And named, so the mixer is readable.
+            for (const Clip& clip : projectPtr->arrangement) {
+                check(projectPtr->channels[size_t(clip.channelIndex)].name !=
+                          "Channel",
+                      label + " names every channel it uses");
+            }
+        }
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -21407,6 +21675,7 @@ int main(int argc, char** argv) {
     testTempoDetection();
     testVoiceMode();
     testDrumKits();
+    testShowcases();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

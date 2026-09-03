@@ -189,6 +189,21 @@ ruler draws.
 
 ![Song structure](docs/images/song-structure.png)
 
+### Demo songs
+
+Four finished, mastered pieces built around the engines that are hardest to
+find by poking at panels — load one from the File panel and press play.
+
+- **FM Bells** — six-operator FM, inharmonic bells over an FM bass, through
+  a convolution reverb
+- **Wavetable Motion** — a wavetable lead whose morph is swept as it plays
+- **Granular Clouds** — granular pads through the shimmer and hall reverbs
+- **Modelled Drums** — one drum algorithm tuned three ways, with a dynamic
+  EQ and bus compression
+
+Each sets its own channel levels, pans and master chain, so they are
+demonstrations of what a finished mix sounds like rather than test tones.
+
 ### Voice Mode — sing your song
 
 Build a whole song a part at a time, without touching a note editor.
