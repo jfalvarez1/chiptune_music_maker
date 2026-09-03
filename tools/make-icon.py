@@ -10,6 +10,7 @@ smooth edges. The small ones cannot be: at 16 pixels a grid and a horizon
 are three grey smudges, so 16 and 32 get their own simplified drawing with
 a bigger sun and no grid at all. Same colours, same subject, less of it.
 """
+import math
 import os
 import sys
 
@@ -28,6 +29,91 @@ SUN_BOTTOM = (255, 61, 122)
 GRID       = (94, 231, 255)
 GROUND_TOP = (36, 12, 66)
 GROUND_LOW = (12, 5, 28)
+
+
+# The pepper's own colours. A dark body so it reads against the sun, and a
+# neon rim so it does not become a hole in the artwork.
+PEPPER_BODY  = (26, 8, 38)
+PEPPER_RIM   = (255, 61, 140)
+PEPPER_RIM2  = (94, 231, 255)
+PEPPER_STEM  = (74, 222, 128)
+
+
+def pepper_outline(cx, cy, height):
+    """Points around a chilli pepper, as a closed polygon.
+
+    A curved centreline with a width that starts full and tapers to a
+    point. The proportions are the whole game: at five to one it reads as a
+    dagger, and the sideways bend is what separates a chilli from a carrot.
+    """
+    steps = 56
+    left, right = [], []
+
+    max_w = height * 0.30      # about two and a half to one overall
+
+    for i in range(steps + 1):
+        t = i / steps                       # 0 at the shoulder, 1 at the tip
+
+        # A clear arc to one side and back. Shallower than this and the
+        # shape reads as a root vegetable.
+        bend = math.sin(t * math.pi * 0.92) * height * 0.30
+        x = cx + bend
+        y = cy + t * height
+
+        # Full at the shoulder, pinching to nothing. The square root keeps
+        # the top rounded rather than conical.
+        w = max_w * math.sqrt(max(0.0, 1.0 - t ** 1.7))
+
+        # The tip is drawn as a point rather than a stub.
+        if t > 0.93:
+            w *= (1.0 - t) / 0.07
+
+        left.append((x - w, y))
+        right.append((x + w, y))
+
+    return left + list(reversed(right))
+
+
+def draw_pepper(image, size, detailed):
+    """The subject, over the scene.
+
+    Sized and placed to sit INSIDE the sun rather than across the horizon:
+    a silhouette that crosses the boundary cuts the tile in half, and the
+    contrast that makes it legible comes from the bright disc behind it.
+    """
+    draw = ImageDraw.Draw(image, "RGBA")
+
+    height = size * (0.34 if detailed else 0.40)
+    cx = size * (0.46 if detailed else 0.44)
+    cy = size * (0.20 if detailed else 0.16)
+
+    points = pepper_outline(cx, cy, height)
+
+    rim = max(1, int(size * 0.018))
+    draw.polygon(points, fill=PEPPER_BODY, outline=PEPPER_RIM, width=rim)
+
+    if detailed:
+        # A cool rim down the left, so a flat silhouette looks lit from
+        # behind rather than pasted on.
+        edge = points[:len(points) // 2]
+        draw.line(edge, fill=PEPPER_RIM2,
+                  width=max(1, int(size * 0.010)), joint="curve")
+
+    # ---- Stem ----------------------------------------------------------------
+    #
+    # Short, angled, and thick enough to survive. A long stem at 16 pixels
+    # is one stray green pixel that reads as damage.
+    stem_w = max(1, int(size * (0.034 if detailed else 0.050)))
+    stem_top = (cx - size * 0.055, cy - size * 0.075)
+    draw.line([(cx, cy + height * 0.04), stem_top],
+              fill=PEPPER_STEM, width=stem_w)
+
+    if detailed:
+        # A small leaf where the stem meets the fruit.
+        leaf = size * 0.048
+        draw.ellipse([cx - leaf * 1.5, cy - leaf * 0.5,
+                      cx + leaf * 0.9, cy + leaf * 0.7],
+                     fill=PEPPER_STEM)
 
 
 def lerp(a, b, t):
@@ -66,7 +152,7 @@ def draw_tile(size, detailed):
     # Sized so it still reads when the tile is tiny: at small sizes it is
     # most of the artwork, because a grid and a horizon at 16 pixels are
     # three grey smudges.
-    sun_r = size * (0.30 if detailed else 0.36)
+    sun_r = size * (0.34 if detailed else 0.40)
     cx = size * 0.5
     cy = horizon_y - sun_r * (0.28 if detailed else 0.18)
 
@@ -128,6 +214,11 @@ def draw_tile(size, detailed):
             t = (i / rows) ** 2.1
             y = horizon_y + t * (size - horizon_y)
             draw.line([(0, y), (size, y)], fill=GRID, width=line_w)
+
+    # The subject, last, over everything. A tile with only a scene has
+    # nothing for the eye to land on, and at 16 pixels the scene is all that
+    # survives unless something is in front of it.
+    draw_pepper(image, size, detailed)
 
     return image
 
