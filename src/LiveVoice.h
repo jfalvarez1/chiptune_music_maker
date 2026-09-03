@@ -57,6 +57,7 @@
 #include "VoiceTimbre.h"
 #include "Groove.h"
 #include "VoicePost.h"
+#include "TempoDetect.h"
 #include "Types.h"
 #include "Snap.h"
 #include "TempoMap.h"

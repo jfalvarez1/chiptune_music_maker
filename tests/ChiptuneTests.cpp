@@ -19695,6 +19695,260 @@ static void testVoicePostProcessing() {
     }
 }
 
+
+// ============================================================================
+// 105. Finding the tempo of something played freely
+//
+// Humming to a click is a skill, and asking people to acquire it before the
+// tool will listen is why a feature like this goes unused. Given the onsets
+// of a take, find the tempo, the beats, and the downbeat.
+// ============================================================================
+static void testTempoDetection() {
+    beginTest("Tempo and beat detection");
+
+    // Onsets at a steady tempo, with optional jitter and drift.
+    auto play = [](float bpm, int count, float jitter, float driftPerBeat,
+                   uint32_t seed, float startAt = 0.0f) {
+        std::vector<float> onsets;
+        uint32_t rng = seed * 747796405u + 2891336453u;
+        auto noise = [&rng]() {
+            rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+            return (float(rng & 0xFFFF) / 32768.0f) - 1.0f;
+        };
+
+        float time = startAt;
+        float period = 60.0f / bpm;
+        for (int i = 0; i < count; ++i) {
+            onsets.push_back(time + noise() * jitter);
+            time += period;
+            period += driftPerBeat;      // speeding up or slowing down
+        }
+        return onsets;
+    };
+
+    // ---- A steady tempo comes back ------------------------------------------
+    {
+        struct Case { float bpm; const char* label; };
+        static const Case CASES[] = {
+            {90.0f,  "90"},
+            {120.0f, "120"},
+            {140.0f, "140"},
+            {75.0f,  "75"},
+        };
+
+        for (const Case& tempo : CASES) {
+            const std::vector<float> onsets =
+                play(tempo.bpm, 32, 0.0f, 0.0f, 1234u);
+            const TempoEstimate estimate = estimateTempo(onsets);
+
+            check(estimate.valid,
+                  std::string("a steady ") + tempo.label + " BPM take is read");
+
+            const float error = std::fabs(estimate.bpm - tempo.bpm);
+            std::printf("        %-4s BPM -> %6.1f  (confidence %.2f)\n",
+                        tempo.label, estimate.bpm, estimate.confidence);
+            std::fflush(stdout);
+
+            check(error < 4.0f,
+                  std::string("and comes back as ") + tempo.label +
+                      " rather than a half or double of it (got " +
+                      std::to_string(estimate.bpm) + ")");
+        }
+    }
+
+    // ---- A human, not a metronome ---------------------------------------------
+    //
+    // Nobody hums to within a millisecond. If a little jitter breaks it,
+    // it does not work on the input it exists for.
+    {
+        const std::vector<float> onsets = play(110.0f, 32, 0.018f, 0.0f, 77u);
+        const TempoEstimate estimate = estimateTempo(onsets);
+
+        std::printf("        jittered   -> %6.1f  (confidence %.2f)\n",
+                    estimate.bpm, estimate.confidence);
+        std::fflush(stdout);
+
+        check(estimate.valid, "a take with human timing is still read");
+        check(std::fabs(estimate.bpm - 110.0f) < 6.0f,
+              "and the tempo survives 18 ms of jitter (got " +
+                  std::to_string(estimate.bpm) + ")");
+    }
+
+    // ---- Not starting on the beat -----------------------------------------------
+    //
+    // A take almost never starts exactly on a beat. Assuming it does puts
+    // the whole part early by however long the person waited.
+    {
+        const std::vector<float> onsets =
+            play(120.0f, 24, 0.0f, 0.0f, 9u, /*startAt=*/0.31f);
+        const TempoEstimate estimate = estimateTempo(onsets);
+
+        check(estimate.valid, "a late start is still read");
+        check(std::fabs(estimate.bpm - 120.0f) < 4.0f,
+              "the tempo is unaffected by when it started");
+
+        // The phase should point at where the onsets actually are, modulo
+        // one beat.
+        const float period = 60.0f / estimate.bpm;
+        const float phaseError = std::fabs(std::fmod(
+            std::fabs(estimate.firstBeatSeconds - 0.31f) + period * 0.5f,
+            period) - period * 0.5f);
+        check(phaseError < 0.09f,
+              "and the first beat is found near where the take starts, not "
+              "at zero (phase " + std::to_string(estimate.firstBeatSeconds) + ")");
+    }
+
+    // ---- Too little to judge ------------------------------------------------------
+    {
+        check(!estimateTempo({}).valid, "no onsets is not a tempo");
+        check(!estimateTempo({0.5f}).valid, "one onset is not a tempo");
+        check(!estimateTempo({0.0f, 0.5f, 1.0f}).valid,
+              "three onsets is still not enough to be worth an answer");
+
+        // All at the same instant - degenerate, must not divide by zero.
+        const TempoEstimate stacked = estimateTempo({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
+        check(std::isfinite(stacked.bpm),
+              "onsets all at one instant produce a finite answer");
+    }
+
+    // ---- Something with no tempo says so ---------------------------------------------
+    {
+        std::vector<float> scattered;
+        uint32_t rng = 5150u;
+        float time = 0.0f;
+        for (int i = 0; i < 24; ++i) {
+            rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+            time += 0.15f + (float(rng & 0xFFFF) / 65536.0f) * 0.8f;
+            scattered.push_back(time);
+        }
+
+        const TempoEstimate random = estimateTempo(scattered);
+        const TempoEstimate steady = estimateTempo(play(120.0f, 24, 0.0f, 0.0f, 3u));
+
+        std::printf("        scattered  -> %6.1f  (confidence %.2f)\n",
+                    random.bpm, random.confidence);
+        std::fflush(stdout);
+
+        check(steady.confidence > random.confidence + 0.25f,
+              "a steady take is clearly more confident than a scattered one (" +
+                  std::to_string(steady.confidence) + " vs " +
+                  std::to_string(random.confidence) + ") - and by a margin a "
+                  "caller can actually threshold on, which is the whole point "
+                  "of reporting it");
+        check(steady.confidence > 0.85f,
+              "a metronome-steady take is near certain (" +
+                  std::to_string(steady.confidence) + ")");
+        check(random.confidence < 0.75f,
+              "and scattered onsets are visibly not (" +
+                  std::to_string(random.confidence) + ")");
+    }
+
+    // ---- The tempo is always inside the range it claims ------------------------------
+    {
+        // Very fast and very slow inputs must fold into the sensible range
+        // rather than reporting 400 BPM.
+        const TempoEstimate fast = estimateTempo(play(240.0f, 40, 0.0f, 0.0f, 11u));
+        const TempoEstimate slow = estimateTempo(play(40.0f, 16, 0.0f, 0.0f, 12u));
+
+        check(fast.bpm >= MIN_DETECTABLE_BPM && fast.bpm <= MAX_DETECTABLE_BPM,
+              "a very fast take reports a tempo inside the usable range (got " +
+                  std::to_string(fast.bpm) + ")");
+        check(slow.bpm >= MIN_DETECTABLE_BPM && slow.bpm <= MAX_DETECTABLE_BPM,
+              "and so does a very slow one (got " + std::to_string(slow.bpm) + ")");
+    }
+
+    // ---- Beat tracking ---------------------------------------------------------------
+    {
+        const std::vector<float> onsets = play(120.0f, 16, 0.010f, 0.0f, 42u);
+        const std::vector<float> beats = trackBeats(onsets, 120.0f);
+
+        check(beats.size() >= 8,
+              "the beats are tracked through the take (got " +
+                  std::to_string(beats.size()) + ")");
+
+        // Spacing close to one beat throughout.
+        bool spacingSane = true;
+        for (size_t i = 1; i < beats.size(); ++i) {
+            const float gap = beats[i] - beats[i - 1];
+            if (gap < 0.35f || gap > 0.75f) spacingSane = false;
+        }
+        check(spacingSane, "and they are about half a second apart at 120 BPM");
+
+        bool ordered = true;
+        for (size_t i = 1; i < beats.size(); ++i) {
+            if (beats[i] <= beats[i - 1]) ordered = false;
+        }
+        check(ordered, "and strictly increasing");
+
+        check(trackBeats({}, 120.0f).empty(), "no onsets track no beats");
+        check(trackBeats(onsets, 0.0f).empty(),
+              "and a zero tempo is refused rather than dividing by zero");
+    }
+
+    // ---- Drift is followed ---------------------------------------------------------------
+    //
+    // A freely hummed take always speeds up or slows down. Fitting it to
+    // one rigid grid puts the end of the phrase in the wrong place even
+    // when the tempo at the start was right.
+    {
+        // Slowing down by 4 ms per beat over 20 beats.
+        const std::vector<float> drifting = play(120.0f, 20, 0.0f, 0.004f, 5u);
+        const std::vector<float> beats = trackBeats(drifting, 120.0f);
+
+        check(beats.size() >= 10, "a drifting take is still tracked");
+        if (beats.size() >= 10) {
+            const float earlyGap = beats[2] - beats[1];
+            const float lateGap = beats[beats.size() - 1] - beats[beats.size() - 2];
+            check(lateGap > earlyGap,
+                  "and the beats spread out as the take slows down, rather "
+                  "than being forced onto the tempo it started at (" +
+                      std::to_string(earlyGap) + " then " +
+                      std::to_string(lateGap) + ")");
+        }
+    }
+
+    // ---- The downbeat ------------------------------------------------------------------
+    //
+    // A loop that starts in the wrong place is wrong in a way people notice
+    // immediately, even when every note in it is right.
+    {
+        // A bar of four where the downbeat carries an extra hit.
+        std::vector<float> onsets;
+        const float period = 0.5f;      // 120 BPM
+        for (int bar = 0; bar < 6; ++bar) {
+            for (int beat = 0; beat < 4; ++beat) {
+                const float time = float(bar * 4 + beat) * period;
+                onsets.push_back(time);
+                // The downbeat is busier, which is what marks it.
+                if (beat == 0) {
+                    onsets.push_back(time + 0.005f);
+                    onsets.push_back(time - 0.005f);
+                }
+            }
+        }
+
+        std::vector<float> beats;
+        for (int i = 0; i < 24; ++i) beats.push_back(float(i) * period);
+
+        const int phase = estimateDownbeat(beats, onsets, 4);
+        check(phase == 0,
+              "the busiest beat of the bar is found as the downbeat (got " +
+                  std::to_string(phase) + ")");
+
+        // Shifted by one: the downbeat should follow.
+        std::vector<float> shifted;
+        for (float beat : beats) shifted.push_back(beat + period);
+        const int shiftedPhase = estimateDownbeat(shifted, onsets, 4);
+        check(shiftedPhase == 3,
+              "and it follows when the beat grid moves (got " +
+                  std::to_string(shiftedPhase) + ")");
+
+        check(estimateDownbeat({}, onsets, 4) == 0, "no beats is handled");
+        check(estimateDownbeat(beats, onsets, 0) == 0,
+              "and a zero-beat bar does not divide by zero");
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -20448,6 +20702,7 @@ int main(int argc, char** argv) {
     testVoiceTimbre();
     testGroove();
     testVoicePostProcessing();
+    testTempoDetection();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

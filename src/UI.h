@@ -10094,6 +10094,90 @@ inline void DrawVoicePanel(Project& project, UIState& ui, Sequencer& seq) {
         ImGui::TextDisabled("%s", g_Voice.postMessage.c_str());
     }
 
+
+    /*
+     * The tempo of what was actually played.
+     *
+     * Humming to a click is a skill, and requiring it before the tool will
+     * listen is why features like this go unused. This finds the tempo of a
+     * freely played take instead.
+     *
+     * What to DO with the answer is deliberately left to the user rather
+     * than applied automatically: adopting their tempo and fitting them to
+     * the project's are both reasonable and they are opposites, and getting
+     * it wrong silently rewrites the timing of everything already written.
+     */
+    {
+        const bool haveEnough = g_Voice.liveMode
+            ? g_Voice.tracker.hits().size() >= 4
+            : g_Voice.detected.size() >= 4;
+
+        ImGui::BeginDisabled(!haveEnough);
+        if (ImGui::SmallButton("Find the tempo")) {
+            std::vector<float> onsets;
+            if (g_Voice.liveMode) {
+                for (const LiveHit& hit : g_Voice.tracker.hits()) {
+                    onsets.push_back(hit.timeSeconds);
+                }
+            } else {
+                for (const DetectedNote& note : g_Voice.detected) {
+                    onsets.push_back(note.startTime);
+                }
+            }
+            g_Voice.tempo = estimateTempo(onsets);
+            g_Voice.tempoChecked = true;
+        }
+        ImGui::EndDisabled();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Works out what tempo you played at, so you do not have to\n"
+                "hum along to a click.");
+        }
+
+        if (g_Voice.tempoChecked) {
+            ImGui::SameLine();
+
+            if (!g_Voice.tempo.valid) {
+                ImGui::TextDisabled("Not enough to tell");
+            } else if (g_Voice.tempo.confidence < 0.7f) {
+                // Said rather than offered. Rewriting the project tempo from
+                // a take that had none is not recoverable by ear.
+                ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.4f, 1.0f),
+                                   "About %.0f BPM, but unsteady",
+                                   g_Voice.tempo.bpm);
+            } else {
+                ImGui::Text("%.0f BPM", g_Voice.tempo.bpm);
+
+                const bool differs =
+                    std::fabs(g_Voice.tempo.bpm - project.bpm) > 1.0f;
+                if (differs) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Use it")) {
+                        g_UndoHistory.saveState(project, "Tempo From Voice");
+                        project.bpm = std::clamp(g_Voice.tempo.bpm, 20.0f, 999.0f);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        /*
+                         * The warning is the point.
+                         *
+                         * Changing the project tempo moves everything
+                         * already written, which is fine in an empty
+                         * project and destructive in a full one - and the
+                         * person pressing this is thinking about their hum,
+                         * not about the parts they wrote yesterday.
+                         */
+                        ImGui::SetTooltip(
+                            "Set the project to %.0f BPM.\n\n"
+                            "The project is at %.0f. Everything already "
+                            "written\nwill play at the new tempo.",
+                            g_Voice.tempo.bpm, project.bpm);
+                    }
+                }
+            }
+        }
+    }
+
     ImGui::SeparatorText("Destination");
 
     // ---- Which pattern -------------------------------------------------------

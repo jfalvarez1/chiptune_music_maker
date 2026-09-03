@@ -33,6 +33,7 @@
 #include "Types.h"
 #include "LiveVoice.h"
 #include "VoicePost.h"
+#include "TempoDetect.h"
 #include "VoiceCapture.h"
 #include "AudioAnalyzer.h"
 #include "UndoHistory.h"
@@ -229,6 +230,10 @@ struct VoicePanelState {
 
     // What the last tidy actually did, so it is visible rather than guessed at.
     std::string postMessage;
+
+    // The tempo found in the take, and whether it has been looked for yet.
+    TempoEstimate tempo;
+    bool tempoChecked = false;
 
 
     // Live tracking.
