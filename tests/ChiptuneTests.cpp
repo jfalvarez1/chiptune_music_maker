@@ -20919,6 +20919,359 @@ static void testShowcases() {
     }
 }
 
+
+// ============================================================================
+// 109. Mastering
+//
+// Sample tracks arrived with a great deal of care taken over their channels
+// and nothing at all on the master bus, which is why they did not sound
+// mastered however good the parts were. What is asserted here is that the
+// stage now exists and that it measurably changes the sound - a mastering
+// function that sets fields nobody can hear is the same bug in a new place.
+// ============================================================================
+static void testMastering() {
+    beginTest("Mastering");
+
+    // A mix with something in it, deliberately unmastered.
+    auto buildMix = []() {
+        Project project;
+        project.bpm = 120.0f;
+        project.beatsPerMeasure = 4;
+        project.songLength = 16.0f;
+        project.patterns.clear();
+        project.arrangement.clear();
+
+        // Quiet on purpose, so there is headroom for mastering to use -
+        // which is the situation the sample tracks were actually in.
+        project.masterVolume = 0.7f;
+        project.masterEQEnabled = false;
+        project.masterCompressorEnabled = false;
+
+        project.channels[0].name = "Drums";
+        project.channels[0].volume = 0.6f;
+        project.channels[1].name = "Bass";
+        project.channels[1].oscillator.type = OscillatorType::SynthBass;
+        project.channels[1].volume = 0.5f;
+        project.channels[2].name = "Lead";
+        project.channels[2].oscillator.type = OscillatorType::SynthLead;
+        project.channels[2].volume = 0.45f;
+
+        Pattern drums;
+        drums.name = "Drums";
+        for (int b = 0; b < 4; ++b) {
+            Note kick;
+            kick.startTime = float(b);
+            kick.pitch = 36;
+            kick.duration = 0.2f;
+            kick.velocity = 0.95f;
+            kick.oscillatorType = OscillatorType::Kick;
+            drums.notes.push_back(kick);
+        }
+        drums.length = 4;
+        project.patterns.push_back(drums);
+
+        Pattern bass;
+        bass.name = "Bass";
+        for (int b = 0; b < 4; ++b) {
+            Note note;
+            note.startTime = float(b);
+            note.pitch = 40;
+            note.duration = 0.8f;
+            note.velocity = 0.8f;
+            bass.notes.push_back(note);
+        }
+        bass.length = 4;
+        project.patterns.push_back(bass);
+
+        Pattern lead;
+        lead.name = "Lead";
+        for (int i = 0; i < 8; ++i) {
+            Note note;
+            note.startTime = float(i) * 0.5f;
+            note.pitch = 64 + (i % 4);
+            note.duration = 0.4f;
+            note.velocity = 0.7f;
+            lead.notes.push_back(note);
+        }
+        lead.length = 4;
+        project.patterns.push_back(lead);
+
+        for (int channel = 0; channel < 3; ++channel) {
+            for (int rep = 0; rep < 4; ++rep) {
+                Clip clip;
+                clip.patternIndex = channel;
+                clip.channelIndex = channel;
+                clip.startBeat = float(rep * 4);
+                clip.lengthBeats = 4.0f;
+                project.arrangement.push_back(clip);
+            }
+        }
+        return project;
+    };
+
+    auto measure = [](Project& project, float& peakOut, float& rmsOut) {
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&project);
+        seqPtr->updateChannelConfigs();
+        seqPtr->setPosition(0.0f);
+        seqPtr->play();
+
+        const int frames = 44100 * 4;
+        std::vector<float> left(512), right(512);
+        float peak = 0.0f;
+        double energy = 0.0;
+        int done = 0;
+
+        while (done < frames) {
+            const int block = std::min(512, frames - done);
+            seqPtr->process(left.data(), right.data(), block);
+            for (int i = 0; i < block; ++i) {
+                peak = std::max(peak, std::fabs(left[size_t(i)]));
+                energy += double(left[size_t(i)]) * double(left[size_t(i)]);
+            }
+            done += block;
+        }
+        seqPtr->stop();
+
+        peakOut = peak;
+        rmsOut = float(std::sqrt(energy / double(frames)));
+    };
+
+    // ---- It changes the sound --------------------------------------------------
+    {
+        auto rawPtr = std::make_unique<Project>(buildMix());
+        auto masteredPtr = std::make_unique<Project>(buildMix());
+        applyMastering(*masteredPtr, "Synthwave");
+
+        float rawPeak = 0.0f, rawRms = 0.0f;
+        float masteredPeak = 0.0f, masteredRms = 0.0f;
+        measure(*rawPtr, rawPeak, rawRms);
+        measure(*masteredPtr, masteredPeak, masteredRms);
+
+        std::printf("        unmastered  peak %.2f  rms %.3f\n", rawPeak, rawRms);
+        std::printf("        mastered    peak %.2f  rms %.3f\n",
+                    masteredPeak, masteredRms);
+        std::fflush(stdout);
+
+        /*
+         * A real lift, not a token one.
+         *
+         * The first version of this asserted 15%, which the chain cleared
+         * while still sounding unfinished - a threshold low enough to pass
+         * is not the same as one high enough to matter. 40% is about two
+         * and a half decibels, which is audible rather than arguable.
+         */
+        check(masteredRms > rawRms * 1.40f,
+              "mastering makes the mix audibly louder - which is most of "
+              "what 'does not sound mastered' means in practice (" +
+                  std::to_string(rawRms) + " -> " +
+                  std::to_string(masteredRms) + ")");
+
+        /*
+         * Louder without clipping.
+         *
+         * Adding makeup gain and letting the result clip is not mastering,
+         * it is damage - and it is the obvious way to make this test pass
+         * while making the program worse.
+         */
+        check(masteredPeak <= 1.0f,
+              "and does not clip (peak " + std::to_string(masteredPeak) + ")");
+    }
+
+
+
+
+    // ---- Width -----------------------------------------------------------------
+    {
+        StereoWidth widener;
+
+        // A centred signal has no side content, so widening it must do
+        // nothing at all - this is the check that stops a width control
+        // from quietly becoming a volume control.
+        widener.width = 1.8f;
+        float l = 0.5f, r = 0.5f;
+        widener.process(l, r);
+        check(std::fabs(l - 0.5f) < 1e-5f && std::fabs(r - 0.5f) < 1e-5f,
+              "widening a mono signal changes nothing - there is no side to "
+              "widen, and anything else would mean it is a volume control");
+
+        // Something off-centre spreads further apart.
+        l = 0.6f; r = 0.2f;
+        const float beforeSpread = std::fabs(l - r);
+        widener.process(l, r);
+        check(std::fabs(l - r) > beforeSpread,
+              "an off-centre signal is pushed further out");
+
+        // The centre of the image is preserved, so widening does not shift
+        // the balance to one side.
+        check(std::fabs(((l + r) * 0.5f) - 0.4f) < 1e-5f,
+              "and the mid is untouched, so the balance does not shift");
+
+        // Narrowing works too, and at zero it is mono.
+        widener.width = 0.0f;
+        l = 0.8f; r = 0.2f;
+        widener.process(l, r);
+        check(std::fabs(l - r) < 1e-5f, "at zero width the result is mono");
+
+        // Absurd values are clamped rather than inverting the image.
+        widener.width = 50.0f;
+        l = 0.3f; r = -0.3f;
+        widener.process(l, r);
+        check(std::isfinite(l) && std::isfinite(r) && std::fabs(l) < 10.0f,
+              "an absurd width is clamped rather than exploding");
+    }
+
+    // ---- Saturation ---------------------------------------------------------------
+    {
+        Saturator saturator;
+
+        // Clean at drive 1: the curve must not colour anything until asked.
+        saturator.drive = 1.0f;
+        check(std::fabs(saturator.process(0.5f) - 0.5f) < 0.06f,
+              "at the lowest drive it is close to transparent");
+
+        // Silence stays silence, and the curve is odd-symmetric, so it adds
+        // no DC offset - a saturator that did would shift the whole mix.
+        check(std::fabs(saturator.process(0.0f)) < 1e-6f, "silence stays silent");
+        saturator.drive = 3.0f;
+        check(std::fabs(saturator.process(0.4f) + saturator.process(-0.4f)) < 1e-5f,
+              "the curve is symmetric, so it adds no DC offset");
+
+        /*
+         * What saturation is for: a quiet signal comes out louder while a
+         * loud one barely moves. That difference is the compression the
+         * curve performs, and the harmonics it adds along the way are what
+         * the ear reads as warmth.
+         */
+        saturator.drive = 3.0f;
+        const float quietGain = saturator.process(0.2f) / 0.2f;
+        const float loudGain = saturator.process(0.9f) / 0.9f;
+        check(quietGain > loudGain,
+              "quiet parts are lifted more than loud ones, which is what "
+              "makes it sound fuller rather than just louder (" +
+                  std::to_string(quietGain) + " vs " +
+                  std::to_string(loudGain) + ")");
+
+        // It never runs away, whatever it is fed.
+        saturator.drive = 6.0f;
+        check(std::fabs(saturator.process(10.0f)) <= 1.05f,
+              "a signal far past full scale is bounded, not amplified");
+        saturator.drive = 100.0f;
+        check(std::isfinite(saturator.process(0.5f)),
+              "an absurd drive is clamped rather than producing a NaN");
+    }
+
+    // ---- Both are in the profiles, and off by default ---------------------------------
+    {
+        Project fresh;
+        check(!fresh.masterWidthEnabled && !fresh.masterSaturationEnabled,
+              "a new project has neither, so nothing changes for anybody who "
+              "never asks for them");
+        check(std::fabs(fresh.masterWidth - 1.0f) < 1e-5f,
+              "and the width default is untouched rather than wide");
+
+        const char* GENRES[] = {"Synthwave", "Techno", "Trap", "Chiptune"};
+        for (const char* genre : GENRES) {
+            const MasteringProfile& profile = masteringProfile(genre);
+            check(profile.width >= 1.0f && profile.width <= 2.0f,
+                  std::string(genre) + " widens rather than narrowing, and "
+                  "within a sane range");
+            check(profile.saturation >= 1.0f && profile.saturation <= 4.0f,
+                  std::string(genre) + " saturates gently");
+        }
+
+        /*
+         * Chiptune is barely widened, and it should be: a 2A03 is very
+         * nearly a mono machine, so pushing its sides out mostly pushes out
+         * nothing.
+         */
+        check(masteringProfile("Chiptune").width <
+                  masteringProfile("Synthwave").width,
+              "chiptune is widened less than synthwave - there is very "
+              "little stereo there to widen");
+    }
+
+    // ---- Each genre gets its own answer -------------------------------------------
+    {
+        const char* GENRES[] = {"Synthwave", "Techno", "House", "Hip Hop",
+                                "Trap", "Reggaeton", "Chiptune"};
+        for (const char* genre : GENRES) {
+            const MasteringProfile& profile = masteringProfile(genre);
+            check(std::strcmp(profile.genre, genre) == 0,
+                  std::string(genre) + " has its own mastering profile");
+
+            // Gentle, in every case. A demonstration that arrives squashed
+            // teaches the wrong thing about everything under it.
+            check(profile.compRatio <= 4.0f,
+                  std::string(genre) + " is compressed rather than crushed");
+            check(std::fabs(profile.lowGain) <= 6.0f &&
+                      std::fabs(profile.midGain) <= 6.0f &&
+                      std::fabs(profile.highGain) <= 6.0f,
+                  std::string(genre) + " moves tone by a decibel or two, not "
+                  "by a shelf - anything more is a mix problem");
+        }
+
+        /*
+         * Chiptune is the odd one out, and it should be.
+         *
+         * A 2A03 has almost no low end to lift and square waves have no
+         * dynamics to compress, so treating it like trap achieves nothing
+         * but noise.
+         */
+        check(masteringProfile("Chiptune").lowGain <
+                  masteringProfile("Trap").lowGain,
+              "chiptune gets less low-end lift than trap - there is nothing "
+              "down there to lift");
+        check(masteringProfile("Chiptune").compRatio <
+                  masteringProfile("Trap").compRatio,
+              "and less compression, since square waves have no dynamics to "
+              "compress");
+
+        // An unknown genre still gets a sensible chain rather than nothing.
+        const MasteringProfile& fallback = masteringProfile("Something New");
+        check(fallback.compRatio > 1.0f && fallback.masterVolume > 0.5f,
+              "an unrecognised genre still gets a usable master chain");
+        check(masteringProfile(nullptr).compRatio > 1.0f,
+              "and so does no genre at all");
+    }
+
+    // ---- Applying it twice leaves nothing behind ------------------------------------
+    //
+    // Every field is set rather than only the ones that differ, so switching
+    // between genres cannot leave one genre's setting inside another's.
+    {
+        auto projectPtr = std::make_unique<Project>(buildMix());
+
+        applyMastering(*projectPtr, "Trap");
+        const float trapLow = projectPtr->masterEQLowGain;
+        const float trapRatio = projectPtr->masterCompRatio;
+
+        applyMastering(*projectPtr, "Chiptune");
+        check(std::fabs(projectPtr->masterEQLowGain -
+                        masteringProfile("Chiptune").lowGain) < 0.01f,
+              "applying a second genre replaces the first's tone");
+        check(projectPtr->masterEQLowGain < trapLow,
+              "rather than leaving trap's low shelf behind");
+        check(projectPtr->masterCompRatio < trapRatio,
+              "and its compression too");
+    }
+
+    // ---- The limiter is never left off ------------------------------------------------
+    {
+        auto projectPtr = std::make_unique<Project>(buildMix());
+        projectPtr->masterLimiterEnabled = false;
+        projectPtr->masterLimiterCeiling = 6.0f;    // nonsense
+
+        applyMastering(*projectPtr, "House");
+        check(projectPtr->masterLimiterEnabled,
+              "mastering always leaves the limiter on - it is the only thing "
+              "between fresh makeup gain and a clipped mix");
+        check(projectPtr->masterLimiterCeiling <= 0.0f,
+              "and below full scale");
+    }
+}
+
 static void testTakeLanesPanel() {
     beginTest("Take lanes panel (headless GUI)");
 
@@ -21676,6 +22029,7 @@ int main(int argc, char** argv) {
     testVoiceMode();
     testDrumKits();
     testShowcases();
+    testMastering();
     testEngineEditorsDrawHeadless();
     testLayoutEdgesHeadless();
     testClickingHeadless();

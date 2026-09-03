@@ -714,6 +714,13 @@ public:
         m_masterEffects.limiterEnabled = m_project->masterLimiterEnabled;
         m_masterEffects.limiter.ceiling = m_project->masterLimiterCeiling;
         m_masterEffects.limiter.release = m_project->masterLimiterRelease;
+
+        // Width and saturation - the two that make a mix sound produced
+        // rather than merely correct.
+        m_masterEffects.widthEnabled = m_project->masterWidthEnabled;
+        m_masterEffects.stereoWidth.width = m_project->masterWidth;
+        m_masterEffects.saturationEnabled = m_project->masterSaturationEnabled;
+        m_masterEffects.saturator.drive = m_project->masterSaturationDrive;
     }
 
 private:

@@ -1178,6 +1178,18 @@ struct Project {
     float masterLimiterCeiling = -0.3f;  // dB
     float masterLimiterRelease = 0.05f;  // seconds
 
+    /*
+     * The two that make a mix sound produced rather than merely correct.
+     *
+     * Off by default, like every other master effect here: a project that
+     * never asks for them sounds exactly as it did before they existed.
+     */
+    bool masterWidthEnabled = false;
+    float masterWidth = 1.0f;            // 1 = untouched, >1 wider
+
+    bool masterSaturationEnabled = false;
+    float masterSaturationDrive = 1.0f;  // 1 = clean
+
     // Chip-accurate output. Both off by default: most channels here host a
     // supersaw or a sample, which a 2A03 never had, so neither setting is
     // something to impose on an existing project.

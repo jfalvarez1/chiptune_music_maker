@@ -22,6 +22,7 @@
 #include "PluginHost.h"
 #include "VoiceMode.h"
 #include "Showcase.h"
+#include "Mastering.h"
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
@@ -8761,6 +8762,18 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
                 project.channels[3].stereoWidenerWidth = 0.8f;
                 project.channels[3].sidechainEnabled = genreFx.sidechainEnabled; // Pads often duck
                 project.channels[3].sidechainSource = 0;
+
+                /*
+                 * And the mix as a whole.
+                 *
+                 * Every channel above is carefully treated and the master
+                 * bus was left completely untouched - no glue compression,
+                 * no tone, no level staging. That is why these landed quiet
+                 * and loose no matter how much care went into the parts:
+                 * mastering is the stage that makes separate parts sound
+                 * like one record, and there was not one.
+                 */
+                applyMastering(project, st.genre);
 
                 // === MASTERING: Specific Tweaks for "Nightcall" ===
                 if (strcmp(st.name, "Nightcall") == 0) {

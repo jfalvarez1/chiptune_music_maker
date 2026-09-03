@@ -93,7 +93,18 @@ target_link_libraries(imgui PUBLIC OpenGL::GL)
 # ============================================================================
 # Main Executable (WIN32 = use WinMain entry point)
 # ============================================================================
+
+# The icon and version block. Listed as a source so MSVC compiles it with rc
+# and links the result - an .ico sitting next to the exe does nothing, the
+# icon has to be inside it. Only on Windows: the .rc is meaningless
+# elsewhere and would fail the build.
+set(CHIPTUNE_RESOURCES "")
+if(WIN32)
+    set(CHIPTUNE_RESOURCES assets/ChiptuneTracker.rc)
+endif()
+
 add_executable(${PROJECT_NAME} WIN32
+    ${CHIPTUNE_RESOURCES}
     src/main.cpp
     # The pitch and drum detection. It used to be compiled only into the
     # standalone VoiceToNote.exe, which is why the tracker could not use any

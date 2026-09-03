@@ -130,6 +130,68 @@ private:
 // ============================================================================
 // Master Effects Chain - Final processing before output
 // ============================================================================
+
+/*
+ * Stereo width, by scaling the side signal.
+ *
+ * A mix is mid plus side; making the side louder relative to the mid pushes
+ * everything that is not dead centre outwards. It is the most audible
+ * single move available on a master bus, and the reason it is safe here is
+ * the mono check below: a width above 1 can hollow out anything that was
+ * centred if pushed far, so the range is bounded rather than open.
+ */
+class StereoWidth {
+public:
+    float width = 1.0f;      // 1 = untouched, >1 wider, <1 narrower
+
+    void process(float& left, float& right) const {
+        const float mid = (left + right) * 0.5f;
+        const float side = (left - right) * 0.5f * std::clamp(width, 0.0f, 2.0f);
+        left = mid + side;
+        right = mid - side;
+    }
+};
+
+/*
+ * Gentle saturation.
+ *
+ * A soft curve rather than a hard clip: it adds harmonics that were never
+ * in the signal, which the ear reads as warmth and as being louder at the
+ * same measured level. That is the whole trick, and it is why every
+ * mastering chain has some.
+ *
+ * Compensated for drive, so turning it up makes the mix warmer rather than
+ * simply louder - otherwise it is a volume knob wearing a costume, and the
+ * limiter would undo it anyway.
+ */
+class Saturator {
+public:
+    float drive = 1.0f;      // 1 = clean, up to about 4 before it is obvious
+
+    float process(float input) const {
+        const float d = std::clamp(drive, 1.0f, 6.0f);
+
+        /*
+         * Drive 1 is genuinely untouched, not merely gentle.
+         *
+         * The normalisation below divides by tanh(d), which makes the curve
+         * pass through unity at full scale - and at d = 1 that works out to
+         * a 21% boost on small signals. A setting labelled "clean" that
+         * colours the signal is a lie in the interface, so 1 returns the
+         * input and everything above it shapes.
+         */
+        if (d <= 1.001f) return input;
+
+        // tanh is the standard soft curve: linear near zero, compressing
+        // smoothly toward the rails, and never actually reaching them.
+        const float shaped = std::tanh(input * d);
+
+        // Normalised by the curve's own gain at full scale, so drive
+        // changes the character rather than simply the level.
+        return shaped / std::tanh(d);
+    }
+};
+
 struct MasterEffects {
     // Effects instances
     ThreeBandEQ eq;
@@ -146,11 +208,17 @@ struct MasterEffects {
      */
     MidSideEQ midSide;
 
+    // The two that make a mix sound produced rather than merely correct.
+    StereoWidth stereoWidth;
+    Saturator saturator;
+
     // Enable flags
     bool eqEnabled = false;
     bool compressorEnabled = false;
     bool limiterEnabled = true;  // Usually always on for safety
     bool midSideEnabled = false;
+    bool widthEnabled = false;
+    bool saturationEnabled = false;
 
     void setSampleRate(float sr) {
         eq.setSampleRate(sr);
@@ -167,10 +235,32 @@ struct MasterEffects {
         // about to change.
         if (midSideEnabled) midSide.process(left, right);
 
-        // EQ first (tonal shaping)
+        /*
+         * Width before the tone and the glue.
+         *
+         * Widening after compression would push the sides out past whatever
+         * the compressor just held down, so the level the limiter sees is
+         * no longer the level that was controlled.
+         */
+        if (widthEnabled) stereoWidth.process(left, right);
+
+        // EQ (tonal shaping)
         if (eqEnabled) {
             left = eq.process(left);
             right = eq.process(right);
+        }
+
+        /*
+         * Saturation before the compressor, not after.
+         *
+         * The harmonics it adds are part of the signal the glue should be
+         * reacting to. After the compressor they would arrive unchecked at
+         * the limiter instead, which is how a chain ends up with the
+         * limiter doing all the work.
+         */
+        if (saturationEnabled) {
+            left = saturator.process(left);
+            right = saturator.process(right);
         }
 
         // Glue compression (subtle, transparent)
