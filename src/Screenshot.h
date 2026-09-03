@@ -194,6 +194,15 @@ struct CaptureRequest {
     bool addComp = false;
     bool addMastering = false;
 
+    /*
+     * Open a console for the diagnostic prints.
+     *
+     * Off by default. This program is built for the WINDOWS subsystem so
+     * that it does not come with a black cmd window attached, and one used
+     * to be allocated unconditionally, which undid exactly that.
+     */
+    bool wantConsole = false;
+
     // Genre focus by name, so a shot can show the palette filtered.
     std::string genreFocus;
 
@@ -233,6 +242,7 @@ struct CaptureRequest {
 //   --conflicts          settings that trip the Project Check panel
 //   --comp               a take-lane comp built from four passes
 //   --mastered           a project with a full master chain on it
+//   --console            open a console for the diagnostic prints
 //   --focus <window>     bring a docked window to the front of its tabs
 //   --welcome            force the first-run genre prompt
 //   --template <genre>   load a genre starter template
@@ -291,6 +301,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.addComp = true;
         } else if (arg == "--mastered") {
             request.addMastering = true;
+        } else if (arg == "--console") {
+            request.wantConsole = true;
         } else if (arg == "--genre") {
             next(request.genreFocus);
         } else if (arg == "--focus") {

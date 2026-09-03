@@ -113,11 +113,39 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         ChiptuneTracker::parseCaptureArgs(ChiptuneTracker::splitCommandLine(lpCmdLine));
     int captureFrameCounter = 0;
 
-    // Allocate console for debugging
-    AllocConsole();
-    freopen("CONOUT$", "w", stdout);
-    freopen("CONOUT$", "w", stderr);
-    printf("ChiptuneTracker starting...\n");
+    /*
+     * A console, only when asked for.
+     *
+     * This used to be unconditional, so every user got a black cmd window
+     * beside the app with debug prints in it. The program is built for the
+     * WINDOWS subsystem precisely so that does not happen, and allocating
+     * one by hand undid that.
+     *
+     * printf with no console attached goes nowhere and is harmless, so the
+     * diagnostics throughout the file need no guarding - they simply have
+     * nowhere to land unless --console is passed.
+     */
+    /*
+     * A Debug build always gets one, without having to ask.
+     *
+     * The program is still being worked on, and the diagnostics are worth
+     * having by default while that is true - but only for whoever is
+     * building it. A Release user gets a console only if they pass
+     * --console, which is also how to get one out of a shipped build when
+     * something needs diagnosing in the field.
+     */
+#ifndef NDEBUG
+    const bool openConsole = true;
+#else
+    const bool openConsole = captureRequest.wantConsole;
+#endif
+
+    if (openConsole) {
+        AllocConsole();
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+        printf("ChiptuneTracker starting...\n");
+    }
 
     // ========================================================================
     // Create Window Class
@@ -130,6 +158,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     wc.lpszClassName = CLASS_NAME;
     wc.style         = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
     wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
+
+    /*
+     * The application icon, from the resource compiled into this exe.
+     *
+     * Without this the class icon is null and Windows draws its default
+     * application icon in the title bar and the taskbar - which it did,
+     * for as long as this line was missing, no matter what the .ico
+     * contained. Embedding an icon in the exe and giving it to the window
+     * are two separate steps and only the first was being done.
+     *
+     * Resource id 1 is the icon in ChiptuneTracker.rc, which is first on
+     * purpose: Windows uses the lowest-numbered icon as the file's own.
+     */
+    wc.hIcon = LoadIconA(hInstance, MAKEINTRESOURCEA(1));
+    if (wc.hIcon == nullptr) {
+        // A missing resource must not leave the window with no icon at all.
+        wc.hIcon = LoadIconA(nullptr, IDI_APPLICATION);
+    }
 
     if (!RegisterClassA(&wc)) {
         MessageBoxA(nullptr, "Failed to register window class", "Error", MB_OK | MB_ICONERROR);
