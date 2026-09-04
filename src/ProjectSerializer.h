@@ -77,7 +77,19 @@ namespace ctp {
 // The plugin's own opaque state is written as hex rather than raw bytes,
 // because a .ctp is a text file you can read and a binary blob in the
 // middle of one would end it at the first stray newline.
-inline constexpr int FORMAT_VERSION = 7;
+// v8 added the per-channel note rack.
+//
+// One NOTEFX line per slot, in rack order, and a channel with no note
+// effects writes none - so a project that never opens the rack is byte for
+// byte the v7 file it was. A v7 reader meeting a NOTEFX line skips a line it
+// does not know.
+//
+// Every parameter of every module is written on the line, positionally,
+// rather than only the ones the slot's own type reads. It costs a few
+// characters per slot and it means changing a module's type in the editor
+// does not throw away the settings of the type it was - which is the
+// behaviour anybody experimenting with the rack expects.
+inline constexpr int FORMAT_VERSION = 8;
 
 // ============================================================================
 // Field tables
@@ -720,6 +732,32 @@ inline bool writeProject(std::ostream& file, const Project& project) {
                 }
             }
             file << "\n";
+        }
+
+        // The note rack, one line per slot, in the order it runs.
+        for (const NoteFXSlot& fx : c.noteFX) {
+            file << "NOTEFX " << ch << ' '
+                 << noteFXTypeId(fx.type) << ' '
+                 << (fx.enabled ? 1 : 0) << ' '
+                 << fx.semitones << ' '
+                 << fx.octaves << ' '
+                 << ctp::floatToToken(fx.mix) << ' '
+                 << fx.chordShape << ' '
+                 << (fx.chordInversion ? 1 : 0) << ' '
+                 << fx.arpMode << ' '
+                 << ctp::floatToToken(fx.arpRate) << ' '
+                 << fx.arpOctaves << ' '
+                 << ctp::floatToToken(fx.arpGate) << ' '
+                 << ctp::floatToToken(fx.strumBeats) << ' '
+                 << (fx.strumDown ? 1 : 0) << ' '
+                 << fx.scaleRoot << ' '
+                 << fx.scaleType << ' '
+                 << fx.lowPitch << ' '
+                 << fx.highPitch << ' '
+                 << (fx.rangeInvert ? 1 : 0) << ' '
+                 << ctp::floatToToken(fx.velocityScale) << ' '
+                 << ctp::floatToToken(fx.velocityFixed) << ' '
+                 << ctp::floatToToken(fx.velocityRandom) << "\n";
         }
 
         if (c.oscillator.type == OscillatorType::FMSynth) {
@@ -1499,6 +1537,38 @@ inline bool readProject(std::istream& file, Project& project) {
 
                 if (!plugin.empty()) {
                     project.channels[static_cast<size_t>(ch)].plugins.push_back(plugin);
+                }
+            }
+        }
+        else if (cmd == "NOTEFX") {
+            int ch = -1;
+            std::string typeToken;
+            iss >> ch >> typeToken;
+
+            if (ch >= 0 && ch < Project::MAX_CHANNELS) {
+                NoteFXSlot fx;
+                // An unrecognised module is dropped rather than silently
+                // becoming a Transpose: a slot that does something other
+                // than what the file said is worse than a missing one.
+                if (noteFXTypeFromId(typeToken.c_str(), fx.type)) {
+                    int enabled = 1, inversion = 0, strumDown = 0, rangeInvert = 0;
+                    iss >> enabled >> fx.semitones >> fx.octaves >> fx.mix
+                        >> fx.chordShape >> inversion
+                        >> fx.arpMode >> fx.arpRate >> fx.arpOctaves >> fx.arpGate
+                        >> fx.strumBeats >> strumDown
+                        >> fx.scaleRoot >> fx.scaleType
+                        >> fx.lowPitch >> fx.highPitch >> rangeInvert
+                        >> fx.velocityScale >> fx.velocityFixed >> fx.velocityRandom;
+
+                    fx.enabled = (enabled != 0);
+                    fx.chordInversion = (inversion != 0);
+                    fx.strumDown = (strumDown != 0);
+                    fx.rangeInvert = (rangeInvert != 0);
+
+                    auto& rack = project.channels[static_cast<size_t>(ch)].noteFX;
+                    if (rack.size() < static_cast<size_t>(MAX_NOTE_FX)) {
+                        rack.push_back(fx);
+                    }
                 }
             }
         }

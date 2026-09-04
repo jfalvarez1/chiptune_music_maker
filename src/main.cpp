@@ -1095,6 +1095,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
         // opened from.
         ChiptuneTracker::DrawBrowser(project, uiState, sequencer);
         ChiptuneTracker::DrawPluginsPanel(project, uiState, sequencer);
+        ChiptuneTracker::DrawNoteFXPanel(project, uiState, sequencer);
         ChiptuneTracker::DrawShortcutsPanel(project, uiState, sequencer);
         ChiptuneTracker::DrawCommandPalette(project, uiState, sequencer);
 

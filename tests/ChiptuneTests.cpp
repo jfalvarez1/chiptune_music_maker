@@ -6393,10 +6393,16 @@ static void testVersionCoherence() {
         std::ifstream changelog(path);
         check(changelog.is_open(), "the changelog is where it is expected");
 
+        // An "Unreleased" heading is skipped rather than rejected: writing
+        // the notes as the work happens is the whole point of keeping one,
+        // and the version below it is still the version that shipped.
         std::string line;
         std::string firstEntry;
         while (std::getline(changelog, line)) {
-            if (line.rfind("## [", 0) == 0) { firstEntry = line; break; }
+            if (line.rfind("## [", 0) != 0) continue;
+            if (line.find("[Unreleased]") != std::string::npos) continue;
+            firstEntry = line;
+            break;
         }
 
         check(!firstEntry.empty(), "the changelog has at least one entry");
@@ -17665,7 +17671,7 @@ static void testPluginHosting() {
         // the format bump costs nothing to anybody who never loads one.
         {
             auto plainPtr = std::make_unique<Project>();
-            const std::string plainPath = "plugin-project-none.ctp";
+            const std::string plainPath = testPath("plugin-project-none.ctp");
             check(saveProject(*plainPtr, plainPath), "A plain project saves");
 
             std::ifstream file(plainPath);
@@ -21352,6 +21358,65 @@ static void testAuditCoverage() {
               "or about the compressor");
         check(!mentions(findings, "plugin"),
               "or about plugins");
+        check(!mentions(findings, "Arpeggio") && !mentions(findings, "Range"),
+              "or about a note rack nobody has opened");
+    }
+
+    // ---- Note racks that cannot do what they were added for -------------------
+    //
+    // Every one of these fails silently: the symptom is that nothing
+    // changed, which reads as the feature being broken rather than as a
+    // setting being wrong.
+    {
+        auto projectPtr = std::make_unique<Project>();
+
+        NoteFXSlot arp;
+        arp.type = NoteFXType::Arpeggio;
+        arp.arpOctaves = 1;
+        projectPtr->channels[0].noteFX.push_back(arp);
+
+        check(mentions(auditProject(*projectPtr), "nothing to arpeggiate"),
+              "an arpeggio over a single note with one octave is reported - "
+              "it repeats the note, which sounds like a retrigger");
+
+        // A Chord above it gives it something to run through.
+        NoteFXSlot chord;
+        chord.type = NoteFXType::Chord;
+        projectPtr->channels[0].noteFX.insert(
+            projectPtr->channels[0].noteFX.begin(), chord);
+        check(!mentions(auditProject(*projectPtr), "nothing to arpeggiate"),
+              "and it stops complaining once there is a chord above it");
+
+        // Below it instead: a real sound, and rarely the intended one.
+        std::swap(projectPtr->channels[0].noteFX[0],
+                  projectPtr->channels[0].noteFX[1]);
+        check(mentions(auditProject(*projectPtr), "Chord below its Arpeggio"),
+              "a chord under an arpeggio is pointed out, as a note rather "
+              "than as a problem");
+    }
+
+    {
+        auto projectPtr = std::make_unique<Project>();
+
+        NoteFXSlot range;
+        range.type = NoteFXType::Range;
+        range.lowPitch = 90;
+        range.highPitch = 30;
+        projectPtr->channels[1].noteFX.push_back(range);
+
+        const std::vector<AuditFinding> findings = auditProject(*projectPtr);
+        check(mentions(findings, "Range that passes nothing"),
+              "a backwards range silences the channel and is reported");
+        check(worstSeverity(findings, "Range that passes nothing") ==
+                  AuditSeverity::Problem,
+              "as a problem, because the channel goes silent");
+
+        NoteFXSlot dead;
+        dead.type = NoteFXType::Velocity;
+        dead.velocityScale = 0.0f;
+        projectPtr->channels[2].noteFX.push_back(dead);
+        check(mentions(auditProject(*projectPtr), "scaling to zero"),
+              "and so is a velocity module that scales everything away");
     }
 
     // ---- Width that is on and doing nothing -----------------------------------
@@ -21783,6 +21848,22 @@ static void testPanelsDrawHeadless() {
         {"Browser",        [](Project& p, UIState& u, Sequencer& s) { u.showBrowser = true; DrawBrowser(p, u, s); }},
         {"Shortcuts",      [](Project& p, UIState& u, Sequencer& s) { u.showShortcuts = true; DrawShortcutsPanel(p, u, s); }},
         {"Plugins",        [](Project& p, UIState& u, Sequencer& s) { u.showPlugins = true; DrawPluginsPanel(p, u, s); }},
+        // With a rack already on the channel, so the per-module parameter
+        // widgets are drawn rather than only the empty state.
+        {"Note FX",        [](Project& p, UIState& u, Sequencer& s) {
+             u.showNoteFX = true;
+             if (p.channels[0].noteFX.empty()) {
+                 NoteFXSlot chord;
+                 chord.type = NoteFXType::Chord;
+                 chord.chordShape = static_cast<int>(ChordShape::Diatonic);
+                 NoteFXSlot arp;
+                 arp.type = NoteFXType::Arpeggio;
+                 p.channels[0].noteFX.push_back(chord);
+                 p.channels[0].noteFX.push_back(arp);
+             }
+             u.selectedChannel = 0;
+             DrawNoteFXPanel(p, u, s);
+         }},
     };
 
     for (const Panel& panel : PANELS) {
@@ -22113,6 +22194,645 @@ static void testClickingHeadless() {
               " -> " + std::to_string(project.bpm) + ")");
         check(project.bpm <= 300.0f,
               "and it stops at the maximum rather than running past it");
+    }
+
+    // ---- A real panel's button, in a window small enough to be a dock --------
+    //
+    // Not a synthetic button in a test window: the actual Note FX panel, at a
+    // size somebody might dock it to. This is the shape of bug that shipped
+    // once already - "Add to Pattern" laid out below the visible area of a
+    // narrow dock, so the panel drew cleanly, passed every smoke test, and
+    // could not be used.
+    {
+        auto uiPtr = std::make_unique<HeadlessUI>();
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        Project& project = *projectPtr;
+        UIState ui;
+
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&project);
+
+        uiPtr->setDisplaySize(420.0f, 400.0f);
+        ui.showNoteFX = true;
+        ui.selectedChannel = 0;
+
+        // Two modules already there, so the button sits under a full panel
+        // rather than under the empty state.
+        NoteFXSlot chord;
+        chord.type = NoteFXType::Chord;
+        NoteFXSlot arp;
+        arp.type = NoteFXType::Arpeggio;
+        project.channels[0].noteFX.push_back(chord);
+        project.channels[0].noteFX.push_back(arp);
+
+        auto content = [&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(400.0f, 380.0f), ImGuiCond_Always);
+            DrawNoteFXPanel(project, ui, *seqPtr);
+        };
+
+        uiPtr->frames(3, content);
+
+        // The panel's own reported content height must fit what it drew, or
+        // the last control on it is unreachable at this size.
+        const ImGuiWindow* window = ImGui::FindWindowByName("Note FX");
+        check(window != nullptr, "the Note FX panel exists after drawing");
+        if (window != nullptr) {
+            const float used = window->ContentSize.y;
+            const float available = window->InnerRect.GetHeight();
+            check(used <= available + 1.0f || window->ScrollbarY,
+                  "everything on it is either inside the window or reachable "
+                  "by scrolling - content " + std::to_string(used) +
+                      " in " + std::to_string(available));
+        }
+
+        // And the rack survives being drawn: the panel must not corrupt what
+        // it is showing.
+        check(project.channels[0].noteFX.size() == 2,
+              "drawing the panel leaves the rack alone");
+    }
+}
+
+// ============================================================================
+// The note rack
+//
+// Every assertion here is about which notes come out and when, because that
+// is the only thing this feature does. A module that runs and returns the
+// notes it was given is indistinguishable from one that is switched off.
+// ============================================================================
+static void testNoteFX() {
+    beginTest("Note effects rack");
+
+    // A single note, one beat long, as everything starts from.
+    auto oneNote = [](NoteVoice* out, int pitch = 60) {
+        out[0].startBeat = 0.0f;
+        out[0].endBeat = 1.0f;
+        out[0].velocity = 0.8f;
+        out[0].pitch = pitch;
+        return 1;
+    };
+
+    auto rackOf = [](std::initializer_list<NoteFXSlot> slots) {
+        NoteFXRack rack;
+        for (const NoteFXSlot& slot : slots) rack.push(slot);
+        return rack;
+    };
+
+    // ---- An empty rack is not a rack -----------------------------------------
+    {
+        NoteVoice voices[MAX_NOTE_VOICES];
+        const int count = oneNote(voices);
+
+        NoteFXRack empty;
+        check(!empty.active(), "a rack with no slots does nothing");
+        check(applyNoteFX(empty, voices, count, MAX_NOTE_VOICES, 1u) == 1,
+              "and passes the note through");
+
+        NoteFXSlot off;
+        off.type = NoteFXType::Transpose;
+        off.semitones = 12;
+        off.enabled = false;
+        NoteFXRack disabled = rackOf({off});
+        check(!disabled.active(),
+              "a rack of nothing but disabled slots is inactive too");
+
+        const int after = applyNoteFX(disabled, voices, count, MAX_NOTE_VOICES, 1u);
+        check(after == 1 && voices[0].pitch == 60,
+              "and a disabled transpose does not transpose");
+    }
+
+    // ---- Transpose and Range -------------------------------------------------
+    {
+        NoteVoice voices[MAX_NOTE_VOICES];
+        int count = oneNote(voices);
+
+        NoteFXSlot up;
+        up.type = NoteFXType::Transpose;
+        up.semitones = 7;
+        count = applyNoteFX(rackOf({up}), voices, count, MAX_NOTE_VOICES, 1u);
+        check(count == 1 && voices[0].pitch == 67,
+              "transpose moves the note, got " + std::to_string(voices[0].pitch));
+
+        // Pushed off the end of MIDI, the note goes away rather than wrapping:
+        // a bass note that reappears ten octaves up is a stranger thing to
+        // hear than a missing one.
+        count = oneNote(voices, 120);
+        NoteFXSlot tooFar;
+        tooFar.type = NoteFXType::Transpose;
+        tooFar.semitones = 24;
+        count = applyNoteFX(rackOf({tooFar}), voices, count, MAX_NOTE_VOICES, 1u);
+        check(count == 0, "a note transposed past MIDI is dropped, not wrapped");
+
+        // Range
+        count = oneNote(voices, 40);
+        NoteFXSlot band;
+        band.type = NoteFXType::Range;
+        band.lowPitch = 48;
+        band.highPitch = 72;
+        check(applyNoteFX(rackOf({band}), voices, count, MAX_NOTE_VOICES, 1u) == 0,
+              "a note below the range does not pass");
+
+        count = oneNote(voices, 60);
+        check(applyNoteFX(rackOf({band}), voices, count, MAX_NOTE_VOICES, 1u) == 1,
+              "a note inside it does");
+
+        count = oneNote(voices, 60);
+        band.rangeInvert = true;
+        check(applyNoteFX(rackOf({band}), voices, count, MAX_NOTE_VOICES, 1u) == 0,
+              "and inverting the range swaps which half passes");
+    }
+
+    // ---- Chord ---------------------------------------------------------------
+    {
+        NoteVoice voices[MAX_NOTE_VOICES];
+        int count = oneNote(voices);
+
+        NoteFXSlot chord;
+        chord.type = NoteFXType::Chord;
+        chord.chordShape = static_cast<int>(ChordShape::MinorTriad);
+        count = applyNoteFX(rackOf({chord}), voices, count, MAX_NOTE_VOICES, 1u);
+
+        check(count == 3, "a minor triad is three notes, got " +
+                              std::to_string(count));
+        std::vector<int> pitches;
+        for (int i = 0; i < count; ++i) pitches.push_back(voices[i].pitch);
+        std::sort(pitches.begin(), pitches.end());
+        check(pitches == std::vector<int>({60, 63, 67}),
+              "and they are the root, the minor third and the fifth");
+
+        // Every voice keeps the timing of the note it came from.
+        bool sameSpan = true;
+        for (int i = 0; i < count; ++i) {
+            if (voices[i].startBeat != 0.0f || voices[i].endBeat != 1.0f) {
+                sameSpan = false;
+            }
+        }
+        check(sameSpan, "a chord arrives all at once, and lasts as long as the note");
+
+        /*
+         * Diatonic is the one that cannot be a fixed interval table.
+         *
+         * The third above C in C major is E, four semitones up. The third
+         * above D is F, three semitones up. A chord module that adds 4 to
+         * everything is not in the key it claims to be in.
+         */
+        NoteFXSlot diatonic;
+        diatonic.type = NoteFXType::Chord;
+        diatonic.chordShape = static_cast<int>(ChordShape::Diatonic);
+        diatonic.scaleRoot = 0;      // C
+        diatonic.scaleType = 0;      // major
+
+        count = oneNote(voices, 60);   // C
+        count = applyNoteFX(rackOf({diatonic}), voices, count, MAX_NOTE_VOICES, 1u);
+        pitches.clear();
+        for (int i = 0; i < count; ++i) pitches.push_back(voices[i].pitch);
+        std::sort(pitches.begin(), pitches.end());
+        check(pitches == std::vector<int>({60, 64, 67}),
+              "the triad on C in C major is C E G");
+
+        count = oneNote(voices, 62);   // D
+        count = applyNoteFX(rackOf({diatonic}), voices, count, MAX_NOTE_VOICES, 1u);
+        pitches.clear();
+        for (int i = 0; i < count; ++i) pitches.push_back(voices[i].pitch);
+        std::sort(pitches.begin(), pitches.end());
+        check(pitches == std::vector<int>({62, 65, 69}),
+              "and the triad on D in C major is D F A - a MINOR third, which "
+              "is the whole reason this module is not an interval table");
+    }
+
+    // ---- Octave --------------------------------------------------------------
+    {
+        NoteVoice voices[MAX_NOTE_VOICES];
+        int count = oneNote(voices);
+
+        NoteFXSlot octave;
+        octave.type = NoteFXType::Octave;
+        octave.octaves = -1;
+        octave.mix = 0.5f;
+        count = applyNoteFX(rackOf({octave}), voices, count, MAX_NOTE_VOICES, 1u);
+
+        check(count == 2, "an octave doubler adds one voice");
+        check(voices[1].pitch == 48, "an octave below, got " +
+                                         std::to_string(voices[1].pitch));
+        check(std::fabs(voices[1].velocity - 0.4f) < 1e-5f,
+              "at the level the mix asks for, so the double sits under the "
+              "original rather than beside it");
+        check(voices[0].pitch == 60, "and the original is still there");
+    }
+
+    // ---- Arpeggio ------------------------------------------------------------
+    {
+        NoteVoice voices[MAX_NOTE_VOICES];
+
+        NoteFXSlot chord;
+        chord.type = NoteFXType::Chord;
+        chord.chordShape = static_cast<int>(ChordShape::MajorTriad);
+
+        NoteFXSlot arp;
+        arp.type = NoteFXType::Arpeggio;
+        arp.arpMode = static_cast<int>(NoteArpMode::Up);
+        arp.arpRate = 0.25f;
+        arp.arpOctaves = 1;
+
+        int count = oneNote(voices);
+        count = applyNoteFX(rackOf({chord, arp}), voices, count, MAX_NOTE_VOICES, 1u);
+
+        check(count == 4,
+              "a one-beat note at a quarter-beat rate is four steps, got " +
+                  std::to_string(count));
+
+        // The run climbs, and it starts on the note that was written.
+        check(voices[0].pitch == 60 && voices[1].pitch == 64 &&
+              voices[2].pitch == 67 && voices[3].pitch == 60,
+              "and it runs up the chord and starts again");
+
+        bool inOrder = true;
+        for (int i = 0; i < count; ++i) {
+            const float expected = static_cast<float>(i) * 0.25f;
+            if (std::fabs(voices[i].startBeat - expected) > 1e-4f) inOrder = false;
+            if (voices[i].endBeat > 1.0f + 1e-4f) inOrder = false;
+        }
+        check(inOrder,
+              "the steps are evenly spaced and none of them outlives the note "
+              "it replaced");
+
+        // Up-down folds back without playing the turning notes twice.
+        NoteFXSlot updown = arp;
+        updown.arpMode = static_cast<int>(NoteArpMode::UpDown);
+        updown.arpRate = 0.125f;
+        count = oneNote(voices);
+        count = applyNoteFX(rackOf({chord, updown}), voices, count,
+                            MAX_NOTE_VOICES, 1u);
+        check(count == 8, "eight steps at an eighth-beat rate, got " +
+                              std::to_string(count));
+        check(voices[0].pitch == 60 && voices[1].pitch == 64 &&
+              voices[2].pitch == 67 && voices[3].pitch == 64 &&
+              voices[4].pitch == 60,
+              "up-down turns around without repeating the top note");
+
+        // Down descends through the octaves too, which is the bug the
+        // obvious implementation has: it walks down inside each octave while
+        // climbing between them.
+        NoteFXSlot down = arp;
+        down.arpMode = static_cast<int>(NoteArpMode::Down);
+        down.arpOctaves = 2;
+        down.arpRate = 0.125f;
+        count = oneNote(voices);
+        count = applyNoteFX(rackOf({chord, down}), voices, count,
+                            MAX_NOTE_VOICES, 1u);
+        bool descends = true;
+        for (int i = 1; i < std::min(count, 6); ++i) {
+            if (voices[i].pitch >= voices[i - 1].pitch) descends = false;
+        }
+        check(descends,
+              "a two-octave descent actually descends the whole way - first "
+              "six pitches were " + std::to_string(voices[0].pitch) + " " +
+                  std::to_string(voices[1].pitch) + " " +
+                  std::to_string(voices[2].pitch) + " " +
+                  std::to_string(voices[3].pitch) + " " +
+                  std::to_string(voices[4].pitch) + " " +
+                  std::to_string(voices[5].pitch));
+
+        // Two octaves reach an octave higher than one - given long enough to
+        // get there. A one-beat note at a quarter-beat rate is four steps and
+        // never sees the second octave at all, which is correct and is not
+        // what this check is about.
+        NoteFXSlot wide = arp;
+        wide.arpOctaves = 2;
+        count = oneNote(voices);
+        voices[0].endBeat = 2.0f;
+        count = applyNoteFX(rackOf({chord, wide}), voices, count,
+                            MAX_NOTE_VOICES, 1u);
+        int highest = 0;
+        for (int i = 0; i < count; ++i) highest = std::max(highest, voices[i].pitch);
+        check(highest == 79, "two octaves reaches the fifth an octave up, got " +
+                                 std::to_string(highest));
+
+        // Gate shortens each step without moving it.
+        NoteFXSlot staccato = arp;
+        staccato.arpGate = 0.25f;
+        count = oneNote(voices);
+        count = applyNoteFX(rackOf({chord, staccato}), voices, count,
+                            MAX_NOTE_VOICES, 1u);
+        check(count > 0 &&
+              std::fabs((voices[0].endBeat - voices[0].startBeat) - 0.0625f) < 1e-4f,
+              "the gate shortens the step, it does not move it");
+    }
+
+    // ---- Strum ---------------------------------------------------------------
+    {
+        NoteVoice voices[MAX_NOTE_VOICES];
+
+        NoteFXSlot chord;
+        chord.type = NoteFXType::Chord;
+        chord.chordShape = static_cast<int>(ChordShape::MajorTriad);
+
+        NoteFXSlot strum;
+        strum.type = NoteFXType::Strum;
+        strum.strumBeats = 0.05f;
+
+        int count = oneNote(voices);
+        count = applyNoteFX(rackOf({chord, strum}), voices, count,
+                            MAX_NOTE_VOICES, 1u);
+
+        check(count == 3, "the chord is still three notes");
+
+        // Sorted by pitch, they arrive in order and each one is displaced by
+        // one more gap than the one below it.
+        std::vector<std::pair<int, float>> byPitch;
+        for (int i = 0; i < count; ++i) {
+            byPitch.push_back({voices[i].pitch, voices[i].startBeat});
+        }
+        std::sort(byPitch.begin(), byPitch.end());
+        check(std::fabs(byPitch[0].second - 0.00f) < 1e-4f &&
+              std::fabs(byPitch[1].second - 0.05f) < 1e-4f &&
+              std::fabs(byPitch[2].second - 0.10f) < 1e-4f,
+              "a strum arrives low to high, one gap at a time");
+
+        // The whole voice moves. Shifting only the start would make the low
+        // notes of a strummed chord longer than the high ones.
+        bool sameLength = true;
+        for (int i = 0; i < count; ++i) {
+            if (std::fabs((voices[i].endBeat - voices[i].startBeat) - 1.0f) > 1e-4f) {
+                sameLength = false;
+            }
+        }
+        check(sameLength, "and every note keeps the length it had");
+
+        // Downward puts the top note first.
+        strum.strumDown = true;
+        count = oneNote(voices);
+        count = applyNoteFX(rackOf({chord, strum}), voices, count,
+                            MAX_NOTE_VOICES, 1u);
+        byPitch.clear();
+        for (int i = 0; i < count; ++i) {
+            byPitch.push_back({voices[i].pitch, voices[i].startBeat});
+        }
+        std::sort(byPitch.begin(), byPitch.end());
+        check(byPitch[2].second < byPitch[0].second,
+              "strumming down puts the top note first");
+    }
+
+    // ---- Scale and Velocity --------------------------------------------------
+    {
+        NoteVoice voices[MAX_NOTE_VOICES];
+
+        NoteFXSlot snap;
+        snap.type = NoteFXType::ScaleSnap;
+        snap.scaleRoot = 0;
+        snap.scaleType = 0;   // C major
+
+        int count = oneNote(voices, 61);   // C sharp
+        count = applyNoteFX(rackOf({snap}), voices, count, MAX_NOTE_VOICES, 1u);
+        check(count == 1 && isNoteInScale(voices[0].pitch, 0, 0),
+              "a note outside the key is moved into it, got " +
+                  std::to_string(voices[0].pitch));
+
+        NoteFXSlot fixed;
+        fixed.type = NoteFXType::Velocity;
+        fixed.velocityFixed = 0.5f;
+        count = oneNote(voices);
+        count = applyNoteFX(rackOf({fixed}), voices, count, MAX_NOTE_VOICES, 1u);
+        check(std::fabs(voices[0].velocity - 0.5f) < 1e-5f,
+              "a fixed velocity replaces what the note had");
+
+        NoteFXSlot scale;
+        scale.type = NoteFXType::Velocity;
+        scale.velocityScale = 0.5f;
+        count = oneNote(voices);
+        count = applyNoteFX(rackOf({scale}), voices, count, MAX_NOTE_VOICES, 1u);
+        check(std::fabs(voices[0].velocity - 0.4f) < 1e-5f,
+              "and a scale multiplies it");
+
+        /*
+         * The random module answers the same way twice.
+         *
+         * It has to: the note-on and the note-off are separate calls,
+         * thousands of samples apart, and a note whose velocity is rolled
+         * afresh each time would be a note that never stops - the pitch it
+         * releases would not be the pitch it started.
+         */
+        NoteFXSlot jitter;
+        jitter.type = NoteFXType::Velocity;
+        jitter.velocityRandom = 0.3f;
+
+        count = oneNote(voices);
+        applyNoteFX(rackOf({jitter}), voices, count, MAX_NOTE_VOICES, 12345u);
+        const float first = voices[0].velocity;
+
+        count = oneNote(voices);
+        applyNoteFX(rackOf({jitter}), voices, count, MAX_NOTE_VOICES, 12345u);
+        check(voices[0].velocity == first,
+              "the same note gets the same roll every time it is asked");
+
+        count = oneNote(voices);
+        applyNoteFX(rackOf({jitter}), voices, count, MAX_NOTE_VOICES, 999u);
+        check(voices[0].velocity != first,
+              "and a different note gets a different one");
+    }
+
+    // ---- Nothing overruns ----------------------------------------------------
+    //
+    // Stacked chord modules multiply. Four of them over a retriggered note is
+    // 3^4 x 8 voices, which is far past the buffer - and the buffer is on the
+    // audio thread's stack.
+    {
+        NoteVoice voices[MAX_NOTE_VOICES];
+        for (int i = 0; i < MAX_NOTE_VOICES; ++i) {
+            voices[i].startBeat = 0.0f;
+            voices[i].endBeat = 1.0f;
+            voices[i].velocity = 1.0f;
+            voices[i].pitch = 40 + i;
+        }
+
+        NoteFXSlot chord;
+        chord.type = NoteFXType::Chord;
+        chord.chordShape = static_cast<int>(ChordShape::Major7);
+
+        NoteFXRack piled;
+        for (int i = 0; i < MAX_NOTE_FX; ++i) piled.push(chord);
+        check(piled.count == MAX_NOTE_FX, "the rack fills to its cap");
+
+        const int out = applyNoteFX(piled, voices, MAX_NOTE_VOICES,
+                                    MAX_NOTE_VOICES, 7u);
+        check(out <= MAX_NOTE_VOICES,
+              "eight chord modules over a full buffer stay inside it, got " +
+                  std::to_string(out));
+
+        bool sane = true;
+        for (int i = 0; i < out; ++i) {
+            if (voices[i].pitch < 0 || voices[i].pitch > 127) sane = false;
+            if (!std::isfinite(voices[i].startBeat)) sane = false;
+        }
+        check(sane, "and every voice that comes out is playable");
+
+        // A rack cannot be pushed past its capacity either.
+        for (int i = 0; i < 20; ++i) piled.push(chord);
+        check(piled.count == MAX_NOTE_FX, "and the rack refuses a ninth slot");
+    }
+
+    // ---- It reaches the audio ------------------------------------------------
+    //
+    // The structural guard. Everything above tests the arithmetic; this tests
+    // that the arithmetic is wired to anything. A rack that transforms notes
+    // perfectly and is never consulted sounds exactly like no rack at all.
+    {
+        auto render = [](bool withRack) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+
+            p.channels[0].oscillator.type = OscillatorType::Pulse;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+
+            if (withRack) {
+                NoteFXSlot chord;
+                chord.type = NoteFXType::Chord;
+                chord.chordShape = static_cast<int>(ChordShape::MajorTriad);
+                p.channels[0].noteFX.push_back(chord);
+            }
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 60;
+            note.startTime = 0.0f;
+            note.duration = 2.0f;
+            note.oscillatorType = OscillatorType::Pulse;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512), collected;
+            for (int b = 0; b < 40; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> plain = render(false);
+        const std::vector<float> chorded = render(true);
+
+        double difference = 0.0;
+        const size_t n = std::min(plain.size(), chorded.size());
+        for (size_t i = 0; i < n; ++i) {
+            difference += std::fabs(double(plain[i]) - double(chorded[i]));
+        }
+        check(n > 0 && difference / double(n) > 1e-4,
+              "a chord module on a channel changes what comes out of the mixer");
+
+        bool finite = true;
+        for (float v : chorded) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and the result is finite");
+    }
+
+    // ---- It survives the file ------------------------------------------------
+    {
+        auto original = std::make_unique<Project>();
+
+        NoteFXSlot chord;
+        chord.type = NoteFXType::Chord;
+        chord.chordShape = static_cast<int>(ChordShape::Diatonic);
+        chord.scaleRoot = 5;
+        chord.scaleType = 1;
+        chord.chordInversion = true;
+
+        NoteFXSlot arp;
+        arp.type = NoteFXType::Arpeggio;
+        arp.arpMode = static_cast<int>(NoteArpMode::UpDown);
+        arp.arpRate = 0.125f;
+        arp.arpOctaves = 3;
+        arp.arpGate = 0.4f;
+        arp.enabled = false;
+
+        original->channels[2].noteFX.push_back(chord);
+        original->channels[2].noteFX.push_back(arp);
+
+        const std::string path = testPath("notefx-roundtrip.ctp");
+        check(saveProject(*original, path), "a project with a note rack saves");
+
+        auto loaded = std::make_unique<Project>();
+        check(loadProject(*loaded, path), "and loads");
+
+        const auto& rack = loaded->channels[2].noteFX;
+        check(rack.size() == 2, "with both slots, in order, got " +
+                                    std::to_string(rack.size()));
+        if (rack.size() == 2) {
+            check(rack[0].type == NoteFXType::Chord &&
+                  rack[0].chordShape == static_cast<int>(ChordShape::Diatonic) &&
+                  rack[0].scaleRoot == 5 && rack[0].scaleType == 1 &&
+                  rack[0].chordInversion,
+                  "the chord module came back exactly as it went in");
+            check(rack[1].type == NoteFXType::Arpeggio &&
+                  rack[1].arpMode == static_cast<int>(NoteArpMode::UpDown) &&
+                  rack[1].arpOctaves == 3 && !rack[1].enabled &&
+                  std::fabs(rack[1].arpRate - 0.125f) < 1e-5f &&
+                  std::fabs(rack[1].arpGate - 0.4f) < 1e-5f,
+                  "and so did the arpeggio, switched off as it was saved");
+        }
+
+        // Costs nothing to anybody who never opens the rack.
+        auto plain = std::make_unique<Project>();
+        const std::string plainPath = testPath("notefx-none.ctp");
+        check(saveProject(*plain, plainPath), "a project with no racks saves");
+        std::ifstream file(plainPath);
+        std::string body((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+        check(body.find("NOTEFX") == std::string::npos,
+              "and writes no NOTEFX lines at all");
+
+        std::remove(path.c_str());
+        std::remove(plainPath.c_str());
+    }
+
+    // ---- A damaged file cannot reach the audio thread ------------------------
+    {
+        auto p = std::make_unique<Project>();
+
+        NoteFXSlot broken;
+        broken.type = static_cast<NoteFXType>(99);
+        broken.arpRate = 0.0f;             // would emit until the buffer filled
+        broken.arpOctaves = 40;
+        broken.scaleType = 500;
+        broken.lowPitch = 200;
+        broken.highPitch = -30;
+        broken.velocityScale = std::numeric_limits<float>::quiet_NaN();
+        broken.mix = 12.0f;
+        p->channels[0].noteFX.push_back(broken);
+
+        for (int i = 0; i < 40; ++i) p->channels[1].noteFX.push_back(NoteFXSlot{});
+
+        clampProjectToValidRanges(*p);
+
+        const NoteFXSlot& fixed = p->channels[0].noteFX[0];
+        check(static_cast<int>(fixed.type) >= 0 &&
+              static_cast<int>(fixed.type) < NOTE_FX_TYPE_COUNT,
+              "an unknown module becomes a known one");
+        check(fixed.arpRate >= 1.0f / 64.0f,
+              "a zero arpeggio rate is repaired, because it would emit until "
+              "the buffer was full");
+        check(fixed.arpOctaves <= 4 && fixed.scaleType < SCALE_COUNT,
+              "and the ranges are brought back inside their tables");
+        check(fixed.lowPitch <= fixed.highPitch,
+              "a backwards range is turned the right way round");
+        check(std::isfinite(fixed.velocityScale) && fixed.mix <= 1.0f,
+              "and nothing NaN or unbounded survives");
+        check(p->channels[1].noteFX.size() == static_cast<size_t>(MAX_NOTE_FX),
+              "a rack longer than the cap is trimmed to it");
     }
 }
 
@@ -22856,6 +23576,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testNoteFX();
     testDelayCompensation();
     testPluginsPanel();
     testVoiceDetectionBenchmark();

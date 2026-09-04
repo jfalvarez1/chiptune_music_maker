@@ -5854,6 +5854,11 @@ inline void registerDefaultActions(ActionRegistry& registry) {
         "Hosted VST and CLAP plugins on this channel", Shortcut(),
         [](ActionContext& c) { c.ui->showPlugins = !c.ui->showPlugins; });
 
+    add("panel.notefx", "Note FX", "Panels",
+        "Chords, arpeggios and strums on this channel, without writing notes",
+        Shortcut(),
+        [](ActionContext& c) { c.ui->showNoteFX = !c.ui->showNoteFX; });
+
     // The demos, each reachable by name. A demo nobody can find
     // demonstrates nothing.
     for (int s = 0; s < int(Showcase::Count); ++s) {
@@ -6598,6 +6603,311 @@ inline PluginPanelState& pluginPanelState() { return g_PluginPanel; }
  */
 inline void ApplyPluginChanges(Project& project, Sequencer& seq) {
     seq.rebuildPluginChains(g_Plugins, &g_PluginPanel.problems);
+}
+
+// ============================================================================
+// Note FX rack
+// ============================================================================
+/*
+ * The rack that transforms notes rather than samples.
+ *
+ * The panel is built around one idea: you should be able to see what the
+ * rack is doing without playing anything. The preview at the bottom runs a
+ * middle C through the rack exactly as the sequencer will and prints what
+ * comes out, so "Chord + Arpeggio at an eighth" is a list of notes and
+ * times rather than a guess.
+ */
+inline void DrawNoteFXPanel(Project& project, UIState& ui, Sequencer& seq) {
+    if (!ui.showNoteFX) return;
+
+    ImGui::SetNextWindowSize(ImVec2(420, 520), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Note FX", &ui.showNoteFX)) {
+        ImGui::End();
+        return;
+    }
+
+    const int channel = std::clamp(ui.selectedChannel, 0, Project::MAX_CHANNELS - 1);
+    ChannelConfig& config = project.channels[static_cast<size_t>(channel)];
+    std::vector<NoteFXSlot>& rack = config.noteFX;
+
+    bool changed = false;
+
+    ImGui::Text("%s", config.name.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d module%s)", int(rack.size()),
+                        rack.size() == 1 ? "" : "s");
+
+    if (rack.empty()) {
+        ImGui::TextWrapped(
+            "Nothing yet. These change WHICH notes play, not how they sound - "
+            "the pattern keeps the note you wrote, and this decides what is "
+            "made of it. Add one below.");
+    }
+
+    ImGui::Separator();
+
+    int removeAt = -1;
+    int moveFrom = -1;
+    int moveTo = -1;
+
+    for (size_t i = 0; i < rack.size(); ++i) {
+        NoteFXSlot& slot = rack[i];
+        ImGui::PushID(static_cast<int>(2400 + i));
+
+        if (ImGui::Checkbox("##on", &slot.enabled)) changed = true;
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Switch this module off without losing its settings");
+        }
+        ImGui::SameLine();
+
+        ImGui::SetNextItemWidth(130.0f);
+        int typeIndex = static_cast<int>(slot.type);
+        if (ImGui::BeginCombo("##type", noteFXName(slot.type))) {
+            for (int t = 0; t < NOTE_FX_TYPE_COUNT; ++t) {
+                const NoteFXType candidate = static_cast<NoteFXType>(t);
+                if (ImGui::Selectable(noteFXName(candidate), t == typeIndex)) {
+                    // Only the type changes. Every other field is kept, so
+                    // trying Chord and going back to Arpeggio does not throw
+                    // away the arpeggio settings - which is why the file
+                    // format writes all of them for every slot.
+                    slot.type = candidate;
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        // Order matters: Chord then Arpeggio is a running arpeggio, and
+        // Arpeggio then Chord is a chord on every step of one.
+        ImGui::SameLine();
+        if (ImGui::ArrowButton("##up", ImGuiDir_Up) && i > 0) {
+            moveFrom = static_cast<int>(i);
+            moveTo = static_cast<int>(i) - 1;
+        }
+        ImGui::SameLine();
+        if (ImGui::ArrowButton("##down", ImGuiDir_Down) && i + 1 < rack.size()) {
+            moveFrom = static_cast<int>(i);
+            moveTo = static_cast<int>(i) + 1;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("x")) removeAt = static_cast<int>(i);
+
+        // ---- The parameters this module actually reads ---------------------
+        ImGui::Indent(24.0f);
+        ImGui::SetNextItemWidth(-110.0f);
+
+        switch (slot.type) {
+        case NoteFXType::Transpose:
+            if (ImGui::SliderInt("Semitones", &slot.semitones, -24, 24)) changed = true;
+            break;
+
+        case NoteFXType::Chord: {
+            if (ImGui::BeginCombo("Shape", chordShapeName(slot.chordShape))) {
+                for (int s = 0; s < CHORD_SHAPE_COUNT; ++s) {
+                    if (ImGui::Selectable(chordShapeName(s), s == slot.chordShape)) {
+                        slot.chordShape = s;
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::Checkbox("Drop the top voice an octave",
+                                &slot.chordInversion)) {
+                changed = true;
+            }
+            if (slot.chordShape == static_cast<int>(ChordShape::Diatonic)) {
+                ImGui::SetNextItemWidth(-110.0f);
+                if (ImGui::SliderInt("Key", &slot.scaleRoot, 0, 11,
+                                     noteName(slot.scaleRoot))) {
+                    changed = true;
+                }
+                ImGui::SetNextItemWidth(-110.0f);
+                if (ImGui::SliderInt("Scale", &slot.scaleType, 0, SCALE_COUNT - 1,
+                                     scaleName(slot.scaleType))) {
+                    changed = true;
+                }
+            }
+            break;
+        }
+
+        case NoteFXType::Arpeggio: {
+            if (ImGui::BeginCombo("Direction", noteArpModeName(slot.arpMode))) {
+                for (int m = 0; m < NOTE_ARP_MODE_COUNT; ++m) {
+                    if (ImGui::Selectable(noteArpModeName(m), m == slot.arpMode)) {
+                        slot.arpMode = m;
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetNextItemWidth(-110.0f);
+            if (ImGui::SliderFloat("Rate", &slot.arpRate, 1.0f / 32.0f, 1.0f,
+                                   "%.3f beats")) {
+                changed = true;
+            }
+            ImGui::SetNextItemWidth(-110.0f);
+            if (ImGui::SliderInt("Octaves", &slot.arpOctaves, 1, 4)) changed = true;
+            ImGui::SetNextItemWidth(-110.0f);
+            if (ImGui::SliderFloat("Gate", &slot.arpGate, 0.05f, 1.0f, "%.2f")) {
+                changed = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("How much of each step sounds. Low is staccato.");
+            }
+            ImGui::TextDisabled("Put a Chord above this to arpeggiate a chord.");
+            break;
+        }
+
+        case NoteFXType::Strum:
+            if (ImGui::SliderFloat("Gap", &slot.strumBeats, 0.0f, 0.25f,
+                                   "%.3f beats")) {
+                changed = true;
+            }
+            if (ImGui::Checkbox("Top note first", &slot.strumDown)) changed = true;
+            break;
+
+        case NoteFXType::Octave:
+            if (ImGui::SliderInt("Octaves", &slot.octaves, -3, 3)) changed = true;
+            ImGui::SetNextItemWidth(-110.0f);
+            if (ImGui::SliderFloat("Level", &slot.mix, 0.0f, 1.0f, "%.2f")) {
+                changed = true;
+            }
+            break;
+
+        case NoteFXType::ScaleSnap:
+            if (ImGui::SliderInt("Key", &slot.scaleRoot, 0, 11,
+                                 noteName(slot.scaleRoot))) {
+                changed = true;
+            }
+            ImGui::SetNextItemWidth(-110.0f);
+            if (ImGui::SliderInt("Scale", &slot.scaleType, 0, SCALE_COUNT - 1,
+                                 scaleName(slot.scaleType))) {
+                changed = true;
+            }
+            break;
+
+        case NoteFXType::Range:
+            if (ImGui::SliderInt("Lowest", &slot.lowPitch, 0, 127)) changed = true;
+            ImGui::SetNextItemWidth(-110.0f);
+            if (ImGui::SliderInt("Highest", &slot.highPitch, 0, 127)) changed = true;
+            if (ImGui::Checkbox("Pass what is outside instead",
+                                &slot.rangeInvert)) {
+                changed = true;
+            }
+            break;
+
+        case NoteFXType::Velocity:
+            if (ImGui::SliderFloat("Scale", &slot.velocityScale, 0.0f, 2.0f,
+                                   "%.2f")) {
+                changed = true;
+            }
+            ImGui::SetNextItemWidth(-110.0f);
+            if (ImGui::SliderFloat("Fixed", &slot.velocityFixed, 0.0f, 1.0f,
+                                   "%.2f")) {
+                changed = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Above zero this replaces the level instead "
+                                  "of scaling it");
+            }
+            ImGui::SetNextItemWidth(-110.0f);
+            if (ImGui::SliderFloat("Random", &slot.velocityRandom, 0.0f, 0.5f,
+                                   "%.2f")) {
+                changed = true;
+            }
+            break;
+        }
+
+        ImGui::Unindent(24.0f);
+        ImGui::Separator();
+        ImGui::PopID();
+    }
+
+    if (moveFrom >= 0 && moveTo >= 0 && moveTo < static_cast<int>(rack.size())) {
+        std::swap(rack[static_cast<size_t>(moveFrom)],
+                  rack[static_cast<size_t>(moveTo)]);
+        changed = true;
+    }
+    if (removeAt >= 0) {
+        g_UndoHistory.saveState(project, "Remove Note FX");
+        rack.erase(rack.begin() + removeAt);
+        changed = true;
+    }
+
+    // ---- Add ----------------------------------------------------------------
+    static int s_addType = static_cast<int>(NoteFXType::Chord);
+    const bool full = rack.size() >= static_cast<size_t>(MAX_NOTE_FX);
+
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::BeginCombo("##add", noteFXName(static_cast<NoteFXType>(s_addType)))) {
+        for (int t = 0; t < NOTE_FX_TYPE_COUNT; ++t) {
+            if (ImGui::Selectable(noteFXName(static_cast<NoteFXType>(t)),
+                                  t == s_addType)) {
+                s_addType = t;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+
+    if (full) ImGui::BeginDisabled();
+    if (ImGui::Button("Add module")) {
+        g_UndoHistory.saveState(project, "Add Note FX");
+        NoteFXSlot slot;
+        slot.type = static_cast<NoteFXType>(s_addType);
+        rack.push_back(slot);
+        changed = true;
+    }
+    if (full) ImGui::EndDisabled();
+    if (full) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%d is the limit)", MAX_NOTE_FX);
+    }
+
+    // ---- What it does, without playing anything -----------------------------
+    //
+    // The same call the sequencer makes, on one middle C. A rack you have to
+    // press play to understand is a rack you dial in by accident.
+    ImGui::Separator();
+    {
+        NoteFXRack live;
+        buildNoteFXRack(rack, live);
+
+        NoteVoice voices[MAX_NOTE_VOICES];
+        voices[0].startBeat = 0.0f;
+        voices[0].endBeat = 1.0f;
+        voices[0].velocity = 0.8f;
+        voices[0].pitch = 60;
+
+        const int count = applyNoteFX(live, voices, 1, MAX_NOTE_VOICES, 0x5EEDu);
+
+        ImGui::TextDisabled("One beat of C4 becomes %d note%s:", count,
+                            count == 1 ? "" : "s");
+
+        std::string line;
+        for (int i = 0; i < count && i < 12; ++i) {
+            char buffer[48];
+            std::snprintf(buffer, sizeof(buffer), "%s%d@%.2f",
+                          noteName(voices[i].pitch % 12),
+                          voices[i].pitch / 12 - 1, voices[i].startBeat);
+            if (!line.empty()) line += "  ";
+            line += buffer;
+        }
+        if (count > 12) line += "  ...";
+        if (count == 0) line = "(nothing - the rack is filtering it out)";
+        ImGui::TextWrapped("%s", line.c_str());
+    }
+
+    /*
+     * One sync point, at the end of the frame's edits.
+     *
+     * The audio thread reads a fixed-size copy of this rack rather than the
+     * vector itself, and this is what refreshes it. Doing it per widget
+     * would refresh eight times while somebody drags a slider.
+     */
+    if (changed) seq.updateChannelConfigs();
+
+    ImGui::End();
 }
 
 inline void DrawPluginsPanel(Project& project, UIState& ui, Sequencer& seq) {

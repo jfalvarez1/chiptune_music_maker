@@ -169,3 +169,6 @@ recovery-previous.ctp
 recovery.ctp.tmp
 crash-log.txt
 *.pdb
+
+# Written into the working directory by a run of the app, not by a build
+chiptune-settings.ini

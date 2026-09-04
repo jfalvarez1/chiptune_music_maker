@@ -508,6 +508,50 @@ inline void clampProjectToValidRanges(Project& project) {
         }
     }
 
+    /*
+     * Note racks.
+     *
+     * Every one of these is read from the audio thread on every note, so a
+     * value out of range is not a cosmetic problem: an arpeggio rate of zero
+     * emits until the buffer is full and a NaN one loops forever. Repaired
+     * here rather than defended against in the inner loop.
+     */
+    for (ChannelConfig& channel : project.channels) {
+        if (channel.noteFX.size() > static_cast<size_t>(MAX_NOTE_FX)) {
+            channel.noteFX.resize(static_cast<size_t>(MAX_NOTE_FX));
+        }
+
+        for (NoteFXSlot& fx : channel.noteFX) {
+            const int type = static_cast<int>(fx.type);
+            if (type < 0 || type >= NOTE_FX_TYPE_COUNT) {
+                fx.type = NoteFXType::Transpose;
+            }
+
+            fx.semitones = std::clamp(fx.semitones, -48, 48);
+            fx.octaves = std::clamp(fx.octaves, -3, 3);
+            fx.chordShape = std::clamp(fx.chordShape, 0, CHORD_SHAPE_COUNT - 1);
+            fx.arpMode = std::clamp(fx.arpMode, 0, NOTE_ARP_MODE_COUNT - 1);
+            fx.arpOctaves = std::clamp(fx.arpOctaves, 1, 4);
+            fx.scaleRoot = std::clamp(fx.scaleRoot, 0, 11);
+            fx.scaleType = std::clamp(fx.scaleType, 0, SCALE_COUNT - 1);
+            fx.lowPitch = std::clamp(fx.lowPitch, 0, 127);
+            fx.highPitch = std::clamp(fx.highPitch, 0, 127);
+            if (fx.lowPitch > fx.highPitch) std::swap(fx.lowPitch, fx.highPitch);
+
+            auto repair = [](float& value, float fallback, float low, float high) {
+                if (!std::isfinite(value)) value = fallback;
+                value = std::clamp(value, low, high);
+            };
+            repair(fx.mix, 0.7f, 0.0f, 1.0f);
+            repair(fx.arpRate, 0.25f, 1.0f / 64.0f, 8.0f);
+            repair(fx.arpGate, 0.9f, 0.05f, 1.0f);
+            repair(fx.strumBeats, 0.02f, 0.0f, 1.0f);
+            repair(fx.velocityScale, 1.0f, 0.0f, 4.0f);
+            repair(fx.velocityFixed, 0.0f, 0.0f, 1.0f);
+            repair(fx.velocityRandom, 0.0f, 0.0f, 1.0f);
+        }
+    }
+
     // Take lanes. A segment naming a take that is gone would index off the
     // end of the vector during flattening.
     clampCompGroups(project);

@@ -273,6 +273,15 @@ foreach ($panel in $panels) {
     args = "--demo --show plugins --focus `"Plugins`""
 })
 
+# The note rack, with a diatonic chord feeding an up-down arpeggio. Empty it
+# is a paragraph and a combo box; what can actually break is the per-module
+# parameter block, which is a different set of widgets for every type, and
+# the live preview at the bottom that runs a note through the real rack.
+[void]$cases.Add(@{
+    name = "notefx"
+    args = "--demo --show notefx --focus `"Note FX`""
+})
+
 # Take lanes with a comp built on them. Empty, the panel is a paragraph of
 # text; the lanes, the comp strip and the per-take highlight are all drawn
 # from beat arithmetic straight into the draw list, where a bad span divides

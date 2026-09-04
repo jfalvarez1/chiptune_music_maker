@@ -228,7 +228,7 @@ struct CaptureRequest {
 //                        vaporwave|terminal|gameboy|daylight
 //   --view <name>        pianoroll|tracker|arrangement|mixer|pad
 //   --workspace <name>   compose|sounddesign|mix
-//   --show <name>        macros|spectrum|midi|automation|wavetable|
+//   --show <name>        macros|spectrum|midi|automation|wavetable|notefx|
 //                        browser|shortcuts|palette|plugins   (repeatable)
 //   --loop <a> <b>       set a loop range on the arrangement ruler
 //   --snap <name>        off|bar|1/2|1/4|1/8|1/16|1/32|1/4T|1/8T|1/16T
@@ -472,6 +472,30 @@ inline void applyCaptureState(const CaptureRequest& request,
         if (window == "browser")   ui.showBrowser = true;
         if (window == "shortcuts") ui.showShortcuts = true;
         if (window == "plugins")   ui.showPlugins = true;
+
+        // The note rack, with something already in it. Empty, the panel is a
+        // paragraph of text and a combo box; what is worth a shot - and what
+        // has parameter widgets that can break - is a rack that is doing
+        // something.
+        if (window == "notefx") {
+            ui.showNoteFX = true;
+            ui.selectedChannel = 0;
+            ChannelConfig& channel = project.channels[0];
+            if (channel.noteFX.empty()) {
+                NoteFXSlot chord;
+                chord.type = NoteFXType::Chord;
+                chord.chordShape = static_cast<int>(ChordShape::Diatonic);
+                chord.scaleRoot = 9;    // A
+                chord.scaleType = 1;    // minor
+                NoteFXSlot arp;
+                arp.type = NoteFXType::Arpeggio;
+                arp.arpMode = static_cast<int>(NoteArpMode::UpDown);
+                arp.arpRate = 0.125f;
+                arp.arpOctaves = 2;
+                channel.noteFX.push_back(chord);
+                channel.noteFX.push_back(arp);
+            }
+        }
 
         // The drum kit picker and the teaching block live inside the Voice
         // panel and only appear in drum mode, so a shot of them needs the

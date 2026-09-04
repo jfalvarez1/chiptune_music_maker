@@ -16,6 +16,7 @@
 #include "Macros.h"
 
 #include "Snap.h"
+#include "NoteFX.h"
 #include "Sample.h"
 #include "TempoMap.h"
 #include "FMSynth.h"
@@ -681,6 +682,18 @@ struct ChannelConfig {
      * enum. Append; never insert.
      */
     std::vector<PluginSlot> plugins;
+
+    /*
+     * The note rack: what this channel does to notes before it plays them.
+     *
+     * Append, never insert - see the note above `plugins`, which is there
+     * because putting a field in the middle of this struct silently re-maps
+     * every positional initialiser of it and cost a whole session once.
+     *
+     * Empty on every channel by default, and an empty rack costs nothing:
+     * the sequencer checks `active()` before it copies a single voice.
+     */
+    std::vector<NoteFXSlot> noteFX;
 };
 
 // ============================================================================
@@ -1850,6 +1863,9 @@ struct UIState {
     bool showBrowser = false;
     bool showShortcuts = false;
     bool showPlugins = false;
+    // The per-channel note rack. Off by default like every other panel: a
+    // workspace that opens with everything showing is one nobody can read.
+    bool showNoteFX = false;
 
     /*
      * Where per-user settings live - key bindings among them.

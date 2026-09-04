@@ -7,6 +7,43 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Note FX — a rack that changes which notes play.** The insert rack
+  changes how a note sounds; this one changes what notes there are. A Chord
+  module turns one written note into three; an Arpeggio turns those into a
+  running sequence; a Strum stops them all arriving at once. Also Transpose,
+  Octave, Scale, Range and Velocity, up to eight modules per channel, in any
+  order — Chord above Arpeggio is an arpeggiated chord, Arpeggio above Chord
+  is a chord on every step of one.
+
+  It is a rack rather than a menu command on purpose. Writing an arpeggio
+  into the pattern means the notes are simply notes from then on: changing
+  the rate is undo-and-redo, and there is no way to hear the part without
+  it. As a rack it is a property of the channel — the pattern still holds
+  what you wrote, and you can reorder, switch off or change it while it
+  plays.
+
+  The panel runs a middle C through the real rack and prints what comes out,
+  so you can see what a setting does without pressing play.
+
+  Empty on every channel by default, and an empty rack costs nothing: the
+  sequencer checks before it copies a single voice. The chord module's
+  diatonic shape is scale-aware, so the triad on D in C major is D F A — a
+  minor third — rather than a fixed interval table's D F# A.
+
+  Project Check reports the racks that cannot do what they were added for: a
+  Range passing nothing, a Strum with no gap, an Arpeggio with a single note
+  and one octave to run through.
+
+- **Format v8**, for the rack. Omit-if-default like every bump before it: a
+  project that never opens the panel writes exactly the bytes it wrote at
+  v7.
+
+---
+
 ## [3.10.0] - 2026-09-03 - "Voice"
 
 Sing a song into it and get a song out. And a mixer that keeps everything in

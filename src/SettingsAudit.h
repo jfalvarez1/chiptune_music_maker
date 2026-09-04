@@ -325,6 +325,106 @@ inline std::vector<AuditFinding> auditProject(const Project& project) {
             }
         }
 
+        /*
+         * ---- Note racks that cannot do what they were added for ------------
+         *
+         * These are the ones you cannot hear the problem with, because the
+         * symptom is that nothing changed. A Range passing nothing silences
+         * the channel; an Arpeggio with one note and one octave is a
+         * repeated note; a Chord below an Arpeggio arpeggiates a single note
+         * and then harmonises every step of it, which is almost never what
+         * somebody stacking those two meant.
+         */
+        {
+            int chordAt = -1;
+            int arpAt = -1;
+
+            for (size_t i = 0; i < channel.noteFX.size(); ++i) {
+                const NoteFXSlot& fx = channel.noteFX[i];
+                if (!fx.enabled) continue;
+
+                if (fx.type == NoteFXType::Chord && chordAt < 0) {
+                    chordAt = static_cast<int>(i);
+                }
+                if (fx.type == NoteFXType::Arpeggio && arpAt < 0) {
+                    arpAt = static_cast<int>(i);
+                }
+
+                if (fx.type == NoteFXType::Range && fx.lowPitch > fx.highPitch) {
+                    findings.push_back({
+                        AuditSeverity::Problem, ch,
+                        label + " has a note Range that passes nothing",
+                        "The lowest note is above the highest, so every note "
+                        "on this channel is filtered out and the channel is "
+                        "silent.",
+                        "Swap the two ends, or remove the Range module."
+                    });
+                }
+
+                if (fx.type == NoteFXType::Octave && fx.octaves == 0) {
+                    findings.push_back({
+                        AuditSeverity::Warning, ch,
+                        label + " has an Octave module set to zero octaves",
+                        "It doubles every note with a copy of itself at the "
+                        "same pitch, which only changes the level.",
+                        "Set it to plus or minus an octave, or use a Velocity "
+                        "module if a level change was what you wanted."
+                    });
+                }
+
+                if (fx.type == NoteFXType::Strum && fx.strumBeats <= 0.0f) {
+                    findings.push_back({
+                        AuditSeverity::Warning, ch,
+                        label + " has a Strum with no gap",
+                        "Every note of the chord still arrives at the same "
+                        "instant, which is what a strum exists to stop.",
+                        "Raise the gap. Around 0.02 beats is a fast strum."
+                    });
+                }
+
+                if (fx.type == NoteFXType::Velocity && fx.velocityScale <= 0.0f &&
+                    fx.velocityFixed <= 0.0f) {
+                    findings.push_back({
+                        AuditSeverity::Problem, ch,
+                        label + " has a Velocity module scaling to zero",
+                        "Every note plays at the floor level, which is very "
+                        "nearly silence, and the channel will read as broken.",
+                        "Raise the scale, or set a fixed velocity instead."
+                    });
+                }
+            }
+
+            if (arpAt >= 0 && chordAt < 0) {
+                const NoteFXSlot& arp =
+                    channel.noteFX[static_cast<size_t>(arpAt)];
+                if (arp.arpOctaves <= 1) {
+                    findings.push_back({
+                        AuditSeverity::Warning, ch,
+                        label + " has an Arpeggio with nothing to arpeggiate",
+                        "An arpeggio runs through the notes sounding at that "
+                        "moment. With one note and one octave there is only "
+                        "one, so it repeats it - which sounds like a "
+                        "retrigger, not an arpeggio.",
+                        "Add a Chord module above it, or raise the octave "
+                        "range so it has somewhere to climb."
+                    });
+                }
+            }
+
+            if (arpAt >= 0 && chordAt > arpAt) {
+                findings.push_back({
+                    AuditSeverity::Note, ch,
+                    label + " has a Chord below its Arpeggio",
+                    "The arpeggio runs first, on the single written note, and "
+                    "the chord then harmonises every step of it. That is a "
+                    "real sound, and it is rarely the one somebody stacking "
+                    "these two is after.",
+                    "Move the Chord above the Arpeggio to arpeggiate a chord "
+                    "instead."
+                });
+            }
+        }
+
         // ---- Modulation that reaches nothing --------------------------------
         const ModMatrix& matrix = channel.oscillator.modMatrix;
         for (int r = 0; r < matrix.routeCount; ++r) {

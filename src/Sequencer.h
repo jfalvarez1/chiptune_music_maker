@@ -842,6 +842,12 @@ public:
             // Single sync point: oscillator, envelope, filter envelope and the
             // full per-channel effects chain (see Synthesizer::setChannelConfig).
             m_synths[ch].setChannelConfig(config);
+
+            // The note rack, copied into a fixed-size array. The project
+            // stores a vector because the editor and the serializer want
+            // one; the audio thread must never walk a container the UI
+            // thread can resize underneath it.
+            buildNoteFXRack(config.noteFX, m_noteFX[ch]);
         }
 
         // Aux buses. Their strips are ChannelConfigs, so the same rack sync
@@ -1014,6 +1020,35 @@ private:
         }
     }
 
+    /*
+     * Attach a pitch to the hits expandNote produced.
+     *
+     * NoteTrigger carries no pitch because nothing it expands - delay, cut,
+     * retrigger, echo - ever changes one. The note rack does, so the rack
+     * works on voices instead.
+     */
+    static int voicesFromTriggers(const NoteTrigger* triggers, int count,
+                                  int pitch, NoteVoice* out) {
+        const int n = std::min(count, MAX_NOTE_VOICES);
+        for (int i = 0; i < n; ++i) {
+            out[i].startBeat = triggers[i].startBeat;
+            out[i].endBeat   = triggers[i].endBeat;
+            out[i].velocity  = triggers[i].velocity;
+            out[i].pitch     = pitch;
+        }
+        return n;
+    }
+
+    // A note's identity, for the modules that roll dice. Includes the loop
+    // pass, so a randomised velocity re-rolls each time round rather than
+    // freezing into a fixed pattern on the first repeat.
+    uint32_t noteFXSeed(int pitch, float absStartBeat) const {
+        uint32_t h = static_cast<uint32_t>(static_cast<int32_t>(absStartBeat * 256.0f));
+        h ^= static_cast<uint32_t>(pitch) * 2654435761u;
+        h ^= m_loopPass + 0x9E3779B9u + (h << 6) + (h >> 2);
+        return h;
+    }
+
     void processNoteEvents(float fromBeat, float toBeat) {
         if (!m_project) return;
 
@@ -1070,8 +1105,33 @@ private:
                 const int soundingPitch = note.pitch + clip.transpose;
                 if (soundingPitch < 0 || soundingPitch > 127) continue;
 
-                for (int t = 0; t < triggerCount; ++t) {
-                    const NoteTrigger& trigger = triggers[t];
+                /*
+                 * The channel's note rack.
+                 *
+                 * Between the pattern and the instrument: the pattern still
+                 * holds the note that was written, and what sounds is that
+                 * note read through the rack. A chord module turns one voice
+                 * into three, an arpeggiator turns those into a run.
+                 *
+                 * The seed is the note, not a counter, because the note-on
+                 * and the note-off arrive in different calls thousands of
+                 * samples apart and a random module has to answer the same
+                 * way to both - the same reason noteShouldSound is a hash.
+                 */
+                NoteVoice voices[MAX_NOTE_VOICES];
+                int voiceCount =
+                    voicesFromTriggers(triggers, triggerCount, soundingPitch, voices);
+
+                const NoteFXRack& rack = m_noteFX[clip.channelIndex];
+                if (rack.active()) {
+                    const uint32_t seed =
+                        noteFXSeed(soundingPitch, clip.startBeat + note.startTime);
+                    voiceCount = applyNoteFX(rack, voices, voiceCount,
+                                             MAX_NOTE_VOICES, seed);
+                }
+
+                for (int t = 0; t < voiceCount; ++t) {
+                    const NoteVoice& trigger = voices[t];
 
                     // Swing, which the arrangement path never applied: the
                     // slider moved a value only the pattern preview read, so
@@ -1097,7 +1157,7 @@ private:
                         applyHumanize(startTime, velocity);
 
                         m_synths[clip.channelIndex].noteOn(
-                            soundingPitch, velocity, startTime,
+                            trigger.pitch, velocity, startTime,
                             fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
                             note.vibrato, note.arpeggio, note.slide,
                             note.dutyCycle, note.useDutyCycle,
@@ -1108,7 +1168,7 @@ private:
                     // Note off
                     if (swungEnd >= fromBeat && swungEnd < toBeat) {
                         m_synths[clip.channelIndex].noteOff(
-                            soundingPitch, m_state.currentTime);
+                            trigger.pitch, m_state.currentTime);
                     }
                 }
             }
@@ -1149,8 +1209,21 @@ private:
             const int triggerCount =
                 expandNote(note, 0.0f, triggers, MAX_NOTE_TRIGGERS);
 
-            for (int t = 0; t < triggerCount; ++t) {
-                const NoteTrigger& trigger = triggers[t];
+            // The preview channel's rack, so the pattern being edited sounds
+            // the way it will on the timeline. A rack you can only hear once
+            // the pattern is placed is a rack you cannot dial in.
+            NoteVoice voices[MAX_NOTE_VOICES];
+            int voiceCount =
+                voicesFromTriggers(triggers, triggerCount, note.pitch, voices);
+
+            const NoteFXRack& rack = m_noteFX[m_previewChannel];
+            if (rack.active()) {
+                voiceCount = applyNoteFX(rack, voices, voiceCount, MAX_NOTE_VOICES,
+                                         noteFXSeed(note.pitch, note.startTime));
+            }
+
+            for (int t = 0; t < voiceCount; ++t) {
+                const NoteVoice& trigger = voices[t];
 
                 // Swing displaces the hit, but must not change how long it
                 // lasts, or a swung note would also be a shorter one.
@@ -1170,7 +1243,7 @@ private:
                     applyHumanize(startTime, velocity);
 
                     m_synths[m_previewChannel].noteOn(
-                        note.pitch, velocity, startTime,
+                        trigger.pitch, velocity, startTime,
                         fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
                         note.vibrato, note.arpeggio, note.slide,
                         note.dutyCycle, note.useDutyCycle,
@@ -1181,7 +1254,7 @@ private:
                 // Note off (also swing the end time)
                 const float swungEnd = swungStart + held;
                 if (swungEnd >= fromBeat && swungEnd < toBeat) {
-                    m_synths[m_previewChannel].noteOff(note.pitch, m_state.currentTime);
+                    m_synths[m_previewChannel].noteOff(trigger.pitch, m_state.currentTime);
                 }
             }
         }
@@ -1482,6 +1555,10 @@ private:
      * copy that went out through a bus has come back. The bus lines level
      * the sends arriving at each bus and each bus's own output.
      */
+    // Each channel's note rack, synced from the project (see
+    // updateChannelConfigs) so the audio thread reads a fixed-size copy.
+    std::array<NoteFXRack, MAX_CHANNELS> m_noteFX;
+
     std::array<CompensationDelay, MAX_CHANNELS> m_directDelay;
     std::array<CompensationDelay, Project::MAX_AUX_BUSES> m_busSendDelay;
     std::array<CompensationDelay, Project::MAX_AUX_BUSES> m_busOutDelay;

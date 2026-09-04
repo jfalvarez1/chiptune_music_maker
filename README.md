@@ -149,6 +149,21 @@ else. A clip whose file has moved keeps its place and its edits and says so.
 
 ![Audio clips](docs/images/audio-clips.png)
 
+### Note FX
+
+A second rack on every channel that changes *which* notes play rather than
+how they sound. A Chord module turns one written note into three; an Arpeggio
+turns those into a running sequence; a Strum stops them all landing at once.
+Transpose, Octave, Scale, Range and Velocity too, up to eight in any order —
+Chord above Arpeggio is an arpeggiated chord, the other way round is a chord
+on every step of one.
+
+Nothing is written into the pattern. The pattern keeps the note you played,
+and the rack decides what is made of it — so you can change the rate, reorder
+the modules, or switch the whole thing off while it plays. The panel runs a
+middle C through the rack and shows you what comes out, so you can see what a
+setting does without pressing play.
+
 ### Plugins
 
 Per-channel racks for hosted VST and CLAP plugins, with a scanner that finds
