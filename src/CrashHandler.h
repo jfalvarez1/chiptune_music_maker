@@ -125,11 +125,58 @@ inline void writeReport(std::FILE* out, EXCEPTION_POINTERS* info) {
     std::fflush(out);
 }
 
+/*
+ * What to try to save on the way down, if anything.
+ *
+ * A function rather than a Project pointer, so this header does not need to
+ * know what a Project is and main.cpp keeps ownership of both the project
+ * and the autosave. It returns whether it wrote anything, which goes into
+ * the report - so the log says either "your work was saved" or it does not,
+ * and the user is never left guessing.
+ */
+inline bool (*g_lastDitchSave)() = nullptr;
+
 inline LONG WINAPI handler(EXCEPTION_POINTERS* info) {
+    /*
+     * Save first, report second.
+     *
+     * This handler used to write a stack trace and let the process die,
+     * which meant a crash cost up to ninety seconds of work - the autosave
+     * interval - even though the one piece of code running at the moment of
+     * the crash was in a position to write the file.
+     *
+     * It is attempted before the symbol handler is touched, because
+     * SymInitialize loads modules and allocates, and if anything is going to
+     * take the process down a second time it is that rather than a
+     * serialise-to-string.
+     *
+     * The project may be mid-mutation and the file may therefore be torn.
+     * That is fine and is why it goes to the recovery slot rather than over
+     * the user's own file: the autosave rotates the previous recovery aside
+     * before writing, so a bad last-second save still leaves the good
+     * ninety-second-old one behind it.
+     */
+    bool saved = false;
+    if (g_lastDitchSave != nullptr) {
+        __try {
+            saved = g_lastDitchSave();
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            // The state was too far gone to serialise. Nothing to do but say
+            // so, which the report below does.
+            saved = false;
+        }
+    }
+
     writeReport(stderr, info);
+    std::fprintf(stderr, "unsaved work: %s\n",
+                 saved ? "written to the recovery file"
+                       : "could not be written");
 
     if (std::FILE* log = std::fopen("crash-log.txt", "a")) {
         writeReport(log, info);
+        std::fprintf(log, "unsaved work: %s\n",
+                     saved ? "written to the recovery file"
+                           : "could not be written");
         std::fclose(log);
     }
 
@@ -143,8 +190,17 @@ inline void installCrashHandler() {
     SetUnhandledExceptionFilter(crash::handler);
 }
 
+// Register what to write if the process is about to die. Optional - without
+// it the handler still reports, it just has nothing to rescue.
+inline void setCrashSaveHook(bool (*hook)()) {
+    crash::g_lastDitchSave = hook;
+}
+
 } // namespace ChiptuneTracker
 
 #else
-namespace ChiptuneTracker { inline void installCrashHandler() {} }
+namespace ChiptuneTracker {
+inline void installCrashHandler() {}
+inline void setCrashSaveHook(bool (*)()) {}
+}
 #endif

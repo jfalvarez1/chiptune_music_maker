@@ -23,6 +23,7 @@
 #include "Types.h"
 #include "ProjectSerializer.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <sstream>
@@ -59,7 +60,27 @@ public:
 
         // Any new edit invalidates the redo branch.
         m_redo.clear();
+
+        ++m_edits;
     }
+
+    /*
+     * How many edits have been recorded, ever.
+     *
+     * For the autosave, which needs to know whether anything changed and
+     * cannot afford to serialise the project every frame to find out. Its
+     * own check was a fingerprint of note COUNTS - so changing a note's
+     * pitch, its velocity, its length, any effect on it, or any mixer or
+     * instrument setting left the fingerprint identical and never triggered
+     * a save. Only adding or deleting something did.
+     *
+     * This is exact for anything undoable, which is every edit that goes
+     * through the eighty-odd call sites in the UI, and it costs one integer.
+     * Note that saveState deliberately drops a state identical to the last
+     * one, so a drag that resolves to where it started does not count -
+     * which is correct: nothing changed.
+     */
+    uint64_t editCount() const { return m_edits; }
 
     bool canUndo() const { return !m_undo.empty(); }
     bool canRedo() const { return !m_redo.empty(); }
@@ -146,6 +167,9 @@ private:
             stack.erase(stack.begin());
         }
     }
+
+    // Every recorded edit, counted. See editCount().
+    uint64_t m_edits = 0;
 
     std::vector<UndoSnapshot> m_undo;
     std::vector<UndoSnapshot> m_redo;

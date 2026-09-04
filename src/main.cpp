@@ -336,6 +336,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
     // session ended badly - a clean exit deletes it.
     static ChiptuneTracker::Autosave autosave;
     autosave.setDirectory(".");
+
+    /*
+     * Save the work if the process is about to die.
+     *
+     * The crash handler wrote a stack trace and let go, so a crash cost
+     * whatever had happened since the last autosave - up to ninety seconds -
+     * despite the handler being the one piece of code still running and in a
+     * position to write the file.
+     *
+     * Both objects are function-local statics, so they outlive every frame
+     * and are still addressable from a handler that runs after the stack has
+     * unwound past main's locals. The lambda has no captures on purpose:
+     * that is what lets it convert to a plain function pointer, which is all
+     * a signal-handler-shaped hook can safely hold.
+     */
+    ChiptuneTracker::setCrashSaveHook([]() -> bool {
+        autosave.markDirty();
+        autosave.save(project);
+        return true;
+    });
     bool showRecoveryPrompt = false;
     std::string recoveryAge;
     // --keep-ini means "behave like a real session with state on disk", so it
@@ -813,14 +833,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             uiState.pendingLayoutFrames = 0;
         }
 
-        // Autosave. Only ticks when something changed, so an idle session
-        // does not churn the disk.
-        //
-        // Change detection is a cheap fingerprint rather than hooking every
-        // edit path: note counts, pattern and clip counts, and the tempo.
-        // It misses an edit that swaps one note for another in the same
-        // frame, which is a fair trade against threading a dirty flag
-        // through several hundred call sites in UI.h.
+        /*
+         * Autosave. Only ticks when something changed, so an idle session
+         * does not churn the disk.
+         *
+         * THE UNDO COUNTER IS THE EDIT DETECTOR, and it replaced something
+         * that quietly did not work. This was a fingerprint of note counts,
+         * pattern and clip counts, and the tempo - so changing a note's
+         * pitch, its velocity, its length, any of its effects, or any mixer
+         * or instrument setting left the fingerprint identical and never
+         * marked the project dirty. Only adding or deleting something did.
+         * An hour spent voicing a patch and balancing a mix would autosave
+         * exactly never, and a crash would take all of it.
+         *
+         * Every undoable edit passes through UndoHistory::saveState, which
+         * already serialises the project and already discards a state
+         * identical to the last, so the count it keeps is both exact and
+         * free.
+         *
+         * The structural fingerprint stays underneath as a second net, for
+         * anything that changes the song without recording an undo step.
+         */
         {
             size_t fingerprint = project.patterns.size() * 1000003u +
                                  project.arrangement.size() * 10007u +
@@ -828,6 +861,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmd
             for (const auto& pattern : project.patterns) {
                 fingerprint = fingerprint * 31u + pattern.notes.size();
             }
+            fingerprint = fingerprint * 131u +
+                          static_cast<size_t>(ChiptuneTracker::g_UndoHistory.editCount());
+
             static size_t lastFingerprint = 0;
             if (fingerprint != lastFingerprint) {
                 lastFingerprint = fingerprint;

@@ -317,6 +317,32 @@ struct Note {
     // like a loop, and it is one float. 1.0 means always, as it always did.
     float    probability = 1.0f;
 
+    /*
+     * Tie: keep the voice that is already sounding instead of starting a new
+     * one.
+     *
+     * Every note-on until now took a fresh voice and restarted the envelope
+     * from zero, so there was no way to change pitch without also re-striking
+     * the sound. A held pad that moves through a chord, a bass that walks
+     * under one long note, a lead that slurs - none of them were expressible.
+     *
+     * On a tied note the envelope is left exactly where it is: no attack, no
+     * re-strike, and a note that was already releasing is brought back to
+     * sustain rather than started again.
+     *
+     * WITH `slide`, THIS IS TONE PORTAMENTO. On an untied note `slide` is a
+     * scoop - the note starts that many semitones away from its own pitch and
+     * glides in. On a tied note it is a RATE, in semitones per second, and
+     * the voice glides from wherever it currently is to the new pitch. That
+     * is the tracker's 3xx, and it is the thing `slide` has never been able
+     * to do: the old implementation set its target to the note's own
+     * frequency and never looked at any other note.
+     *
+     * A tie with nothing sounding is just a note. Nothing to tie to is not an
+     * error.
+     */
+    bool     tie = false;
+
     bool isValid() const { return pitch >= 0 && pitch < 128; }
 };
 

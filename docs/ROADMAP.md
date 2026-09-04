@@ -1,7 +1,7 @@
 # ChiptuneTracker — Roadmap
 
-**Last updated:** 2026-08-30
-**Current version:** v3.1.0
+**Last updated:** 2026-09-04
+**Current version:** v3.11.0
 
 This is the living plan. It supersedes the point-in-time notes in
 `features_implementation_summary.md` and `implementation_plan.md`, which
@@ -449,3 +449,195 @@ does not work, which is G1.
 **Sell the constraint.** People buy hardware to escape "too many knobs
 syndrome". Eight fixed channels is a feature we have for free and currently
 never mention.
+
+
+---
+
+## H. From the 2026-09-04 research and audit pass
+
+Five parallel investigations (chip hardware, genre mastering, mastering
+tooling, VGM/NSF formats, and an audit of this codebase against a wish
+list), plus direct measurement of synthesised chip waveforms. What follows
+is what changed as a result, what is worth doing next, and — as valuable —
+what the research says not to build.
+
+Every claim below is tagged: **[M]** measured, **[S]** from a primary
+source, **[A]** from the code audit.
+
+### Corrections the research forced
+
+These were wrong in the shipping code, and the research is why we know:
+
+- **[M] The limiter was a hard clipper.** `1 - exp(-1/(t·sr))` where the
+  retained fraction needed `exp(-1/(t·sr))` — 0.022 instead of 0.978, so the
+  envelope reached its target in one sample. Every test passed. Fixed in
+  3.11.x with a lookahead and a crest-factor test that can tell a limiter
+  from a clipper.
+- **[M] A `tanh` after the limiter** cost 2.2 dB on every project and made
+  both clipping tests vacuous.
+- **[A] The EQ, compressor and limiter were one mono instance each**,
+  processed left then right — crosstalk in the filtered bands and every
+  dynamics time constant halved.
+- **[A] The "LUFS meter" had no K-weighting**, averaged channels before
+  squaring (3 dB low on anything correlated), had no gating, and summed a
+  144,000-sample buffer per output sample.
+- **[A] Autosave's dirty check was a fingerprint of note *counts*** — so
+  changing a pitch, a velocity, a length or any mixer setting never
+  triggered a save.
+- **[A] The crash handler wrote a log and let go**, losing up to 90 seconds
+  of work while being the one piece of code still able to write the file.
+- **[M] The chiptune mastering profile pushed its high shelf up +2 dB.**
+  Chip percussion is already all edge; the people who master this for a
+  living roll *off* above 10 kHz. Also its stereo widener was set to 1.12 on
+  a source whose measured correlation is +1.000 at any width setting — there
+  is no side signal to widen.
+
+### The measurement that changes chiptune mastering
+
+**[M] A square wave at exactly 0 dBFS reconstructs at +2.1 dBTP. A noise
+channel reconstructs at +5.4.** An infinite-slope edge cannot exist in a
+band-limited signal, so a chip render sitting on the ceiling is already two
+decibels over on the meter every streaming service uses — with percussion,
+the shortest and least suspicious element, worst by a wide margin.
+
+Consequences already shipped: a 4× oversampled true-peak meter, a −1.6 dBTP
+chiptune ceiling against −1.0 for everything else, and a DC blocker (a 12.5%
+pulse carries −0.75 of DC *by construction*; removing it raises usable peak
+by 4.86 dB).
+
+Consequence still open: **[M] the drive curve.** The first decibel of
+saturation buys 1.7 LU and the next eleven buy four. A "loudness" control
+that does not say this encourages exactly the wrong move.
+
+### H1. Chip modes, as an authoring constraint
+
+**The single highest-value chiptune item, and the prerequisite for several
+others.** `chipAuthentic` today is only a channel cap **[A]** — a project
+with it on can still put a granular engine and a convolution reverb on
+channel 3.
+
+A real mode fixes channel roles, restricts each channel to what it
+physically is, and quantises pitch and volume to the actual registers *while
+you compose*, so what you hear is what the hardware can do. The research
+produced exact tables for five chips; the ones that matter most:
+
+- **[S] NES**: 11-bit period, pulse silenced below t=8, floor at A1 (pulse) /
+  A0 (triangle) NTSC. Pitch resolution collapses above E5 — >50¢ per step
+  above G7, and **above G#8 no chromatic scale exists**. Triangle has no
+  volume at all. Duty 3 (75%) is spectrally identical to duty 1 — only the
+  phase differs.
+- **[S] Game Boy**: pulse physically cannot go below **C2** (64.0 Hz); only
+  the wave channel reaches under it. CH3 has 4 volume codes and no envelope.
+  Envelopes are one-shot, one-direction, ≤1.64 s and **cannot loop**.
+- **[S] SID**: one *shared* filter and one *global* 4-bit volume — a
+  per-voice volume column has to map to sustain and say so. Ring mod and
+  sync cost a voice each.
+- **[S] AY**: square only, no duty register at all; one shared noise (31
+  pitches) and one shared envelope for all three channels.
+- **[S] YM2612**: volume must scale **only the carriers of the current
+  algorithm** — scaling all four is what makes naive FM trackers change
+  timbre when you change volume.
+
+Size: the tonal half (widening `ChipFilterChain::Mode` past NES/Famicom) is
+~40 lines. The authoring-constraint half is 8–12 days and is the real work.
+
+### H2. PAL
+
+**[S] The noise period table differs between regions, and not monotonically**
+— at index $2 PAL is 14 CPU cycles where NTSC is 16, so PAL is *brighter*
+there. Region also changes the frame counter (240 Hz NTSC vs 200 Hz PAL, and
+neither is 60), every pitch by 7.65%, and the YM2612's LFO rate. We ship the
+NTSC table only.
+
+Small, and it is the kind of table that is silently wrong forever if nobody
+writes it down.
+
+### H3. Legato and tone portamento — done in 3.11.x
+
+`Note::tie`. On a tied note `slide` becomes a rate in semitones per second
+and the voice glides from wherever it is. The old slide was a scoop into the
+note's *own* pitch that never looked at any other note **[A]**, and stepped
+in hertz — so the same setting covered a different musical distance in each
+octave. The legacy path is unchanged so existing projects sound the same.
+
+### H4. Groove patterns (per-row speed)
+
+**[A] Absent.** `GroovePresets.h` is swing and humanize; `Groove.h` is a
+quantiser for the voice path. There is no tick or row-speed concept at all,
+and the engine is beat-time float rather than row/tick — which is the real
+obstacle, not the feature.
+
+~120 lines, touching the timing core. Swing then becomes a special case of
+groove rather than a separate mechanism.
+
+### H5. MIDI import
+
+**[A] Absent, and the hard part is already paid for.** `vendor/midifile` is
+vendored and linked into both the app and the tests, `smf::MidiFile::read()`
+is right there, and the CMake comment already says "MIDI export/import".
+~120 lines, no new dependency.
+
+### H6. Chord progression generator
+
+**[A] Partial.** Progressions exist only as hardcoded degree lists inside
+genre kits and templates, and every triad is a fixed `{0,3,7}` minor —
+so a "major" progression comes out wrong. The generator shape already exists
+in `Generators.h` next to the Euclidean one.
+
+### H7. FLAC export, and 24-bit WAV
+
+**[A] WAV export is hardcoded to 16-bit**, and truncates rather than rounds
+with no dither. FLAC is input-only. The cheap route is ffmpeg alongside the
+existing MP3 path (~20 lines, reusing the encoder discovery already there);
+parameterising the WAV writer is a separate, smaller job.
+
+### Deliberately not doing, and why
+
+**VGM export — not until a register layer exists. [S]** Furnace can export
+VGM because it *is* a rack of register-level chip emulators wearing a
+tracker UI: every write goes to the emulator and to a log at the same time,
+and the audio is a by-product. This project is the opposite — nothing
+anywhere emits an address/value pair. Building it means ~4–6 weeks for NES
+only, and **the file would not sound like the project**: supersaw, granular,
+convolution, the mixer and 24 channels have no representation and would
+silently vanish. Revisit only after H1, at which point it becomes a
+mechanical dump of state that already exists.
+
+Also worth recording so nobody spends a day discovering it: **[S] the VGM
+format has no SID.** No clock field, no opcode, in any version.
+
+**NSF — no.** The payload is 6502 code with INIT and PLAY entry points;
+there is no data-only NSF. FamiTracker ships ~5,800 lines of hand-written
+6502 for the base chip alone, before expansion chips. The minimum honest
+version is a register-replay player, which is strictly downstream of all the
+VGM work.
+
+**A VST build — blocked on a licensing decision, not on code. [A]** And the
+architecture is against it: `UI.h` is 20,000 lines of ImGui and `main.cpp`
+owns the window, the device and the project lifecycle.
+
+### Already done, contrary to the older notes
+
+The audit found several items still listed as missing:
+
+- **Euclidean rhythms** — full Bjorklund with rotation and nine presets,
+  wired to a Tools panel with a live preview.
+- **Sample import** — a loader *and* three live playback paths (sampler
+  zones, arrangement audio clips, granular). The note that "the loader
+  exists, the playback path does not" is years out of date.
+- **The NES LFSR** — 15-bit, both taps the right way round, all 16 NTSC
+  periods against 1.789773 MHz, exposed in the UI.
+- **Autosave** — a real 90-second timer, atomic temp-and-rotate write, and a
+  startup restore prompt.
+
+`README.md` has seven stale unchecked boxes for features that exist.
+
+### Small and worth doing
+
+- **[A] Three drum voices open-code the noise LFSR** with comments calling
+  bit0^bit1 "short mode / metallic". It is the *white* tap. The sound is
+  hand-tuned and fine; the comments are backwards and the three copies
+  should call `generateNoise()`.
+- **[A] `AudioEngine.h`/`.cpp` are dead code** — not in CMakeLists, not
+  included anywhere. Its LFSR uses the periodic tap unconditionally, which
+  would be a bug if it ever ran.

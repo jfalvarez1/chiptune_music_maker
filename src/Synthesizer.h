@@ -70,7 +70,12 @@ struct Voice {
     int arpeggioY = 0;              // Second semitone offset (0-15)
     int arpeggioStep = 0;           // Current arpeggio step (0, 1, or 2)
     float arpeggioTimer = 0.0f;     // Timer for arpeggio stepping
-    float slideTarget = 0.0f;       // Target frequency for portamento (0 = no slide)
+    float slideTarget = 0.0f;
+
+    // Which kind of glide this is. A scoop steps in Hz and covers a
+    // different musical distance in every octave; a portamento steps in
+    // semitones and does not. Appended, never inserted.
+    bool slideIsPortamento = false;       // Target frequency for portamento (0 = no slide)
     float slideSpeed = 0.0f;        // Slide speed (semitones per second)
 
     // Six-operator FM state: phases and envelopes, one set per operator.
@@ -547,6 +552,19 @@ public:
     }
 
     // Trigger a note (with optional fade parameters and oscillator type)
+    /*
+     * How the NEXT note-on should behave. UI/sequencer thread.
+     *
+     * Set immediately before noteOn and consumed by it. A setter rather than
+     * two more parameters because noteOn already takes seventeen, and every
+     * call site that does not care about articulation should not have to say
+     * so.
+     */
+    void setNextArticulation(bool tie, float glideSemitonesPerSecond = 0.0f) {
+        m_pendingTie = tie;
+        m_pendingGlide = glideSemitonesPerSecond;
+    }
+
     void noteOn(int note, float velocity, float time,
                 float fadeInSec = 0.0f, float fadeOutSec = 0.0f, float durationSec = 0.0f,
                 OscillatorType oscType = OscillatorType::Pulse,
@@ -566,6 +584,97 @@ public:
         const int configured = m_oscConfig.modMatrix.polyphonyLimit;
         const int limit = (configured > 0)
             ? std::min(configured, MAX_VOICES) : MAX_VOICES;
+
+        /*
+         * A tie takes over the voice that is already sounding.
+         *
+         * Before anything else, because the whole point is NOT to allocate:
+         * the envelope, the phase and the filter state all carry on, and only
+         * the pitch changes. Falling through to normal allocation when there
+         * is nothing to tie to is deliberate - a tie at the start of a
+         * pattern is simply a note.
+         *
+         * The most recently started voice wins. On a channel that is stacking
+         * notes, the one you mean to slur is the one you just played.
+         */
+        if (m_pendingTie) {
+            const bool tie = m_pendingTie;
+            const float glide = m_pendingGlide;
+            m_pendingTie = false;
+            m_pendingGlide = 0.0f;
+
+            if (tie) {
+                int best = -1;
+                float newest = -3.4e38f;
+                for (int i = 0; i < limit; ++i) {
+                    if (!m_voices[i].active) continue;
+                    if (m_voices[i].envStage == Voice::EnvStage::Off) continue;
+                    if (m_voices[i].startTime >= newest) {
+                        newest = m_voices[i].startTime;
+                        best = i;
+                    }
+                }
+
+                if (best >= 0) {
+                    Voice& v = m_voices[best];
+
+                    float target = noteToFrequency(note);
+                    if (!isDrumType(oscType)) {
+                        target *= std::pow(2.0f, m_oscConfig.detune / 1200.0f);
+                    }
+
+                    v.note = note;
+                    v.baseFrequency = target;
+
+                    if (glide > 0.0f) {
+                        // Tone portamento: glide from wherever it is now.
+                        v.slideTarget = target;
+                        v.slideSpeed = glide;
+                        v.slideIsPortamento = true;
+                    } else {
+                        // A plain tie: the pitch changes at once and the
+                        // envelope does not notice.
+                        v.frequency = target;
+                        v.phaseIncrement = v.frequency / m_sampleRate;
+                        v.slideTarget = 0.0f;
+                        v.slideSpeed = 0.0f;
+                        v.slideIsPortamento = false;
+                    }
+
+                    // A voice that had been let go is brought back rather
+                    // than restarted - which is what makes a tie across a
+                    // note-off sound like one note and not two.
+                    if (v.envStage == Voice::EnvStage::Release) {
+                        v.envStage = Voice::EnvStage::Sustain;
+                        v.envTime = 0.0f;
+                    }
+
+                    /*
+                     * The voice takes on the NEW note's lifetime.
+                     *
+                     * Without this it keeps the old note's, and a voice
+                     * auto-releases once realTimeElapsed passes it - which
+                     * is exactly the instant the tie happens. The result was
+                     * a slur that went silent at the join: the one thing the
+                     * feature exists to prevent, arriving through the one
+                     * field that was not updated.
+                     *
+                     * Resetting the elapsed time also restarts the
+                     * time-based per-note effects - vibrato, sweep, a
+                     * wavetable sweep - which is what a new note should do
+                     * even when it borrows a voice.
+                     */
+                    v.noteDuration = durationSec;
+                    v.realTimeElapsed = 0.0f;
+
+                    v.startTime = time;
+                    v.velocity = velocity;
+                    return;
+                }
+            }
+        }
+        m_pendingTie = false;
+        m_pendingGlide = 0.0f;
 
         int voiceIndex = -1;
         float oldestTime = time;
@@ -695,16 +804,28 @@ public:
             v.arpeggioStep = 0;
             v.arpeggioTimer = 0.0f;
 
-            // Slide/portamento (semitones to slide from start)
+            /*
+             * The scoop, on an untried note.
+             *
+             * `slide` here is an OFFSET: the note starts that many semitones
+             * away from its own pitch and glides in. That is what it has
+             * always meant on an untied note, and it is left exactly as it
+             * was - including its pitch-dependent rate - because changing it
+             * would re-voice every project that uses it.
+             *
+             * On a TIED note `slide` means something else entirely: a rate,
+             * toward the new pitch, which is real tone portamento. That path
+             * is above, in the tie branch.
+             */
             if (slide != 0.0f) {
-                // slide is semitones offset - calculate target
                 v.slideTarget = v.baseFrequency;
-                // Start at offset frequency, slide to base
                 v.frequency = v.baseFrequency * std::pow(2.0f, slide / 12.0f);
-                v.slideSpeed = std::abs(slide) * 4.0f;  // Speed proportional to distance
+                v.slideSpeed = std::abs(slide) * 4.0f;  // proportional to distance
+                v.slideIsPortamento = false;
             } else {
                 v.slideTarget = 0.0f;
                 v.slideSpeed = 0.0f;
+                v.slideIsPortamento = false;
             }
 
             // NES-style Duty Cycle (for pulse waves)
@@ -810,18 +931,47 @@ public:
 
             // 1. Apply portamento/slide effect
             if (voice.slideTarget > 0.0f && voice.slideSpeed > 0.0f) {
-                float diff = voice.slideTarget - voice.frequency;
+                const float diff = voice.slideTarget - voice.frequency;
                 if (std::abs(diff) > 0.1f) {
-                    // Slide towards target
-                    float slideAmount = voice.slideSpeed * dt * voice.baseFrequency * 0.1f;
-                    if (diff > 0) {
-                        voice.frequency = std::min(voice.frequency + slideAmount, voice.slideTarget);
+                    if (voice.slideIsPortamento) {
+                        /*
+                         * Tone portamento: a constant rate in SEMITONES per
+                         * second, so the glide sounds the same wherever it
+                         * happens.
+                         *
+                         * The scoop below steps in Hz scaled by the note's
+                         * own frequency, which means the same setting covers
+                         * a different musical distance in each octave. That
+                         * is wrong for a musical glide and is why this path
+                         * is exponential: multiplying by 2^(rate*dt/12) moves
+                         * a fixed number of semitones per second at any
+                         * pitch.
+                         */
+                        const float step =
+                            std::pow(2.0f, voice.slideSpeed * dt / 12.0f);
+                        if (diff > 0.0f) {
+                            voice.frequency =
+                                std::min(voice.frequency * step, voice.slideTarget);
+                        } else {
+                            voice.frequency =
+                                std::max(voice.frequency / step, voice.slideTarget);
+                        }
                     } else {
-                        voice.frequency = std::max(voice.frequency - slideAmount, voice.slideTarget);
+                        // The legacy scoop, unchanged.
+                        const float slideAmount =
+                            voice.slideSpeed * dt * voice.baseFrequency * 0.1f;
+                        if (diff > 0) {
+                            voice.frequency = std::min(voice.frequency + slideAmount,
+                                                       voice.slideTarget);
+                        } else {
+                            voice.frequency = std::max(voice.frequency - slideAmount,
+                                                       voice.slideTarget);
+                        }
                     }
                 } else {
                     voice.frequency = voice.slideTarget;
                     voice.slideTarget = 0.0f;  // Slide complete
+                    voice.slideIsPortamento = false;
                 }
                 effectFreq = voice.frequency;
             }
@@ -1690,7 +1840,12 @@ private:
         // High-frequency noise - clock LFSR multiple times for brighter sound
         float noise = 0.0f;
         for (int i = 0; i < 6; ++i) {
-            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;  // Short mode for brighter sound
+            // bit0^bit1 is the WHITE tap, period 32767. Two comments here
+            // called it "short mode" and "metallic", which is the periodic
+            // bit0^bit6 tap and is not what this is. The drum voices are
+            // hand-tuned rather than APU emulation, so the sound stays as it
+            // is; only the description was wrong.
+            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;  // white
             voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
@@ -1731,7 +1886,7 @@ private:
         // Generate more noise samples per audio sample for denser, brighter noise
         float noise = 0.0f;
         for (int i = 0; i < 12; ++i) {
-            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;  // Short mode = metallic
+            uint16_t feedback = ((voice.lfsr >> 0) ^ (voice.lfsr >> 1)) & 1;  // white, not metallic - see above
             voice.lfsr = (voice.lfsr >> 1) | (feedback << 14);
         }
         noise = ((voice.lfsr & 1) ? 1.0f : -1.0f);
@@ -3270,6 +3425,11 @@ private:
 
 private:
     float m_sampleRate = 44100.0f;
+    // What the next noteOn should do, from setNextArticulation. Consumed by
+    // the call it precedes.
+    bool m_pendingTie = false;
+    float m_pendingGlide = 0.0f;
+
     std::array<Voice, MAX_VOICES> m_voices;
 
     OscillatorConfig m_oscConfig;

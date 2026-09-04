@@ -125,6 +125,16 @@ inline void clampNoteToValidRanges(Note& note) {
 
     // sampleID is an index into the sample pool; -1 means "use the oscillator"
     if (note.sampleID < -1) note.sampleID = -1;
+
+    /*
+     * A tie with an enormous slide would glide for the rest of the song.
+     *
+     * On a tied note  is a RATE in semitones per second rather than
+     * an offset, and the clamp above already bounds it to 96 - which as a
+     * rate is eight octaves a second, fast enough to be instant. Nothing
+     * further to repair; noted here so the dual meaning is not a surprise to
+     * whoever reads this next.
+     */
 }
 
 // Macro sequences come from a file like everything else. An out-of-range

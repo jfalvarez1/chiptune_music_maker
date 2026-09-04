@@ -590,19 +590,37 @@ The full plan lives in [docs/ROADMAP.md](docs/ROADMAP.md). The short version:
 
 **Next**
 
-- [ ] Chip emulation modes - NES 2A03, Game Boy, C64 SID, AY-3-8910,
-      YM2612 - with a strict mode that enforces each chip's real limits
-- [ ] Authentic noise: white vs periodic LFSR and the NES's 16 noise periods
-- [ ] VGM export - the chiptune scene's interchange format
-- [ ] NSF export for real NES playback
+- [ ] Chip modes as a real authoring constraint — fixed channel roles, pitch
+      and volume quantised to the actual registers while you compose, so what
+      you hear is what the hardware could do
+- [ ] PAL: the noise period table, the frame counter and the pitch scaling
+      all differ from NTSC
 - [ ] Groove patterns (per-row speed lists) alongside the existing swing
-- [ ] Legato / tie notes and true tone portamento
-- [ ] Euclidean rhythm generator and a chord progression generator
-- [ ] Finish sample import - the loader exists, the playback path does not
-- [ ] MIDI import
-- [ ] Autosave and crash recovery
-- [ ] FLAC export
-- [ ] VST plugin version
+- [ ] MIDI import — `vendor/midifile` is already linked, and can read
+- [ ] A chord progression generator (the Euclidean one it would sit beside
+      already exists)
+- [ ] FLAC export, and WAV at more than 16 bits
+
+**Done since this list was written** — it had gone stale, and several of
+these had been shipped for a while:
+
+- [x] Authentic noise: 15-bit LFSR, both taps, all 16 NES noise periods
+- [x] Legato / tie notes and true tone portamento
+- [x] Euclidean rhythm generator
+- [x] Sample import, with three playback paths (sampler zones, timeline audio
+      clips, granular)
+- [x] Autosave and crash recovery
+
+**Not planned, and why** — see [docs/ROADMAP.md](docs/ROADMAP.md) for the
+detail:
+
+- **VGM export** needs a register-level layer this program does not have, and
+  the file would not sound like your project. (Also: the VGM format has no
+  SID, in any version.)
+- **NSF export** needs a 6502 driver. FamiTracker ships ~5,800 lines of hand
+  written assembly for the base chip alone.
+- **A VST build** is blocked on a licensing decision before the first line of
+  code.
 
 ## Documentation
 

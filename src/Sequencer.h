@@ -1134,6 +1134,25 @@ private:
         return h;
     }
 
+    /*
+     * Does a tied note start where this one ends?
+     *
+     * If so this note must not be released, or the slur has a dip in it. The
+     * scan is over the pattern rather than a precomputed index because a
+     * pattern is small and the alternative is a cache that has to be
+     * invalidated on every edit - and a stale one would hang a note forever,
+     * which is a far worse failure than a linear scan.
+     */
+    static bool tiedAfter(const Pattern& pattern, const Note& note) {
+        const float end = note.startTime + note.duration;
+        for (const Note& other : pattern.notes) {
+            if (&other == &note) continue;
+            if (!other.tie) continue;
+            if (std::fabs(other.startTime - end) < 1e-3f) return true;
+        }
+        return false;
+    }
+
     void processNoteEvents(float fromBeat, float toBeat) {
         if (!m_project) return;
 
@@ -1241,6 +1260,18 @@ private:
                         float velocity = trigger.velocity;
                         applyHumanize(startTime, velocity);
 
+                        /*
+                         * Articulation, set immediately before the note.
+                         *
+                         * A tied note takes over the voice that is already
+                         * sounding instead of starting a new one, and with a
+                         * slide it glides to the new pitch at that many
+                         * semitones per second - which is tone portamento,
+                         * and is the thing the slide effect could never do.
+                         */
+                        m_synths[clip.channelIndex].setNextArticulation(
+                            note.tie, note.tie ? std::fabs(note.slide) : 0.0f);
+
                         m_synths[clip.channelIndex].noteOn(
                             trigger.pitch, velocity, startTime,
                             fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
@@ -1250,8 +1281,17 @@ private:
                             note.tremolo, note.tremoloSpeed);
                     }
 
-                    // Note off
-                    if (swungEnd >= fromBeat && swungEnd < toBeat) {
+                    /*
+                     * Note off - unless something ties to this note.
+                     *
+                     * Releasing and then immediately tying would work, since
+                     * a tie brings a releasing voice back to sustain. But it
+                     * would put a dip in the envelope at every slur, which is
+                     * exactly the artefact legato exists to remove. Cheaper
+                     * and cleaner to not let go in the first place.
+                     */
+                    if (swungEnd >= fromBeat && swungEnd < toBeat &&
+                        !tiedAfter(pattern, note)) {
                         m_synths[clip.channelIndex].noteOff(
                             trigger.pitch, m_state.currentTime);
                     }
@@ -1327,6 +1367,9 @@ private:
                     float velocity = trigger.velocity;
                     applyHumanize(startTime, velocity);
 
+                    m_synths[m_previewChannel].setNextArticulation(
+                        note.tie, note.tie ? std::fabs(note.slide) : 0.0f);
+
                     m_synths[m_previewChannel].noteOn(
                         trigger.pitch, velocity, startTime,
                         fadeInSec, fadeOutSec, durationSec, note.oscillatorType,
@@ -1338,7 +1381,8 @@ private:
 
                 // Note off (also swing the end time)
                 const float swungEnd = swungStart + held;
-                if (swungEnd >= fromBeat && swungEnd < toBeat) {
+                if (swungEnd >= fromBeat && swungEnd < toBeat &&
+                    !tiedAfter(pattern, note)) {
                     m_synths[m_previewChannel].noteOff(trigger.pitch, m_state.currentTime);
                 }
             }

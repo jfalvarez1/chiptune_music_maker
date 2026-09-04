@@ -339,6 +339,9 @@ inline constexpr IntField<Note> NOTE_INTS[] = {
 
 inline constexpr BoolField<Note> NOTE_BOOLS[] = {
     {"udty", &Note::useDutyCycle},
+    // Omit-if-default like everything else, so a project with no tied notes
+    // writes exactly the bytes it wrote before this existed.
+    {"tie",  &Note::tie},
 };
 
 // --- Project (master bus and groove) ------------------------------------

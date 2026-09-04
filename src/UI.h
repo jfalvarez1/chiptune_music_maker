@@ -15900,6 +15900,39 @@ inline void DrawNoteEditor(Project& project, UIState& ui) {
         ImGui::SameLine();
         if (ImGui::SmallButton("+12##slide")) note.slide = 12.0f;   // Slide down from octave above
 
+        /*
+         * Tie, and what it does to the slide above.
+         *
+         * These two controls sit together because together they are tone
+         * portamento, and apart they are two different things. Untied, the
+         * slide is a scoop into the note. Tied, it is the rate at which the
+         * voice glides from the previous note to this one - and with the
+         * slide at zero, a tie is a plain legato that changes pitch without
+         * re-striking.
+         */
+        if (ImGui::Checkbox("Tie to the note before", &note.tie)) {
+            // Nothing to recompute: the sequencer reads it per note.
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Keep the voice that is already sounding instead of starting\n"
+                "a new one. The envelope carries on, so there is no re-strike.\n\n"
+                "With a slide above, this is tone portamento: the pitch glides\n"
+                "from the previous note at that many semitones per second.\n"
+                "With no slide, the pitch simply changes.\n\n"
+                "A tie with nothing sounding is just a note.");
+        }
+
+        if (note.tie) {
+            ImGui::SameLine();
+            if (note.slide != 0.0f) {
+                ImGui::TextDisabled("(glides at %.1f semitones/sec)",
+                                    std::fabs(note.slide));
+            } else {
+                ImGui::TextDisabled("(legato - set a slide to glide)");
+            }
+        }
+
         ImGui::Separator();
 
         // ------------------------------------------------------------------

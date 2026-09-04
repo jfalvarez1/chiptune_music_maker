@@ -22318,6 +22318,379 @@ static void testClickingHeadless() {
 }
 
 // ============================================================================
+// Legato and tone portamento
+//
+// Both are about what happens BETWEEN two notes, so both are measured
+// between two notes: the pitch the voice is at partway through, and whether
+// the envelope dipped at the join. Asserting that a flag was read would say
+// nothing - the interesting failure is a tie that retriggers anyway, which
+// looks identical in every way except the sound.
+// ============================================================================
+static void testLegato() {
+    beginTest("Legato and tone portamento");
+
+    constexpr float SR = 44100.0f;
+
+    /*
+     * Frequency from zero crossings.
+     *
+     * Cheap, and exactly right for the oscillators here: a sawtooth crosses
+     * zero once per cycle, so counting crossings over a known span gives the
+     * pitch without an FFT. Measured over a window in the middle of the span
+     * so the attack and the release do not contribute.
+     */
+    auto frequencyOf = [](const std::vector<float>& signal, size_t from,
+                          size_t to) {
+        if (to <= from + 2 || to > signal.size()) return 0.0f;
+        int crossings = 0;
+        for (size_t i = from + 1; i < to; ++i) {
+            const bool wasNegative = signal[i - 1] < 0.0f;
+            const bool isNegative = signal[i] < 0.0f;
+            if (wasNegative && !isNegative) ++crossings;
+        }
+        const float seconds = float(to - from) / SR;
+        return (seconds > 0.0f) ? float(crossings) / seconds : 0.0f;
+    };
+
+    auto makeSynth = []() {
+        auto synth = std::make_unique<Synthesizer>();
+        synth->setSampleRate(SR);
+        ChannelConfig config;
+        config.oscillator.type = OscillatorType::Sawtooth;
+        config.envelope.attack = 0.001f;
+        config.envelope.decay = 0.0f;
+        config.envelope.sustain = 1.0f;
+        config.envelope.release = 0.5f;
+        config.volume = 1.0f;
+        synth->setChannelConfig(config);
+        return synth;
+    };
+
+    auto render = [&](Synthesizer& synth, std::vector<float>& out, int samples,
+                      float startTime) {
+        for (int i = 0; i < samples; ++i) {
+            out.push_back(synth.process(startTime + float(i) / SR));
+        }
+    };
+
+    // ---- A plain tie changes the pitch and not the envelope -----------------
+    {
+        auto synth = makeSynth();
+        std::vector<float> signal;
+
+        synth->noteOn(48, 1.0f, 0.0f);                    // C3
+        render(*synth, signal, 22050, 0.0f);              // half a second
+
+        const size_t joinAt = signal.size();
+
+        synth->setNextArticulation(true, 0.0f);           // tie, no glide
+        synth->noteOn(60, 1.0f, 0.5f);                    // C4, an octave up
+        render(*synth, signal, 22050, 0.5f);
+
+        const float before = frequencyOf(signal, 4410, 18000);
+        const float after = frequencyOf(signal, joinAt + 4410, joinAt + 18000);
+
+        check(before > 120.0f && before < 140.0f,
+              "the first note is C3, measured " + std::to_string(before) + " Hz");
+        check(after > 250.0f && after < 275.0f,
+              "and after the tie it is C4, measured " + std::to_string(after) +
+                  " Hz - so the tie did change the pitch");
+
+        /*
+         * The envelope did not restart. This is the whole feature.
+         *
+         * A retrigger drives the level to zero and back up over the attack.
+         * With an attack of one millisecond that is about 44 samples of near
+         * silence right at the join - so if any short run around the join is
+         * quiet, the tie allocated a new voice instead of taking over the old
+         * one.
+         */
+        float quietestRun = 1.0f;
+        for (size_t i = joinAt - 200; i + 64 < joinAt + 400; ++i) {
+            float loudest = 0.0f;
+            for (size_t k = 0; k < 64; ++k) {
+                loudest = std::max(loudest, std::fabs(signal[i + k]));
+            }
+            quietestRun = std::min(quietestRun, loudest);
+        }
+        check(quietestRun > 0.2f,
+              "and the level never dips at the join - quietest 64-sample run "
+              "was " + std::to_string(quietestRun) +
+                  ", where a retriggered envelope would take it to zero");
+    }
+
+    // ---- A tie with nothing sounding is just a note -------------------------
+    {
+        auto synth = makeSynth();
+        std::vector<float> signal;
+
+        synth->setNextArticulation(true, 0.0f);
+        synth->noteOn(60, 1.0f, 0.0f);
+        render(*synth, signal, 8820, 0.0f);
+
+        float peak = 0.0f;
+        for (float v : signal) peak = std::max(peak, std::fabs(v));
+        check(peak > 0.05f,
+              "a tie at the start of a pattern sounds, rather than tying to "
+              "nothing and going silent - peak " + std::to_string(peak));
+    }
+
+    // ---- Tone portamento glides, at the rate it was given -------------------
+    {
+        auto synth = makeSynth();
+        std::vector<float> signal;
+
+        synth->noteOn(48, 1.0f, 0.0f);                    // C3, 130.8 Hz
+        render(*synth, signal, 22050, 0.0f);
+
+        const size_t glideStart = signal.size();
+
+        // Twelve semitones per second, over an octave: one second of glide.
+        synth->setNextArticulation(true, 12.0f);
+        synth->noteOn(60, 1.0f, 0.5f);
+        render(*synth, signal, 66150, 0.5f);              // a second and a half
+
+        // Halfway through the glide it should be about six semitones up,
+        // which is F#3 at 185 Hz. Measured over a short window so the pitch
+        // has not moved much within it.
+        const size_t halfway = glideStart + 22050;
+        const float middle = frequencyOf(signal, halfway - 2000, halfway + 2000);
+        check(middle > 165.0f && middle < 210.0f,
+              "halfway through a one-second octave glide the pitch is near "
+              "F#3 (185 Hz), measured " + std::to_string(middle) +
+                  " Hz - so it is gliding rather than jumping");
+
+        // And it arrives.
+        const float arrived =
+            frequencyOf(signal, glideStart + 50000, glideStart + 64000);
+        check(arrived > 250.0f && arrived < 275.0f,
+              "and it arrives at C4, measured " + std::to_string(arrived) +
+                  " Hz");
+    }
+
+    /*
+     * ---- The rate is in semitones, not in hertz ---------------------------
+     *
+     * The scoop this replaces stepped by an amount scaled by the note's own
+     * frequency, so the same setting covered a different musical distance in
+     * every octave. A glide that is twice as fast two octaves up is not a
+     * musical control. Two octaves apart, the same rate has to take the same
+     * time.
+     */
+    {
+        auto measureGlideSeconds = [&](int fromNote, int toNote) {
+            auto synth = makeSynth();
+            std::vector<float> signal;
+
+            synth->noteOn(fromNote, 1.0f, 0.0f);
+            render(*synth, signal, 4410, 0.0f);
+
+            const size_t start = signal.size();
+            synth->setNextArticulation(true, 12.0f);      // 12 semitones/sec
+            synth->noteOn(toNote, 1.0f, 0.1f);
+            render(*synth, signal, 88200, 0.1f);          // two seconds
+
+            // Find where the pitch stops moving, in windows of 1024.
+            const float target = 440.0f * std::pow(2.0f, (toNote - 69) / 12.0f);
+            for (size_t at = start; at + 4096 < signal.size(); at += 1024) {
+                const float f = frequencyOf(signal, at, at + 4096);
+                if (f > target * 0.99f) {
+                    return float(at - start) / SR;
+                }
+            }
+            return -1.0f;
+        };
+
+        const float low = measureGlideSeconds(36, 48);    // C2 to C3
+        const float high = measureGlideSeconds(72, 84);   // C5 to C6
+
+        check(low > 0.5f && low < 1.5f,
+              "an octave at twelve semitones a second takes about a second, "
+              "got " + std::to_string(low) + "s in the low octave");
+        check(high > 0.5f && high < 1.5f,
+              "and about the same up high, got " + std::to_string(high) + "s");
+        check(std::fabs(low - high) < 0.3f,
+              "the same rate covers the same musical distance in both "
+              "octaves - " + std::to_string(low) + "s against " +
+                  std::to_string(high) +
+                  "s. Stepping in hertz rather than semitones is what made "
+                  "the old slide faster in one octave than another.");
+    }
+
+    // ---- The old scoop still behaves exactly as it did -----------------------
+    //
+    // A regression guard, not a feature. `slide` on an UNTIED note is an
+    // offset - the note starts that far away and glides in - and changing it
+    // would re-voice every project that uses it.
+    {
+        auto synth = makeSynth();
+        std::vector<float> signal;
+
+        // Two semitones below, sliding up into the note.
+        synth->noteOn(60, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, OscillatorType::Sawtooth,
+                      0.0f, 0, -2.0f);
+        render(*synth, signal, 44100, 0.0f);
+
+        const float early = frequencyOf(signal, 200, 1400);
+        const float late = frequencyOf(signal, 30000, 43000);
+
+        check(early < late,
+              "an untied slide still starts below its note and rises: " +
+                  std::to_string(early) + " Hz then " + std::to_string(late) +
+                  " Hz");
+        check(late > 250.0f && late < 275.0f,
+              "and lands on the note it was written as, " +
+                  std::to_string(late) + " Hz");
+    }
+
+    // ---- Through the sequencer, and through the file ------------------------
+    {
+        auto render2 = [](bool tied) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.8f;
+
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].volume = 0.9f;
+            // A slow attack and a fast release, so an untied join is a real
+            // hole rather than one note's tail overlapping the next one's
+            // rise. Without the short release the two notes cross-fade and
+            // there is nothing for the tie to improve on.
+            p.channels[0].envelope.attack = 0.05f;
+            p.channels[0].envelope.decay = 0.0f;
+            p.channels[0].envelope.sustain = 1.0f;
+            p.channels[0].envelope.release = 0.005f;
+
+            p.patterns.clear();
+            Pattern pattern;
+
+            Note first;
+            first.pitch = 48;
+            first.startTime = 0.0f;
+            first.duration = 1.0f;
+            first.oscillatorType = OscillatorType::Sawtooth;
+            pattern.notes.push_back(first);
+
+            Note second;
+            second.pitch = 55;
+            second.startTime = 1.0f;
+            second.duration = 1.0f;
+            second.oscillatorType = OscillatorType::Sawtooth;
+            second.tie = tied;
+            pattern.notes.push_back(second);
+
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(SR);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(256), r(256), collected;
+            for (int b = 0; b < 200; ++b) {
+                seqPtr->process(l.data(), r.data(), 256);
+                collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> separate = render2(false);
+        const std::vector<float> tied = render2(true);
+
+        /*
+         * The join is at one beat, which at 120 BPM is half a second.
+         *
+         * Untied, the first note is released and the second attacks over
+         * fifty milliseconds, so there is a dip. Tied, there is not - and
+         * that difference is the whole feature, measured.
+         */
+        const size_t joinAt = static_cast<size_t>(0.5f * SR);
+        /*
+         * The window has to be longer than a cycle.
+         *
+         * This first used 128 samples, which at G3 is barely half a period of
+         * a sawtooth - so what it measured was where the window happened to
+         * sit in the ramp, not how loud the note was. Both renders came back
+         * with plausible numbers that had nothing to do with the envelope.
+         * 512 samples covers two full cycles of the lowest note here.
+         */
+        auto quietestAround = [&](const std::vector<float>& signal) {
+            constexpr size_t WINDOW = 512;
+            float quietest = 1.0f;
+            for (size_t i = joinAt;
+                 i + WINDOW < joinAt + 4000 && i + WINDOW < signal.size(); ++i) {
+                float loudest = 0.0f;
+                for (size_t k = 0; k < WINDOW; ++k) {
+                    loudest = std::max(loudest, std::fabs(signal[i + k]));
+                }
+                quietest = std::min(quietest, loudest);
+            }
+            return quietest;
+        };
+
+        const float separateDip = quietestAround(separate);
+        const float tiedDip = quietestAround(tied);
+
+        check(tiedDip > separateDip * 1.5f,
+              "through the sequencer, a tied note joins without the dip an "
+              "untied one has: " + std::to_string(tiedDip) + " against " +
+                  std::to_string(separateDip));
+    }
+
+    // ---- It survives the file ------------------------------------------------
+    {
+        auto original = std::make_unique<Project>();
+        original->patterns.clear();
+        Pattern pattern;
+        Note plain;
+        plain.pitch = 60;
+        pattern.notes.push_back(plain);
+        Note tied;
+        tied.pitch = 62;
+        tied.startTime = 1.0f;
+        tied.tie = true;
+        tied.slide = 6.0f;
+        pattern.notes.push_back(tied);
+        original->patterns.push_back(pattern);
+
+        const std::string path = testPath("tie-roundtrip.ctp");
+        check(saveProject(*original, path), "a project with a tied note saves");
+
+        auto loaded = std::make_unique<Project>();
+        check(loadProject(*loaded, path), "and loads");
+        check(loaded->patterns.size() == 1 &&
+              loaded->patterns[0].notes.size() == 2,
+              "with both notes");
+        if (!loaded->patterns.empty() && loaded->patterns[0].notes.size() == 2) {
+            check(!loaded->patterns[0].notes[0].tie,
+                  "the untied note is still untied");
+            check(loaded->patterns[0].notes[1].tie,
+                  "and the tied one is still tied");
+        }
+
+        // And costs nothing to a project that never uses it.
+        auto plainProject = std::make_unique<Project>();
+        const std::string plainPath = testPath("tie-none.ctp");
+        check(saveProject(*plainProject, plainPath), "a plain project saves");
+        std::ifstream file(plainPath);
+        std::string body((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+        check(body.find("tie=") == std::string::npos,
+              "and a project with no ties writes no tie field at all");
+
+        std::remove(path.c_str());
+        std::remove(plainPath.c_str());
+    }
+}
+
+// ============================================================================
 // The user guide
 //
 // A document nobody can navigate is a document nobody reads. The guide keeps
@@ -25397,6 +25770,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testLegato();
     testUserGuide();
     testMasterChain();
     testChipMastering();
