@@ -11,6 +11,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Open a Mega Drive patch.** There are decades of YM2612 voicings in the
+  world as .tfi and .vgi files - the interchange format every Mega Drive
+  tracker reads and writes - and the FM editor now opens them. A bass or a
+  brass stab somebody voiced on real hardware is one click away instead of
+  forty sliders away.
+
+  It is a translation, not emulation, and it says so: four operators, the
+  algorithm, the levels and the envelopes come across; key scaling, SSG-EG
+  and the chip LFO have no equivalent here and are dropped. An imported patch
+  lands in the same family as the original rather than being the same sound.
+
+  Neither format has a magic number, so "is this really a patch" can only be
+  answered by whether every field fits the register it came from. All of them
+  are checked, and a file that fails is refused with a reason - a bad import
+  that loads is one somebody spends an hour trying to fix.
+
 - **Per-channel oscilloscopes**, and an X-Y plot. A level meter says a
   channel is doing something; it cannot say what. On chip work that gap is
   most of the job - a duty change and a volume change look identical on a

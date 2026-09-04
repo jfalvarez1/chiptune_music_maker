@@ -33,6 +33,7 @@
 #include "Settings.h"
 #include "Templates.h"
 #include "Showcase.h"
+#include "ChipInstruments.h"
 #include "GenreKits.h"
 #include "NextStep.h"
 #include "GroovePresets.h"
@@ -21849,6 +21850,19 @@ static void testPanelsDrawHeadless() {
         {"Shortcuts",      [](Project& p, UIState& u, Sequencer& s) { u.showShortcuts = true; DrawShortcutsPanel(p, u, s); }},
         {"Plugins",        [](Project& p, UIState& u, Sequencer& s) { u.showPlugins = true; DrawPluginsPanel(p, u, s); }},
         {"Scopes",         [](Project& p, UIState& u, Sequencer& s) { u.showScopes = true; DrawScopes(p, u, s); }},
+        // The FM block with an import message showing. That text is wrapped
+        // and sits beside a button, which is the arrangement that overflows
+        // a narrow panel, and it only appears after an import.
+        {"FM Import Notice", [](Project& p, UIState& u, Sequencer& s) {
+             p.channels[0].oscillator.type = OscillatorType::FMSynth;
+             u.selectedChannel = 0;
+             g_ChipImportMessage =
+                 "Could not import: the bytes are the right length but are "
+                 "not a patch - some of them fall outside what the chip "
+                 "registers can hold";
+             DrawChannelEditor(p, u, s);
+             g_ChipImportMessage.clear();
+         }},
         // Both sections forced open, because a closed header draws none of
         // the widgets inside it and a test that never opens one is testing
         // the header.
@@ -22260,6 +22274,404 @@ static void testClickingHeadless() {
         // it is showing.
         check(project.channels[0].noteFX.size() == 2,
               "drawing the panel leaves the rack alone");
+    }
+}
+
+// ============================================================================
+// Mega Drive patch import
+//
+// Two things have to be right and they fail differently. The parse has to
+// refuse a file that is not a patch - neither format has a magic number, so
+// a bad import that LOADS is the dangerous case. And the translation has to
+// put the patch in the same family as the original, which means asserting
+// the direction of every mapping: a rate read backwards turns a slow pad
+// into a click and still passes anything that only checks it loaded.
+// ============================================================================
+static void testChipInstrumentImport() {
+    beginTest("Mega Drive patch import (.tfi / .vgi)");
+
+    // A patch built from register values by hand, so the expectations below
+    // are arithmetic rather than a recording of whatever the code did.
+    auto buildTFI = [](std::vector<uint8_t>& bytes) {
+        bytes.assign(TFI_SIZE, 0);
+        bytes[0] = 4;      // algorithm 4: 1->2, 3->4, carriers 2 and 4
+        bytes[1] = 6;      // feedback
+
+        // op1: a fast, quiet modulator at three times the pitch
+        const uint8_t op1[10] = {3, 0, 40, 0, 31, 12, 0, 8, 4, 0};
+        // op2: a carrier at the fundamental, full level, slow attack
+        const uint8_t op2[10] = {1, 0, 0, 0, 18, 6, 0, 6, 2, 0};
+        // op3: a half-ratio modulator, detuned downward
+        const uint8_t op3[10] = {0, 5, 24, 0, 28, 10, 3, 7, 6, 0};
+        // op4: the second carrier
+        const uint8_t op4[10] = {2, 1, 8, 0, 25, 8, 0, 5, 1, 0};
+
+        std::memcpy(&bytes[2], op1, 10);
+        std::memcpy(&bytes[12], op2, 10);
+        std::memcpy(&bytes[22], op3, 10);
+        std::memcpy(&bytes[32], op4, 10);
+    };
+
+    // ---- Parsing -------------------------------------------------------------
+    {
+        std::vector<uint8_t> bytes;
+        buildTFI(bytes);
+
+        YMPatch patch;
+        check(parseYMPatch(bytes.data(), bytes.size(), patch) ==
+                  ChipImportError::Ok,
+              "a well-formed TFI parses");
+        check(patch.algorithm == 4 && patch.feedback == 6,
+              "with its algorithm and feedback");
+        check(patch.operators[0].multiple == 3 &&
+              patch.operators[0].totalLevel == 40 &&
+              patch.operators[0].attack == 31 &&
+              patch.operators[0].release == 8,
+              "and the first operator's registers, in order - a layout read "
+              "one byte out would still parse and would put every field on "
+              "the wrong parameter");
+        check(patch.operators[2].detune == 5 && patch.operators[2].multiple == 0,
+              "and the third operator's, including a detune on the negative "
+              "side and a multiple of zero, which means a half");
+
+        // VGI is the same operator block behind one more header byte.
+        std::vector<uint8_t> vgi(VGI_SIZE, 0);
+        vgi[0] = 2;
+        vgi[1] = 3;
+        vgi[2] = static_cast<uint8_t>(0x05 | (0x02 << 4));   // PMS 5, AMS 2
+        std::memcpy(&vgi[3], &bytes[2], 40);
+
+        YMPatch fromVgi;
+        check(parseYMPatch(vgi.data(), vgi.size(), fromVgi) ==
+                  ChipImportError::Ok,
+              "a VGI of the same operators parses too");
+        check(fromVgi.pms == 5 && fromVgi.ams == 2,
+              "with the LFO sensitivities unpacked from their shared byte");
+        check(fromVgi.operators[0].multiple == patch.operators[0].multiple &&
+              fromVgi.operators[3].release == patch.operators[3].release,
+              "and the operators land in the same places despite the extra "
+              "header byte");
+    }
+
+    // ---- Refusing what is not a patch ---------------------------------------
+    //
+    // The case that matters. Neither format has a magic number, so the only
+    // evidence is whether every field fits the register it came from - and a
+    // bad import that loads is one somebody spends an hour trying to fix.
+    {
+        YMPatch patch;
+
+        std::vector<uint8_t> tooShort(20, 0);
+        check(parseYMPatch(tooShort.data(), tooShort.size(), patch) ==
+                  ChipImportError::WrongSize,
+              "a file of the wrong length is refused");
+
+        std::vector<uint8_t> bytes;
+        buildTFI(bytes);
+
+        bytes[0] = 9;      // no such algorithm
+        check(parseYMPatch(bytes.data(), bytes.size(), patch) ==
+                  ChipImportError::OutOfRange,
+              "an impossible algorithm is refused");
+
+        buildTFI(bytes);
+        bytes[6] = 200;    // attack rate past five bits
+        check(parseYMPatch(bytes.data(), bytes.size(), patch) ==
+                  ChipImportError::OutOfRange,
+              "an attack rate no register could hold is refused");
+
+        buildTFI(bytes);
+        bytes[2] = 99;     // multiple past four bits
+        check(parseYMPatch(bytes.data(), bytes.size(), patch) ==
+                  ChipImportError::OutOfRange,
+              "and so is a multiple");
+
+        // Text of the right length is the realistic accident: somebody
+        // renames a file, or a download is an HTML error page.
+        std::vector<uint8_t> text(TFI_SIZE, 0);
+        const char* body = "<!DOCTYPE html><html><head><title>Not Fou";
+        std::memcpy(text.data(), body, TFI_SIZE);
+        check(parseYMPatch(text.data(), text.size(), patch) !=
+                  ChipImportError::Ok,
+              "and 42 bytes of HTML is not mistaken for a patch");
+    }
+
+    // ---- The algorithm table -------------------------------------------------
+    {
+        bool modulates[4][4];
+        bool carrier[4];
+
+        ymAlgorithmConnections(0, modulates, carrier);
+        check(modulates[0][1] && modulates[1][2] && modulates[2][3],
+              "algorithm 0 is a straight chain 1-2-3-4");
+        check(carrier[3] && !carrier[0] && !carrier[1] && !carrier[2],
+              "with only the last operator heard");
+
+        ymAlgorithmConnections(7, modulates, carrier);
+        check(carrier[0] && carrier[1] && carrier[2] && carrier[3],
+              "algorithm 7 is four carriers - additive, and the one that "
+              "sounds nothing like FM if it is wrong");
+        bool anyLink = false;
+        for (int m = 0; m < 4; ++m) {
+            for (int c = 0; c < 4; ++c) if (modulates[m][c]) anyLink = true;
+        }
+        check(!anyLink, "and nothing modulates anything");
+
+        ymAlgorithmConnections(4, modulates, carrier);
+        check(modulates[0][1] && modulates[2][3] && carrier[1] && carrier[3],
+              "algorithm 4 is two independent pairs");
+    }
+
+    // ---- Translating ---------------------------------------------------------
+    {
+        std::vector<uint8_t> bytes;
+        buildTFI(bytes);
+
+        YMPatch patch;
+        check(parseYMPatch(bytes.data(), bytes.size(), patch) ==
+                  ChipImportError::Ok, "the patch parses before translating");
+
+        FMPatch fm;
+        ymPatchToFM(patch, fm);
+
+        // Chip operator 1 has to land on engine operator 5: that is the only
+        // one with self-feedback, and the YM2612's feedback is on operator 1.
+        check(engineOperatorForChip(0) == FM_OPERATORS - 1,
+              "chip operator 1 becomes the engine's feedback operator");
+
+        const FMOperator& op1 = fm.operators[5];
+        const FMOperator& op2 = fm.operators[4];
+        const FMOperator& op3 = fm.operators[3];
+        const FMOperator& op4 = fm.operators[2];
+
+        check(op1.enabled && op2.enabled && op3.enabled && op4.enabled,
+              "all four operators arrive");
+        check(!fm.operators[0].enabled && !fm.operators[1].enabled,
+              "and the two the engine has spare are left off rather than "
+              "filled with sound the file does not contain");
+
+        check(std::fabs(op1.ratio - 3.0f) < 1e-5f,
+              "a multiple of three is a ratio of three");
+        check(std::fabs(op3.ratio - 0.5f) < 1e-5f,
+              "and a multiple of zero is a half, which is the one special "
+              "case in the whole table");
+
+        // TL is attenuation: bigger is quieter. Reading it as a gain would
+        // turn every modulator up and every carrier down.
+        check(op2.level > op1.level,
+              "TL 0 is louder than TL 40 (" + std::to_string(op2.level) +
+                  " against " + std::to_string(op1.level) + ")");
+        check(std::fabs(op2.level - 1.0f) < 1e-5f, "and TL 0 is full level");
+
+        // Rates count DOWN to a time: a high rate is a fast segment. Read
+        // backwards, a slow pad becomes a click and nothing else complains.
+        check(op1.attack < op2.attack,
+              "attack rate 31 is faster than rate 18 (" +
+                  std::to_string(op1.attack) + "s against " +
+                  std::to_string(op2.attack) + "s)");
+
+        check(op3.detuneCents < 0.0f,
+              "detune 5 is on the negative side, got " +
+                  std::to_string(op3.detuneCents));
+        check(fm.operators[4].detuneCents == 0.0f,
+              "and detune 0 is no detune at all");
+
+        // Sustain level is also attenuation, and its top code is silence
+        // rather than a very quiet level.
+        YMPatch silent = patch;
+        silent.operators[1].sustainLevel = 15;
+        silent.operators[1].sustainRate = 0;
+        FMPatch silentFm;
+        ymPatchToFM(silent, silentFm);
+        check(silentFm.operators[4].sustain == 0.0f,
+              "a sustain level of 15 is silence, not a quiet note that never "
+              "stops");
+
+        // Algorithm 4 is two pairs, and it has to arrive as two pairs.
+        check(fm.algorithm.modulation[5][4] > 0.0f,
+              "operator 1 modulates operator 2");
+        check(fm.algorithm.modulation[3][2] > 0.0f,
+              "and operator 3 modulates operator 4");
+        check(fm.algorithm.modulation[5][2] == 0.0f,
+              "and the pairs stay separate");
+        check(fm.algorithm.carrier[4] > 0.0f && fm.algorithm.carrier[2] > 0.0f,
+              "both pairs are heard");
+        check(fm.algorithm.carrier[5] == 0.0f && fm.algorithm.carrier[3] == 0.0f,
+              "and the modulators are not");
+
+        check(std::fabs(fm.algorithm.feedback - 6.0f / 7.0f) < 1e-5f,
+              "feedback arrives scaled to the engine's range");
+
+        /*
+         * Every modulator must have a higher engine index than what it
+         * modulates.
+         *
+         * Not a style rule: the engine evaluates from operator 5 down to 0
+         * in one pass, so a link the other way reads an output that has not
+         * been computed yet. It would not crash - it would quietly use last
+         * sample's value, and the patch would be subtly wrong in a way
+         * nothing points at.
+         */
+        bool ordered = true;
+        for (int m = 0; m < FM_OPERATORS; ++m) {
+            for (int c = 0; c < FM_OPERATORS; ++c) {
+                if (fm.algorithm.modulation[size_t(m)][size_t(c)] != 0.0f &&
+                    m <= c) {
+                    ordered = false;
+                }
+            }
+        }
+        check(ordered,
+              "every modulation link runs downward, which is the only "
+              "direction the engine can evaluate in one pass");
+
+        // Carriers share the output rather than stacking, so an additive
+        // algorithm is not four times louder than a chained one.
+        YMPatch additive = patch;
+        additive.algorithm = 7;
+        FMPatch additiveFm;
+        ymPatchToFM(additive, additiveFm);
+        float total = 0.0f;
+        for (int i = 0; i < FM_OPERATORS; ++i) {
+            total += additiveFm.algorithm.carrier[size_t(i)];
+        }
+        check(std::fabs(total - 1.0f) < 1e-4f,
+              "the carrier weights sum to one whatever the algorithm, got " +
+                  std::to_string(total));
+    }
+
+    // ---- Through a file, and back out ---------------------------------------
+    {
+        std::vector<uint8_t> bytes;
+        buildTFI(bytes);
+
+        const std::string path = testPath("import-me.tfi");
+        {
+            std::ofstream file(path, std::ios::binary);
+            file.write(reinterpret_cast<const char*>(bytes.data()),
+                       static_cast<std::streamsize>(bytes.size()));
+        }
+
+        FMPatch fm;
+        std::string name;
+        check(importFMPatchFile(path, fm, &name) == ChipImportError::Ok,
+              "a .tfi on disk imports");
+        check(!name.empty() &&
+              name.find("import-me") != std::string::npos &&
+              name.find(".tfi") == std::string::npos &&
+              name.find('/') == std::string::npos &&
+              name.find('\\') == std::string::npos,
+              "and takes its name from the file, with the directory and the "
+              "extension stripped - the format carries no name of its own. "
+              "Got '" + name + "'");
+
+        // Round trip: the register values that came in are the ones that go
+        // out, so a patch imported and exported unedited is the same bytes.
+        YMPatch patch;
+        check(loadYMPatchFile(path, patch) == ChipImportError::Ok,
+              "it loads as registers too");
+
+        const std::string outPath = testPath("export-me.tfi");
+        check(saveTFIFile(outPath, patch), "and saves back out");
+
+        std::ifstream check1(outPath, std::ios::binary);
+        std::vector<uint8_t> written((std::istreambuf_iterator<char>(check1)),
+                                     std::istreambuf_iterator<char>());
+        check(written.size() == TFI_SIZE, "at the right length");
+        check(written == bytes,
+              "and byte for byte identical - a patch that survives a trip "
+              "through this program can go back to the tracker it came from");
+
+        std::remove(path.c_str());
+        std::remove(outPath.c_str());
+    }
+
+    // ---- A missing file says so ----------------------------------------------
+    {
+        FMPatch fm;
+        check(importFMPatchFile(testPath("no-such-patch.tfi"), fm) ==
+                  ChipImportError::FileNotFound,
+              "a missing file is reported as missing rather than as garbage");
+    }
+
+    // ---- It reaches the audio ------------------------------------------------
+    //
+    // The structural guard: an importer that produces a correct FMPatch
+    // nothing plays is a parser.
+    {
+        auto render = [](bool imported) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+
+            p.channels[0].oscillator.type = OscillatorType::FMSynth;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+
+            if (imported) {
+                std::vector<uint8_t> bytes(TFI_SIZE, 0);
+                bytes[0] = 0;     // a straight chain, the brightest routing
+                bytes[1] = 7;     // maximum feedback
+                const uint8_t op[10] = {7, 0, 20, 0, 31, 4, 0, 6, 2, 0};
+                for (int i = 0; i < 4; ++i) {
+                    std::memcpy(&bytes[2 + i * 10], op, 10);
+                }
+                YMPatch patch;
+                if (parseYMPatch(bytes.data(), bytes.size(), patch) ==
+                    ChipImportError::Ok) {
+                    ymPatchToFM(patch, p.channels[0].oscillator.fm);
+                }
+            }
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 50;
+            note.startTime = 0.0f;
+            note.duration = 4.0f;
+            note.oscillatorType = OscillatorType::FMSynth;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512), collected;
+            for (int b = 0; b < 40; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                if (b >= 5) collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> stock = render(false);
+        const std::vector<float> loaded = render(true);
+
+        double difference = 0.0;
+        double peak = 0.0;
+        const size_t n = std::min(stock.size(), loaded.size());
+        for (size_t i = 0; i < n; ++i) {
+            difference += std::fabs(double(stock[i]) - double(loaded[i]));
+            peak = std::max(peak, std::fabs(double(loaded[i])));
+        }
+        check(n > 0 && difference / double(n) > 1e-4,
+              "an imported patch changes what the FM channel sounds like");
+        check(peak > 0.01,
+              "and it makes a sound rather than importing silence, peak " +
+                  std::to_string(peak));
+
+        bool finite = true;
+        for (float v : loaded) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and nothing about it is NaN");
     }
 }
 
@@ -24245,6 +24657,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testChipInstrumentImport();
     testScopes();
     testWaveTools();
     testNoteFX();

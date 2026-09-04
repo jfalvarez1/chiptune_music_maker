@@ -22,6 +22,7 @@
 #include "PluginHost.h"
 #include "VoiceMode.h"
 #include "Showcase.h"
+#include "ChipInstruments.h"
 #include "Mastering.h"
 #include "LoopRange.h"
 #include "Snap.h"
@@ -2581,6 +2582,10 @@ static bool g_ExpandEffectRack = false;
 // closed header shows nothing about what is inside it, and a headless test
 // that never opens one never draws the widgets that can break.
 static bool g_ExpandWaveTools = false;
+
+// What the last chip-patch import did, shown until dismissed. An import that
+// was refused and looks like nothing happening is worse than an error.
+static std::string g_ChipImportMessage;
 
 // Same, for the modulation matrix's tree.
 static bool g_ExpandModulation = false;
@@ -14374,6 +14379,58 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
                     ImGui::SetTooltip("%s", FM_PRESETS[i].description);
                 }
             }
+
+            /*
+             * Or from somebody else's patch.
+             *
+             * There are decades of YM2612 voicings in the world as .tfi and
+             * .vgi files, which every Mega Drive tracker reads and writes.
+             * Opening one is a bass or a brass stab arriving in one click
+             * rather than after forty sliders.
+             */
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Open .tfi / .vgi")) {
+                const std::string path = openFileDialog(
+                    "Mega Drive patch\0*.tfi;*.vgi\0All files\0*.*\0", "tfi");
+                if (!path.empty()) {
+                    FMPatch imported;
+                    std::string patchName;
+                    const ChipImportError result =
+                        importFMPatchFile(path, imported, &patchName);
+
+                    if (result == ChipImportError::Ok) {
+                        g_UndoHistory.saveState(project, "Import FM Patch");
+                        osc.fm = imported;
+                        g_ChipImportMessage =
+                            "Loaded " + patchName +
+                            " - a translation, not the chip: key scaling, "
+                            "SSG-EG and the LFO have nowhere to go here.";
+                        seq.updateChannelConfigs();
+                    } else {
+                        // Said plainly. A refused import that looks like
+                        // nothing happening is worse than an error.
+                        g_ChipImportMessage =
+                            std::string("Could not import: ") +
+                            chipImportErrorText(result);
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Import a YM2612 patch from TFM Music Maker or VGM Music\n"
+                    "Maker. Four operators, the algorithm and the envelopes\n"
+                    "come across; key scaling, SSG-EG and the chip LFO have\n"
+                    "no equivalent here and are dropped.");
+            }
+
+            if (!g_ChipImportMessage.empty()) {
+                ImGui::TextWrapped("%s", g_ChipImportMessage.c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("x##chipimport")) {
+                    g_ChipImportMessage.clear();
+                }
+            }
+
             ImGui::Separator();
 
             ImGui::SetNextItemWidth(230);
