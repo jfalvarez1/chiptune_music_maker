@@ -7,7 +7,11 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
-## [Unreleased]
+## [3.11.0] - 2026-09-03 - "Rack"
+
+A second rack that changes which notes play, a wavetable editor you can edit
+in rather than only draw in, a scope on every channel, and the ability to
+open somebody else's Mega Drive patch.
 
 ### Added
 
