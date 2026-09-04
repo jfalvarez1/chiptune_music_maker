@@ -1004,13 +1004,65 @@ public:
         return input * gain * makeupGain;
     }
 
+    /*
+     * Both channels through one envelope. For the master bus.
+     *
+     * Calling process() twice, once per channel, was what the master chain
+     * did, and it is wrong twice over. The envelope is a single member, so
+     * two calls per frame advance it twice - every attack and release time
+     * was half what the parameter said. And the gain reduction then followed
+     * whichever channel was last, so a loud moment on the right pulled the
+     * left down too, arbitrarily.
+     *
+     * Detecting on the louder of the two and applying that one gain to both
+     * is what a mastering compressor does. Reducing them independently moves
+     * the image every time the sides differ, which on a mix with a panned
+     * lead is audible as the whole picture swaying.
+     */
+    void processStereo(float& left, float& right) {
+        const float detector = std::max(std::fabs(left), std::fabs(right));
+
+        if (detector > m_envelope) {
+            const float attackCoef =
+                std::exp(-1.0f / (attack * m_sampleRate + 0.001f));
+            m_envelope = attackCoef * m_envelope + (1.0f - attackCoef) * detector;
+        } else {
+            const float releaseCoef =
+                std::exp(-1.0f / (release * m_sampleRate + 0.001f));
+            m_envelope = releaseCoef * m_envelope + (1.0f - releaseCoef) * detector;
+        }
+
+        const float safeThreshold = std::max(1e-4f, threshold);
+        const float safeRatio = std::max(1.0f, ratio);
+
+        float gain = 1.0f;
+        if (m_envelope > safeThreshold) {
+            const float over = m_envelope - safeThreshold;
+            const float target = safeThreshold + over / safeRatio;
+            gain = target / m_envelope;
+        }
+        gain = std::clamp(gain, 0.0f, 1.0f);
+
+        m_lastGain = gain;
+
+        left *= gain * makeupGain;
+        right *= gain * makeupGain;
+    }
+
+    // How hard it is working, in dB, for a meter. Zero when it is not.
+    float gainReductionDB() const {
+        return 20.0f * std::log10(std::max(m_lastGain, 1e-4f));
+    }
+
     void reset() {
         m_envelope = 0.0f;
+        m_lastGain = 1.0f;
     }
 
 private:
     float m_sampleRate = 44100.0f;
     float m_envelope = 0.0f;
+    float m_lastGain = 1.0f;
 };
 
 // ============================================================================

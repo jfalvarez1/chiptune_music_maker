@@ -143,6 +143,31 @@ struct Biquad {
         a2 = ((A + 1.0f) - (A - 1.0f) * cosw - 2.0f * std::sqrt(A) * alpha) / a0;
     }
 
+    /*
+     * A second-order high-pass, RBJ.
+     *
+     * Added for K-weighting, whose second stage is a high-pass at 38 Hz with
+     * Q 0.5 - the part of BS.1770 that stops low frequencies counting
+     * towards loudness for more than they are heard as. Useful anywhere a
+     * rumble filter is wanted, which is why it lives here rather than beside
+     * the meter.
+     */
+    void setHighPass(float frequency, float q, float sampleRate) {
+        const float rate = (sampleRate > 1.0f) ? sampleRate : 44100.0f;
+        const float f = std::clamp(frequency, 1.0f, rate * 0.49f);
+        const float safeQ = std::clamp(q, 0.1f, 18.0f);
+        const float omega = 2.0f * PI * f / rate;
+        const float cosw = std::cos(omega);
+        const float alpha = std::sin(omega) / (2.0f * safeQ);
+
+        const float a0 = 1.0f + alpha;
+        b0 = ((1.0f + cosw) * 0.5f) / a0;
+        b1 = (-(1.0f + cosw)) / a0;
+        b2 = ((1.0f + cosw) * 0.5f) / a0;
+        a1 = (-2.0f * cosw) / a0;
+        a2 = (1.0f - alpha) / a0;
+    }
+
     // A bandpass used only for measurement - the dynamic EQ's detector needs
     // to know how loud one band is without altering the audio.
     void setBandpass(float frequency, float q, float sampleRate) {

@@ -516,9 +516,33 @@ public:
             // Apply master bus effects (EQ, Compressor, Limiter)
             m_masterEffects.process(left, right);
 
-            // Soft clip (in case limiter is disabled)
-            left = std::tanh(left);
-            right = std::tanh(right);
+            /*
+             * A safety net, and only that.
+             *
+             * This used to run unconditionally, after the limiter, on every
+             * project. tanh(0.966) is 0.747, so a limiter set to a -0.3 dB
+             * ceiling actually delivered -2.5 dBFS and the top two decibels
+             * of everything were soft-clipped a second time. It also made
+             * both of the tests that check for clipping vacuous, because
+             * |tanh(x)| < 1 for every finite x - they could not fail no
+             * matter what the master chain did.
+             *
+             * The limiter's job is the ceiling. This is what catches a
+             * project with the limiter switched off, and it stays out of the
+             * way of one where it is on.
+             */
+            if (!m_masterEffects.limiterEnabled) {
+                left = std::tanh(left);
+                right = std::tanh(right);
+            } else {
+                // Even so, nothing leaves here outside the representable
+                // range: a NaN from anywhere upstream must not reach a
+                // sound card.
+                if (!std::isfinite(left)) left = 0.0f;
+                if (!std::isfinite(right)) right = 0.0f;
+                left = std::clamp(left, -1.0f, 1.0f);
+                right = std::clamp(right, -1.0f, 1.0f);
+            }
 
             // Feed to spectrum analyzer for visualization
             m_spectrumAnalyzer.process(left, right);
@@ -960,7 +984,26 @@ public:
         m_masterEffects.stereoWidth.width = m_project->masterWidth;
         m_masterEffects.saturationEnabled = m_project->masterSaturationEnabled;
         m_masterEffects.saturator.drive = m_project->masterSaturationDrive;
+
+        // Fold the new settings into the coefficients the audio thread
+        // reads. The limiter's ceiling, lookahead and release all resolve
+        // here rather than being recomputed per sample, which is what the
+        // old one did with a pow() and two exp() calls.
+        m_masterEffects.prepare();
     }
+
+    // Loudness of the mix, measured to BS.1770 rather than guessed at.
+    float masterLoudnessLUFS() const { return m_masterEffects.getLUFS(); }
+    float masterShortTermLUFS() const {
+        return m_masterEffects.lufsMeter.shortTerm();
+    }
+    float masterLoudnessRange() const {
+        return m_masterEffects.lufsMeter.loudnessRange();
+    }
+    float masterLimiterReductionDB() const {
+        return m_masterEffects.getLimiterGainReductionDB();
+    }
+    void resetLoudness() { m_masterEffects.lufsMeter.reset(); }
 
 private:
     // ========================================================================

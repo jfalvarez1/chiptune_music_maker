@@ -22278,6 +22278,370 @@ static void testClickingHeadless() {
 }
 
 // ============================================================================
+// The master chain
+//
+// Everything here measures the OUTPUT. The suite already had mastering
+// tests and every one of them passed while the limiter was a hard clipper,
+// the compressor's time constants were half what they said, and a tanh
+// after the limiter was quietly costing 2.2 dB - because they asserted
+// flags, table values, and `peak <= 1.0f` on a signal that had just been
+// through tanh, which cannot exceed 1 by definition.
+// ============================================================================
+static void testMasterChain() {
+    beginTest("Master chain");
+
+    constexpr float SR = 44100.0f;
+
+    auto sine = [](std::vector<float>& out, int count, float hz, float amplitude,
+                   float sampleRate = 44100.0f) {
+        out.resize(static_cast<size_t>(count));
+        for (int i = 0; i < count; ++i) {
+            out[static_cast<size_t>(i)] =
+                amplitude * std::sin(6.2831853f * hz * float(i) / sampleRate);
+        }
+    };
+
+    auto peakOf = [](const std::vector<float>& v, size_t from = 0) {
+        float peak = 0.0f;
+        for (size_t i = from; i < v.size(); ++i) peak = std::max(peak, std::fabs(v[i]));
+        return peak;
+    };
+    auto rmsOf = [](const std::vector<float>& v, size_t from = 0) {
+        double sum = 0.0;
+        size_t n = 0;
+        for (size_t i = from; i < v.size(); ++i) { sum += double(v[i]) * v[i]; ++n; }
+        return (n > 0) ? std::sqrt(sum / double(n)) : 0.0;
+    };
+
+    // ---- The limiter is a limiter, not a clipper ----------------------------
+    //
+    // The decisive measurement is CREST FACTOR. A sine's peak is 1.414 times
+    // its RMS. A limiter scales the whole waveform, so that ratio survives.
+    // A clipper flattens the tops, which raises RMS against peak and drives
+    // the ratio toward 1 - and a square wave, which is what a hard clipper
+    // makes of a loud sine, has a crest factor of exactly 1.
+    {
+        auto limiterPtr = std::make_unique<Limiter>();
+        Limiter& limiter = *limiterPtr;
+        limiter.ceiling = -1.0f;
+        limiter.release = 0.05f;
+        limiter.setSampleRate(SR);
+
+        std::vector<float> input;
+        sine(input, 22050, 220.0f, 2.0f);   // 6 dB over full scale
+
+        std::vector<float> output(input.size());
+        for (size_t i = 0; i < input.size(); ++i) {
+            float l = input[i];
+            float r = input[i];
+            limiter.processStereo(l, r);
+            output[i] = l;
+        }
+
+        const float ceilingLinear = std::pow(10.0f, -1.0f / 20.0f);
+
+        // Measured past the first tenth of a second, so the envelope has
+        // settled and this is the steady state rather than the onset.
+        const size_t from = 4410;
+        const float peak = peakOf(output, from);
+        const double rms = rmsOf(output, from);
+        const double crest = (rms > 1e-9) ? double(peak) / rms : 0.0;
+
+        check(peak <= ceilingLinear + 1e-4f,
+              "nothing gets past the ceiling: peak " + std::to_string(peak) +
+                  " against " + std::to_string(ceilingLinear));
+
+        check(crest > 1.30,
+              "and the waveform keeps its shape - crest factor " +
+                  std::to_string(crest) +
+                  ", where a sine is 1.414 and a hard-clipped one tends to "
+                  "1.0. This is the check that says limiter rather than "
+                  "clipper.");
+
+        // The old implementation, for comparison: an envelope that reaches
+        // its target in one sample IS the clipper, and it fails the above.
+        {
+            std::vector<float> clipped(input.size());
+            for (size_t i = 0; i < input.size(); ++i) {
+                clipped[i] = std::clamp(input[i], -ceilingLinear, ceilingLinear);
+            }
+            const float clippedPeak = peakOf(clipped, from);
+            const double clippedRms = rmsOf(clipped, from);
+            const double clippedCrest = double(clippedPeak) / clippedRms;
+            check(clippedCrest < 1.15,
+                  "and a hard clip of the same signal measures " +
+                      std::to_string(clippedCrest) +
+                      ", so the test can tell the two apart");
+        }
+    }
+
+    // ---- The release parameter does something -------------------------------
+    //
+    // It was inert. Exposed in every profile, every preset and the UI, and
+    // read by an expression that made the envelope settle in one sample
+    // whatever it was set to.
+    {
+        auto measureRecovery = [&](float release) {
+            auto limiterPtr = std::make_unique<Limiter>();
+            Limiter& limiter = *limiterPtr;
+            limiter.ceiling = -6.0f;
+            limiter.release = release;
+            limiter.setSampleRate(SR);
+
+            // A loud burst, then something quiet: how long until the quiet
+            // part is back at full level?
+            for (int i = 0; i < 4410; ++i) {
+                float l = 2.0f, r = 2.0f;
+                limiter.processStereo(l, r);
+            }
+
+            int samples = 0;
+            for (int i = 0; i < 44100; ++i) {
+                float l = 0.05f, r = 0.05f;
+                limiter.processStereo(l, r);
+                ++samples;
+                if (limiter.getGainReductionDB() > -0.1f) break;
+            }
+            return samples;
+        };
+
+        const int fast = measureRecovery(0.01f);
+        const int slow = measureRecovery(0.5f);
+
+        check(slow > fast * 3,
+              "a long release recovers slower than a short one: " +
+                  std::to_string(slow) + " samples against " +
+                  std::to_string(fast) +
+                  ". This was inert - the parameter was read and had no "
+                  "effect at any value.");
+    }
+
+    // ---- One envelope across both channels ----------------------------------
+    //
+    // Reducing the sides independently moves the image every time they
+    // differ. With a loud left and a quiet right, the right has to come down
+    // by the same amount even though it is nowhere near the ceiling.
+    {
+        auto limiterPtr = std::make_unique<Limiter>();
+        Limiter& limiter = *limiterPtr;
+        limiter.ceiling = -6.0f;
+        limiter.setSampleRate(SR);
+
+        float lastLeft = 0.0f, lastRight = 0.0f;
+        for (int i = 0; i < 8820; ++i) {
+            float l = 1.0f;      // well over the ceiling
+            float r = 0.1f;      // well under it
+            limiter.processStereo(l, r);
+            lastLeft = l;
+            lastRight = r;
+        }
+
+        const float leftGain = lastLeft / 1.0f;
+        const float rightGain = lastRight / 0.1f;
+        check(std::fabs(leftGain - rightGain) < 0.02f,
+              "both channels are reduced by the same amount - left " +
+                  std::to_string(leftGain) + ", right " +
+                  std::to_string(rightGain) +
+                  ". Independent reduction sways the stereo image.");
+        check(rightGain < 0.95f,
+              "including the quiet one, which is the point");
+    }
+
+    // ---- Loudness, measured rather than asserted ----------------------------
+    {
+        auto meterPtr = std::make_unique<LoudnessMeter>();
+        LoudnessMeter& meter = *meterPtr;
+        meter.setSampleRate(SR);
+
+        auto measure = [&](float hz, float amplitude, float seconds,
+                           bool rightSilent = false) {
+            meter.reset();
+            const int count = static_cast<int>(seconds * SR);
+            for (int i = 0; i < count; ++i) {
+                const float s =
+                    amplitude * std::sin(6.2831853f * hz * float(i) / SR);
+                meter.process(s, rightSilent ? 0.0f : s);
+            }
+            return meter.integrated();
+        };
+
+        const float loud = measure(1000.0f, 0.1f, 5.0f);
+        check(loud > -24.0f && loud < -15.0f,
+              "a -20 dBFS 1 kHz tone on both channels measures near -20 "
+              "LUFS, got " + std::to_string(loud));
+
+        // Doubling the amplitude is exactly 6.02 dB. Nothing about gating or
+        // weighting changes that, so it is the cleanest possible check that
+        // the arithmetic is right.
+        const float doubled = measure(1000.0f, 0.2f, 5.0f);
+        check(std::fabs((doubled - loud) - 6.02f) < 0.15f,
+              "doubling the amplitude raises it by 6.02 dB, got " +
+                  std::to_string(doubled - loud));
+
+        /*
+         * Two channels are 3 dB louder than one.
+         *
+         * The old meter averaged the two signals and then squared, where the
+         * standard sums the channel powers. That reads 3 dB low on anything
+         * correlated - which is most music - so every loudness number the
+         * program produced was wrong in the same direction before the
+         * missing K-weighting was even counted.
+         */
+        const float oneChannel = measure(1000.0f, 0.1f, 5.0f, true);
+        check(std::fabs((loud - oneChannel) - 3.01f) < 0.15f,
+              "two identical channels are 3.01 dB louder than one, got " +
+                  std::to_string(loud - oneChannel));
+
+        /*
+         * K-weighting exists.
+         *
+         * The filter is the whole reason LUFS tracks how loud something
+         * SOUNDS rather than how much energy it contains. Without it a
+         * bass-heavy mix measures far louder than it is heard as. A 60 Hz
+         * tone and a 3 kHz tone at the same amplitude must not measure the
+         * same.
+         */
+        const float low = measure(60.0f, 0.2f, 5.0f);
+        const float high = measure(3000.0f, 0.2f, 5.0f);
+        check(high - low > 6.0f,
+              "a 3 kHz tone measures much louder than a 60 Hz one at the "
+              "same amplitude - " + std::to_string(high) + " against " +
+                  std::to_string(low) + " LUFS. Without K-weighting these "
+                  "are identical, which is what the old meter reported.");
+
+        /*
+         * Gating.
+         *
+         * Half a track of silence must not halve its loudness. The relative
+         * gate is what makes the integrated number describe the music rather
+         * than the amount of space around it.
+         */
+        {
+            meter.reset();
+            const int half = static_cast<int>(4.0f * SR);
+            for (int i = 0; i < half; ++i) {
+                const float s = 0.1f * std::sin(6.2831853f * 1000.0f * float(i) / SR);
+                meter.process(s, s);
+            }
+            const float musicOnly = meter.integrated();
+
+            for (int i = 0; i < half; ++i) meter.process(0.0f, 0.0f);
+            const float withSilence = meter.integrated();
+
+            check(std::fabs(withSilence - musicOnly) < 1.0f,
+                  "four seconds of silence after four seconds of music barely "
+                  "moves the integrated loudness: " +
+                      std::to_string(musicOnly) + " then " +
+                      std::to_string(withSilence) +
+                      ". Ungated it would drop about 3 dB.");
+        }
+
+        // And a loudness range exists on something that has one.
+        {
+            meter.reset();
+            for (int i = 0; i < static_cast<int>(4.0f * SR); ++i) {
+                const float amplitude = (i < static_cast<int>(2.0f * SR)) ? 0.05f : 0.4f;
+                const float s =
+                    amplitude * std::sin(6.2831853f * 1000.0f * float(i) / SR);
+                meter.process(s, s);
+            }
+            const float range = meter.loudnessRange();
+            check(range > 4.0f,
+                  "a quiet half followed by a loud half has a loudness range, "
+                  "got " + std::to_string(range) + " LU");
+        }
+    }
+
+    // ---- Through the mixer: the ceiling is real -----------------------------
+    //
+    // The assertion the old tests could not make. `peak <= 1.0f` was vacuous
+    // because a tanh sat after the limiter and |tanh(x)| < 1 always. What
+    // matters is whether the peak matches the CEILING that was asked for.
+    {
+        auto render = [&](float ceilingDb, bool limiterOn) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterEQEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterWidthEnabled = false;
+            p.masterSaturationEnabled = false;
+            p.masterLimiterEnabled = limiterOn;
+            p.masterLimiterCeiling = ceilingDb;
+            p.masterVolume = 1.0f;
+
+            // Loud enough that the limiter certainly has work to do.
+            for (int ch = 0; ch < 4; ++ch) {
+                p.channels[static_cast<size_t>(ch)].volume = 1.0f;
+                p.channels[static_cast<size_t>(ch)].pan = 0.0f;
+                p.channels[static_cast<size_t>(ch)].envelope.attack = 0.0f;
+                p.channels[static_cast<size_t>(ch)].envelope.sustain = 1.0f;
+            }
+
+            p.patterns.clear();
+            Pattern pattern;
+            for (int i = 0; i < 4; ++i) {
+                Note note;
+                note.pitch = 48 + i * 5;
+                note.startTime = 0.0f;
+                note.duration = 4.0f;
+                note.oscillatorType = OscillatorType::Sawtooth;
+                pattern.notes.push_back(note);
+            }
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            for (int ch = 0; ch < 4; ++ch) {
+                p.arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0});
+            }
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(SR);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512), collected;
+            for (int b = 0; b < 60; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                if (b >= 10) collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> at1 = render(-1.0f, true);
+        const float peak1 = peakOf(at1);
+        const float want1 = std::pow(10.0f, -1.0f / 20.0f);
+
+        check(peak1 <= want1 + 1e-3f,
+              "a -1 dB ceiling holds: peak " + std::to_string(peak1) +
+                  " against " + std::to_string(want1));
+        check(peak1 > want1 - 0.05f,
+              "and the mix actually reaches it, rather than the tanh that "
+              "used to sit after the limiter costing 2.2 dB - got " +
+                  std::to_string(peak1));
+
+        const std::vector<float> at6 = render(-6.0f, true);
+        const float peak6 = peakOf(at6);
+        const float want6 = std::pow(10.0f, -6.0f / 20.0f);
+        check(peak6 <= want6 + 1e-3f && peak6 > want6 - 0.05f,
+              "and so does a -6 dB ceiling: " + std::to_string(peak6) +
+                  " against " + std::to_string(want6));
+
+        check(peak1 > peak6 + 0.2f,
+              "the two ceilings really are different, which the old test "
+              "could not have detected");
+
+        // With the limiter off, the soft clip is still there as a safety net.
+        const std::vector<float> unlimited = render(-1.0f, false);
+        bool safe = true;
+        for (float v : unlimited) if (!std::isfinite(v) || std::fabs(v) > 1.0f) safe = false;
+        check(safe,
+              "and with the limiter switched off nothing leaves the mixer "
+              "outside the representable range");
+    }
+}
+
+// ============================================================================
 // Mega Drive patch import
 //
 // Two things have to be right and they fail differently. The parse has to
@@ -24657,6 +25021,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testMasterChain();
     testChipInstrumentImport();
     testScopes();
     testWaveTools();
