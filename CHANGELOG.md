@@ -11,6 +11,26 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Wave tools and Shapes, in the wavetable editor.** It could draw a wave by
+  hand and initialise four presets; everything past that was a matter of
+  redrawing 256 samples with a mouse. Now: scale the wave horizontally with a
+  choice of interpolation, shift it, smooth it, reverse it, invert it, and
+  remove its DC offset — a hand-drawn wave almost never averages to zero, and
+  one that does not thumps on every note and pulls on everything downstream
+  with memory.
+
+  **Fit to hardware** is the chiptune one. Reduce the wave to N held steps and
+  round every sample to N levels, and what comes out is something a real wave
+  channel could store: the Game Boy's is 32 steps of 4 bits. Not an effect
+  that sounds a bit like hardware — the output really does contain only the
+  values hardware could hold, and the test asserts it exactly.
+
+  **Shapes** builds a wave out of parts instead of drawing it: up to six
+  whole waveforms at chosen harmonics, each with amplitude, phase, pulse
+  width and an exponent that bends it toward its extremes without the
+  aliasing that clipping would produce. The chip limits apply after
+  normalising, so a wave built to 4 bits really is on the 4-bit grid.
+
 - **Note FX — a rack that changes which notes play.** The insert rack
   changes how a note sounds; this one changes what notes there are. A Chord
   module turns one written note into three; an Arpeggio turns those into a

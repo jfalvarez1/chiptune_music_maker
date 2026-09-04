@@ -21848,6 +21848,14 @@ static void testPanelsDrawHeadless() {
         {"Browser",        [](Project& p, UIState& u, Sequencer& s) { u.showBrowser = true; DrawBrowser(p, u, s); }},
         {"Shortcuts",      [](Project& p, UIState& u, Sequencer& s) { u.showShortcuts = true; DrawShortcutsPanel(p, u, s); }},
         {"Plugins",        [](Project& p, UIState& u, Sequencer& s) { u.showPlugins = true; DrawPluginsPanel(p, u, s); }},
+        // Both sections forced open, because a closed header draws none of
+        // the widgets inside it and a test that never opens one is testing
+        // the header.
+        {"Wavetable Editor", [](Project& p, UIState& u, Sequencer& s) {
+             g_ExpandWaveTools = true;
+             renderWavetableEditor(p, u, s);
+             g_ExpandWaveTools = false;
+         }},
         // With a rack already on the channel, so the per-module parameter
         // widgets are drawn rather than only the empty state.
         {"Note FX",        [](Project& p, UIState& u, Sequencer& s) {
@@ -22251,6 +22259,490 @@ static void testClickingHeadless() {
         // it is showing.
         check(project.channels[0].noteFX.size() == 2,
               "drawing the panel leaves the rack alone");
+    }
+}
+
+// ============================================================================
+// Wave tools
+//
+// The chip ones are the ones that matter, and they are the ones where
+// "close enough" is not good enough: a wave quantised to 16 levels either
+// contains only values a Game Boy could store, or it does not and the whole
+// point of the button is gone. So those are asserted exactly.
+// ============================================================================
+static void testWaveTools() {
+    beginTest("Wavetable shaping tools");
+
+    constexpr int SIZE = 256;
+
+    auto sine = [](float* out, int size, int harmonic = 1) {
+        for (int i = 0; i < size; ++i) {
+            out[i] = std::sin(6.28318530718f * float(harmonic) * float(i) /
+                              float(size));
+        }
+    };
+
+    // ---- Reading between samples wraps ---------------------------------------
+    //
+    // A wavetable is a loop: the sample after the last one is the first one.
+    // Clamping instead would flatten the seam, and a flat spot at the join is
+    // a slope discontinuity the oscillator walks over on every cycle.
+    {
+        float table[SIZE];
+        sine(table, SIZE);
+
+        const float justPastTheEnd =
+            waveSampleAt(table, SIZE, float(SIZE) - 0.5f, WaveInterp::Linear);
+        const float expected = (table[SIZE - 1] + table[0]) * 0.5f;
+        check(std::fabs(justPastTheEnd - expected) < 1e-5f,
+              "reading past the last sample wraps to the first, got " +
+                  std::to_string(justPastTheEnd) + " expected " +
+                  std::to_string(expected));
+
+        const float before = waveSampleAt(table, SIZE, -0.5f, WaveInterp::Linear);
+        check(std::fabs(before - expected) < 1e-5f,
+              "and reading before the start wraps the same way");
+
+        // Stepped mode really is stepped.
+        check(waveSampleAt(table, SIZE, 10.9f, WaveInterp::None) == table[10],
+              "with no interpolation, the value holds until the next sample");
+    }
+
+    // ---- Scale X -------------------------------------------------------------
+    {
+        float table[SIZE];
+        float twice[SIZE];
+        sine(table, SIZE);
+        sine(twice, SIZE, 2);
+
+        waveScaleX(table, SIZE, 2.0f, WaveInterp::Linear);
+
+        double worst = 0.0;
+        for (int i = 0; i < SIZE; ++i) {
+            worst = std::max(worst, std::fabs(double(table[i]) - double(twice[i])));
+        }
+        check(worst < 1e-4,
+              "doubling a sine gives the second harmonic exactly, worst "
+              "difference " + std::to_string(worst));
+
+        // In place would smear: the second half of the pass would read the
+        // first half's results. This is the check that the copy is real.
+        float saw[SIZE];
+        for (int i = 0; i < SIZE; ++i) saw[i] = 2.0f * float(i) / SIZE - 1.0f;
+        waveScaleX(saw, SIZE, 2.0f, WaveInterp::Linear);
+        check(std::fabs(saw[0] - (-1.0f)) < 1e-4f &&
+              std::fabs(saw[SIZE / 2] - (-1.0f)) < 1e-4f,
+              "a doubled saw restarts halfway through the table, which it "
+              "cannot do if the resample read its own output");
+    }
+
+    // ---- Offset X ------------------------------------------------------------
+    {
+        float table[SIZE];
+        sine(table, SIZE);
+        const float wasAtZero = table[0];
+
+        waveOffsetX(table, SIZE, 10);
+        check(std::fabs(table[10] - wasAtZero) < 1e-6f,
+              "a shift of ten moves sample zero to sample ten");
+
+        waveOffsetX(table, SIZE, -10);
+        check(std::fabs(table[0] - wasAtZero) < 1e-6f,
+              "and shifting back returns it, so nothing is lost off the end");
+    }
+
+    // ---- DC removal ----------------------------------------------------------
+    {
+        float table[SIZE];
+        sine(table, SIZE);
+        for (int i = 0; i < SIZE; ++i) table[i] = table[i] * 0.5f + 0.3f;
+
+        double before = 0.0;
+        for (int i = 0; i < SIZE; ++i) before += table[i];
+        check(std::fabs(before / SIZE - 0.3) < 1e-3,
+              "the test wave really does have an offset to remove");
+
+        waveRemoveDC(table, SIZE);
+
+        double after = 0.0;
+        for (int i = 0; i < SIZE; ++i) after += table[i];
+        check(std::fabs(after / SIZE) < 1e-5,
+              "and afterwards it averages to zero, got " +
+                  std::to_string(after / SIZE));
+    }
+
+    // ---- Quantise to hardware levels -----------------------------------------
+    //
+    // Exact, not approximate. A wave that claims to be 4-bit and is not is
+    // worse than one that never claimed it.
+    {
+        float table[SIZE];
+        sine(table, SIZE);
+        waveQuantiseLevels(table, SIZE, 16);
+
+        std::vector<float> distinct;
+        for (int i = 0; i < SIZE; ++i) {
+            bool seen = false;
+            for (float v : distinct) {
+                if (std::fabs(v - table[i]) < 1e-6f) { seen = true; break; }
+            }
+            if (!seen) distinct.push_back(table[i]);
+        }
+        check(distinct.size() <= 16,
+              "a wave quantised to 16 levels contains at most 16 distinct "
+              "values, got " + std::to_string(distinct.size()));
+
+        // Every value must sit exactly on a level, not near one.
+        bool onGrid = true;
+        for (int i = 0; i < SIZE; ++i) {
+            const float unit = (table[i] + 1.0f) * 0.5f * 15.0f;
+            if (std::fabs(unit - std::round(unit)) > 1e-4f) onGrid = false;
+        }
+        check(onGrid, "and every sample sits exactly on one of them");
+
+        // The extremes are reachable, and an odd count can represent silence.
+        float flat[SIZE];
+        for (int i = 0; i < SIZE; ++i) flat[i] = 0.0f;
+        waveQuantiseLevels(flat, SIZE, 17);
+        bool silent = true;
+        for (int i = 0; i < SIZE; ++i) if (flat[i] != 0.0f) silent = false;
+        check(silent,
+              "an odd number of levels can still represent silence - a "
+              "quantiser that cannot adds a DC offset to every wave it "
+              "touches");
+    }
+
+    // ---- Reduce to hardware steps --------------------------------------------
+    {
+        float table[SIZE];
+        sine(table, SIZE);
+        waveReduceSteps(table, SIZE, 32);
+
+        // 32 steps in 256 samples means each value is held for 8.
+        int runs = 1;
+        for (int i = 1; i < SIZE; ++i) {
+            if (table[i] != table[i - 1]) ++runs;
+        }
+        check(runs <= 32,
+              "reducing to 32 steps leaves at most 32 changes of value, got " +
+                  std::to_string(runs));
+
+        bool held = true;
+        for (int i = 0; i < SIZE; ++i) {
+            if (table[i] != table[(i / 8) * 8]) held = false;
+        }
+        check(held,
+              "and each step is held rather than interpolated, which is where "
+              "the harmonics that make it sound like hardware come from");
+    }
+
+    // ---- Both, which is what a Game Boy wave is ------------------------------
+    {
+        float table[SIZE];
+        sine(table, SIZE);
+        waveFitToChip(table, SIZE, 32, 16);
+
+        std::vector<float> distinct;
+        int runs = 1;
+        for (int i = 0; i < SIZE; ++i) {
+            if (i > 0 && table[i] != table[i - 1]) ++runs;
+            bool seen = false;
+            for (float v : distinct) {
+                if (std::fabs(v - table[i]) < 1e-6f) { seen = true; break; }
+            }
+            if (!seen) distinct.push_back(table[i]);
+        }
+        check(runs <= 32 && distinct.size() <= 16,
+              "a wave fitted to a Game Boy is 32 steps of 16 levels: got " +
+                  std::to_string(runs) + " steps, " +
+                  std::to_string(distinct.size()) + " levels");
+
+        // And it still sounds like the wave it came from.
+        float reference[SIZE];
+        sine(reference, SIZE);
+        double error = 0.0;
+        for (int i = 0; i < SIZE; ++i) {
+            error += std::fabs(double(table[i]) - double(reference[i]));
+        }
+        check(error / SIZE < 0.12,
+              "and it is still recognisably the same shape, mean error " +
+                  std::to_string(error / SIZE));
+    }
+
+    // ---- Smoothing is circular -----------------------------------------------
+    {
+        // A step exactly at the seam. Smoothing that treated the ends as
+        // edges would leave the corner there untouched - which is the one
+        // place a corner is audible on every single cycle.
+        float table[SIZE];
+        for (int i = 0; i < SIZE; ++i) table[i] = (i < SIZE / 2) ? 1.0f : -1.0f;
+
+        const float seamBefore = std::fabs(table[0] - table[SIZE - 1]);
+        waveSmooth(table, SIZE, 4);
+        const float seamAfter = std::fabs(table[0] - table[SIZE - 1]);
+
+        check(seamAfter < seamBefore * 0.9f,
+              "smoothing softens the join as well as the middle: " +
+                  std::to_string(seamBefore) + " -> " +
+                  std::to_string(seamAfter));
+    }
+
+    // ---- Nothing produces a table the oscillator cannot play ------------------
+    {
+        float table[SIZE];
+        for (int i = 0; i < SIZE; ++i) table[i] = 0.0f;
+
+        // Silence must not be amplified by a division by nearly nothing.
+        waveNormalise(table, SIZE);
+        bool stillSilent = true;
+        for (int i = 0; i < SIZE; ++i) if (table[i] != 0.0f) stillSilent = false;
+        check(stillSilent,
+              "normalising silence leaves it silent rather than turning "
+              "rounding noise into a square wave");
+
+        // Nonsense arguments are refused rather than acted on.
+        sine(table, SIZE);
+        float copy[SIZE];
+        for (int i = 0; i < SIZE; ++i) copy[i] = table[i];
+
+        waveScaleX(table, SIZE, 0.0f, WaveInterp::Linear);
+        waveScaleX(table, SIZE, std::numeric_limits<float>::quiet_NaN(),
+                   WaveInterp::Cubic);
+        waveScaleY(table, SIZE, std::numeric_limits<float>::infinity());
+        bool unchanged = true;
+        for (int i = 0; i < SIZE; ++i) {
+            if (table[i] != copy[i]) unchanged = false;
+        }
+        check(unchanged, "a zero, NaN or infinite factor changes nothing");
+    }
+
+    // ---- Shapes --------------------------------------------------------------
+    {
+        float table[SIZE];
+
+        // One sine component is a sine.
+        WaveShapeSpec spec;
+        spec.count = 1;
+        spec.components[0].kind = static_cast<int>(WaveShapeKind::Sine);
+        spec.components[0].harmonic = 1;
+        spec.components[0].amplitude = 1.0f;
+        spec.normalise = true;
+        renderWaveShapes(spec, table, SIZE);
+
+        float reference[SIZE];
+        sine(reference, SIZE);
+        double worst = 0.0;
+        for (int i = 0; i < SIZE; ++i) {
+            worst = std::max(worst, std::fabs(double(table[i]) - double(reference[i])));
+        }
+        check(worst < 1e-4, "a single sine component builds a sine, worst " +
+                                std::to_string(worst));
+
+        /*
+         * Odd harmonics of decreasing amplitude approach a square.
+         *
+         * The classic Fourier series, which is worth asserting because it is
+         * the thing additive synthesis is FOR: if the harmonic numbering or
+         * the phase were wrong, this would come out as anything but.
+         */
+        WaveShapeSpec square;
+        square.count = 4;
+        for (int i = 0; i < 4; ++i) {
+            const int harmonic = 1 + i * 2;      // 1, 3, 5, 7
+            square.components[i].kind = static_cast<int>(WaveShapeKind::Sine);
+            square.components[i].harmonic = harmonic;
+            square.components[i].amplitude = 1.0f / float(harmonic);
+        }
+        renderWaveShapes(square, table, SIZE);
+
+        // A square's first half is positive and its second half negative.
+        bool shaped = true;
+        for (int i = 8; i < SIZE / 2 - 8; ++i) if (table[i] <= 0.0f) shaped = false;
+        for (int i = SIZE / 2 + 8; i < SIZE - 8; ++i) if (table[i] >= 0.0f) shaped = false;
+        check(shaped, "four odd harmonics of a sine make a squarish wave");
+
+        // The exponent bends the magnitude and keeps the sign, so a
+        // symmetric wave stays symmetric.
+        WaveShapeSpec bent;
+        bent.count = 1;
+        bent.components[0].kind = static_cast<int>(WaveShapeKind::Sine);
+        bent.components[0].exponent = 0.3f;
+        bent.normalise = true;
+        renderWaveShapes(bent, table, SIZE);
+
+        bool symmetric = true;
+        for (int i = 1; i < SIZE / 2; ++i) {
+            if (std::fabs(table[i] + table[i + SIZE / 2]) > 1e-3f) symmetric = false;
+        }
+        check(symmetric,
+              "shaping keeps the sign, so it never turns a symmetric wave "
+              "into a lopsided one - a DC offset arriving from a tone control "
+              "is a thump nobody would connect to the control");
+
+        // Noise repeats within the table, because a wavetable whose cycle is
+        // not identical every time round is a sample, not a pitch.
+        WaveShapeSpec noisy;
+        noisy.count = 1;
+        noisy.components[0].kind = static_cast<int>(WaveShapeKind::Noise);
+        noisy.components[0].harmonic = 2;
+        renderWaveShapes(noisy, table, SIZE);
+        bool repeats = true;
+        for (int i = 0; i < SIZE / 2; ++i) {
+            if (std::fabs(table[i] - table[i + SIZE / 2]) > 1e-5f) repeats = false;
+        }
+        check(repeats,
+              "noise at the second harmonic is the same short burst twice, "
+              "not two different bursts");
+
+        // The chip constraints are applied after normalising, or the wave
+        // would be moved off the levels it was just snapped to.
+        WaveShapeSpec fitted;
+        fitted.count = 1;
+        fitted.components[0].kind = static_cast<int>(WaveShapeKind::Sine);
+        fitted.normalise = true;
+        fitted.steps = 32;
+        fitted.levels = 16;
+        renderWaveShapes(fitted, table, SIZE);
+
+        bool onGrid = true;
+        for (int i = 0; i < SIZE; ++i) {
+            const float unit = (table[i] + 1.0f) * 0.5f * 15.0f;
+            if (std::fabs(unit - std::round(unit)) > 1e-4f) onGrid = false;
+        }
+        check(onGrid,
+              "a shape built with chip limits really is on the level grid - "
+              "normalising afterwards would move every sample off it");
+
+        // An empty spec is silence, not garbage.
+        WaveShapeSpec nothing;
+        nothing.count = 0;
+        renderWaveShapes(nothing, table, SIZE);
+        bool silent = true;
+        for (int i = 0; i < SIZE; ++i) if (table[i] != 0.0f) silent = false;
+        check(silent, "no components is silence");
+
+        // And nothing it produces is unplayable.
+        WaveShapeSpec extreme;
+        extreme.count = MAX_WAVE_SHAPES;
+        for (int i = 0; i < MAX_WAVE_SHAPES; ++i) {
+            extreme.components[i].kind = i % WAVE_SHAPE_KIND_COUNT;
+            extreme.components[i].amplitude = 1.0f;
+            extreme.components[i].harmonic = 32;
+            extreme.components[i].exponent = 5.0f;
+        }
+        extreme.normalise = false;
+        renderWaveShapes(extreme, table, SIZE);
+        bool playable = true;
+        for (int i = 0; i < SIZE; ++i) {
+            if (!std::isfinite(table[i]) || std::fabs(table[i]) > 1.0f) {
+                playable = false;
+            }
+        }
+        check(playable,
+              "six components at full amplitude with no normalising still "
+              "come out inside -1..1");
+    }
+
+    // ---- It reaches the audio ------------------------------------------------
+    //
+    // The structural guard: a shaping tool that edits a table nothing reads
+    // is a drawing toy.
+    {
+        auto render = [](int mode) {   // 0 sine, 1 square, 2 chip-fitted sine
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.7f;
+
+            p.wavetableBanks.clear();
+            WavetableBank bank;
+            // Cleared on purpose. A default-constructed bank already holds
+            // sine, saw and square, so addTable() would make the drawn table
+            // the FOURTH one - and at morph 0 the oscillator reads the
+            // first. Written this way round, this test compared two renders
+            // of the same default sine and reported that the tool did
+            // nothing.
+            bank.tables.clear();
+            Wavetable table;
+            if (mode == 1) {
+                table.initSquare();
+            } else {
+                table.initSine();
+                if (mode == 2) {
+                    waveFitToChip(table.samples.data(), Wavetable::TABLE_SIZE, 8, 4);
+                }
+            }
+            bank.tables.push_back(table);
+            // Deliberately ONE table in the bank. A bank of one is what
+            // somebody who has just drawn their first wave has, and the
+            // morph blend has a separate code path for it.
+            p.wavetableBanks.push_back(bank);
+
+            p.channels[0].oscillator.type = OscillatorType::Custom;
+            p.channels[0].oscillator.wavetableBank = 0;
+            p.channels[0].oscillator.wavetableMorph = 0.0f;
+            p.channels[0].volume = 0.8f;
+            p.channels[0].pan = 0.0f;
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 48;
+            note.startTime = 0.0f;
+            note.duration = 4.0f;
+            note.oscillatorType = OscillatorType::Custom;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateWavetables();
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512), collected;
+            for (int b = 0; b < 40; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                if (b >= 10) collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        auto meanDifference = [](const std::vector<float>& a,
+                                 const std::vector<float>& b) {
+            const size_t n = std::min(a.size(), b.size());
+            if (n == 0) return 0.0;
+            double sum = 0.0;
+            for (size_t i = 0; i < n; ++i) {
+                sum += std::fabs(double(a[i]) - double(b[i]));
+            }
+            return sum / double(n);
+        };
+
+        const std::vector<float> smooth = render(0);
+        const std::vector<float> square = render(1);
+        const std::vector<float> stepped = render(2);
+
+        // The harness itself, first. If the table were not reaching the
+        // oscillator at all, every comparison below would be zero and would
+        // look like the tool doing nothing.
+        check(meanDifference(smooth, square) > 1e-4,
+              "the drawn table reaches the oscillator at all");
+
+        check(meanDifference(smooth, stepped) > 1e-4,
+              "and fitting one to hardware limits changes what comes out of "
+              "the mixer (mean difference " +
+                  std::to_string(meanDifference(smooth, stepped)) + ")");
+
+        bool finite = true;
+        for (float v : stepped) if (!std::isfinite(v)) { finite = false; break; }
+        check(finite, "and the result is finite");
     }
 }
 
@@ -23576,6 +24068,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testWaveTools();
     testNoteFX();
     testDelayCompensation();
     testPluginsPanel();

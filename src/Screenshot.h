@@ -174,6 +174,10 @@ struct CaptureRequest {
     // Open the Effect Rack, which is collapsed by default.
     bool expandFxRack = false;
 
+    // Open the wavetable editor's Wave Tools and Shapes sections, which are
+    // collapsed by default and are where all of its new widgets live.
+    bool expandWaveTools = false;
+
     // Put an audio clip on the timeline. The sample is synthesised in
     // memory rather than loaded from disk, so the shot does not depend
     // on a fixture file existing wherever this runs.
@@ -235,6 +239,7 @@ struct CaptureRequest {
 //   --ghosts             show cross-channel ghost notes
 //   --chip-panel         open the Chip Accuracy section
 //   --fx-rack            open the Effect Rack section
+//   --wave-tools         open the wavetable editor's Wave Tools and Shapes
 //   --audio-clip         put an audio clip on the arrangement
 //   --structure          add tempo/meter changes, markers and regions
 //   --instrument <name>  fm|wavetable|sampler|granular|drummodel|
@@ -289,6 +294,8 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
             request.expandChipPanel = true;
         } else if (arg == "--fx-rack") {
             request.expandFxRack = true;
+        } else if (arg == "--wave-tools") {
+            request.expandWaveTools = true;
         } else if (arg == "--audio-clip") {
             request.addAudioClip = true;
         } else if (arg == "--structure") {
@@ -374,6 +381,7 @@ inline void applyCaptureState(const CaptureRequest& request,
     if (request.showGhostNotes) ui.showGhostNotes = true;
     if (request.expandChipPanel) g_ExpandChipAccuracy = true;
     if (request.expandFxRack) g_ExpandEffectRack = true;
+    if (request.expandWaveTools) g_ExpandWaveTools = true;
     if (request.instrument == "modmatrix") g_ExpandModulation = true;
 
     // Showing off an engine means showing where it is found. The

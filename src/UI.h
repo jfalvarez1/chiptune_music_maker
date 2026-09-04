@@ -27,6 +27,7 @@
 #include "Snap.h"
 #include "Scales.h"
 #include "NoteTransforms.h"
+#include "WaveTools.h"
 #include "GhostNotes.h"
 #include "TrackerGrid.h"
 #include "Genres.h"
@@ -2575,6 +2576,11 @@ static bool g_ToolsScaleHighlight = true;
 // collapsed by default.
 static bool g_ExpandChipAccuracy = false;
 static bool g_ExpandEffectRack = false;
+
+// The wavetable editor's two new sections, for the same reason: a shot of a
+// closed header shows nothing about what is inside it, and a headless test
+// that never opens one never draws the widgets that can break.
+static bool g_ExpandWaveTools = false;
 
 // Same, for the modulation matrix's tree.
 static bool g_ExpandModulation = false;
@@ -19820,6 +19826,210 @@ inline void renderWavetableEditor(Project& project, UIState& uiState,
     ImGui::SameLine();
     if (ImGui::Button("Normalize", ImVec2(100, 0))) {
         currentTable.normalize();
+    }
+
+    ImGui::Separator();
+
+    // ========================================================================
+    // Wave tools
+    //
+    // Editing rather than drawing. Every one of these was previously a
+    // matter of redrawing 256 samples by hand.
+    // ========================================================================
+    {
+        float* samples = currentTable.samples.data();
+        constexpr int SIZE = Wavetable::TABLE_SIZE;
+
+        static int s_interp = static_cast<int>(WaveInterp::Linear);
+        bool edited = false;
+
+        if (g_ExpandWaveTools) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        if (ImGui::CollapsingHeader("Wave Tools")) {
+            ImGui::SetNextItemWidth(160);
+            ImGui::Combo("Interpolation", &s_interp,
+                         "None (stepped)\0Linear\0Cosine\0Cubic\0");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How Scale X reads between samples.\n"
+                    "None is stepped, and is the honest choice for chip work.");
+            }
+
+            const WaveInterp mode =
+                static_cast<WaveInterp>(std::clamp(s_interp, 0,
+                                                   WAVE_INTERP_COUNT - 1));
+
+            if (ImGui::Button("x2 cycles", ImVec2(100, 0))) {
+                waveScaleX(samples, SIZE, 2.0f, mode);
+                edited = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Two cycles of this wave in the table - an "
+                                  "octave up without changing the note");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Half", ImVec2(100, 0))) {
+                waveScaleX(samples, SIZE, 0.5f, mode);
+                edited = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Shift left", ImVec2(100, 0))) {
+                waveOffsetX(samples, SIZE, -SIZE / 16);
+                edited = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Shift right", ImVec2(100, 0))) {
+                waveOffsetX(samples, SIZE, SIZE / 16);
+                edited = true;
+            }
+
+            if (ImGui::Button("Smooth", ImVec2(100, 0))) {
+                waveSmooth(samples, SIZE, 2);
+                edited = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Invert", ImVec2(100, 0))) {
+                waveInvert(samples, SIZE);
+                edited = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reverse", ImVec2(100, 0))) {
+                waveReverse(samples, SIZE);
+                edited = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Remove DC", ImVec2(100, 0))) {
+                waveRemoveDC(samples, SIZE);
+                edited = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "A wave that does not average to zero thumps on every\n"
+                    "note and pulls on anything downstream with memory.\n"
+                    "Inaudible as a tone, very audible as everything else\n"
+                    "misbehaving.");
+            }
+
+            ImGui::Separator();
+
+            /*
+             * The chip constraints, made real.
+             *
+             * Not an effect that sounds a bit like hardware: the output only
+             * contains values a real wave channel could store. The Game Boy
+             * keeps 32 samples of 4 bits, which is the default here.
+             */
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Fit to hardware:");
+
+            static int s_steps = 32;
+            static int s_levels = 16;
+
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderInt("Steps", &s_steps, 4, 128);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderInt("Levels", &s_levels, 2, 64);
+            ImGui::SameLine();
+            if (ImGui::Button("Apply##chipfit", ImVec2(80, 0))) {
+                waveFitToChip(samples, SIZE, s_steps, s_levels);
+                edited = true;
+            }
+
+            ImGui::TextDisabled(
+                "Game Boy: 32 steps, 16 levels.  PC Engine: 32 steps, 32 "
+                "levels.  NES DPCM-era wave: 16 steps.");
+        }
+
+        // ====================================================================
+        // Shapes - build a wave out of parts instead of drawing it
+        // ====================================================================
+        static WaveShapeSpec s_shape;
+        static bool s_shapeLive = false;
+
+        if (g_ExpandWaveTools) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        if (ImGui::CollapsingHeader("Shapes")) {
+            ImGui::TextDisabled(
+                "Stack whole waveforms at chosen harmonics. The exponent "
+                "bends a component toward its extremes without the aliasing "
+                "that clipping one would produce.");
+
+            bool shapeChanged = false;
+
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::SliderInt("Components", &s_shape.count, 1,
+                                 MAX_WAVE_SHAPES)) {
+                shapeChanged = true;
+            }
+
+            for (int c = 0; c < s_shape.count; ++c) {
+                WaveShapeComponent& part = s_shape.components[c];
+                ImGui::PushID(3300 + c);
+                ImGui::Separator();
+
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::Combo("##kind", &part.kind,
+                                 "Sine\0Triangle\0Saw\0Pulse\0Noise\0")) {
+                    shapeChanged = true;
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::SliderInt("Harm", &part.harmonic, 1, 32)) {
+                    shapeChanged = true;
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::SliderFloat("Amp", &part.amplitude, -1.0f, 1.0f,
+                                       "%.2f")) {
+                    shapeChanged = true;
+                }
+
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::SliderFloat("Phase", &part.phase, 0.0f, 1.0f, "%.2f")) {
+                    shapeChanged = true;
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(110);
+                if (ImGui::SliderFloat("Exp", &part.exponent, 0.2f, 5.0f, "%.2f")) {
+                    shapeChanged = true;
+                }
+                if (static_cast<WaveShapeKind>(part.kind) == WaveShapeKind::Pulse) {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(110);
+                    if (ImGui::SliderFloat("Duty", &part.duty, 0.01f, 0.99f,
+                                           "%.2f")) {
+                        shapeChanged = true;
+                    }
+                }
+                ImGui::PopID();
+            }
+
+            ImGui::Separator();
+            if (ImGui::Checkbox("Normalise", &s_shape.normalise)) shapeChanged = true;
+            ImGui::SameLine();
+            ImGui::Checkbox("Update as I move things", &s_shapeLive);
+
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::SliderInt("Fit steps", &s_shape.steps, 0, 128)) {
+                shapeChanged = true;
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            if (ImGui::SliderInt("Fit levels", &s_shape.levels, 0, 64)) {
+                shapeChanged = true;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(0 = leave alone)");
+
+            if (ImGui::Button("Build into this table", ImVec2(180, 0)) ||
+                (s_shapeLive && shapeChanged)) {
+                renderWaveShapes(s_shape, samples, SIZE);
+                edited = true;
+            }
+        }
+
+        // One republish for whatever the frame's buttons did. Rebuilding the
+        // band-limited mips is seven FFTs per table, so it happens once here
+        // rather than inside each button.
+        if (edited) republish.dirty = true;
     }
 
     ImGui::Separator();

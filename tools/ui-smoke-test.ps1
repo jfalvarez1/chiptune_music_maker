@@ -273,6 +273,15 @@ foreach ($panel in $panels) {
     args = "--demo --show plugins --focus `"Plugins`""
 })
 
+# The wavetable editor with both new sections open. Closed, a header shows
+# nothing about what is inside it - and inside these are a per-component
+# stack of widgets whose count changes with a slider, which is the shape of
+# thing that draws fine at one setting and not at another.
+[void]$cases.Add(@{
+    name = "wavetable-editor"
+    args = "--demo --show wavetable --wave-tools --focus `"Wavetable Editor`""
+})
+
 # The note rack, with a diatonic chord feeding an up-down arpeggio. Empty it
 # is a paragraph and a combo box; what can actually break is the per-module
 # parameter block, which is a different set of widgets for every type, and
