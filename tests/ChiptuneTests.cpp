@@ -20809,8 +20809,13 @@ static void testShowcases() {
 
             const float rms = float(std::sqrt(energy / double(frames)));
 
-            std::printf("        %-18s peak %.2f  rms %.3f\n",
-                        label.c_str(), peak, rms);
+            const float lufs = seq.masterLoudnessLUFS();
+            const float truePeak = seq.masterTruePeakDB();
+            const float peakDb = 20.0f * std::log10(std::max(peak, 1e-6f));
+
+            std::printf("        %-18s %6.1f LUFS   peak %5.1f dB   "
+                        "true peak %5.1f dBTP   rms %.3f\n",
+                        label.c_str(), lufs, peakDb, truePeak, rms);
             std::fflush(stdout);
 
             check(finite, label + " produces finite audio");
@@ -20829,8 +20834,43 @@ static void testShowcases() {
              * 1.0 means it is not doing its job - and a demo that clips is
              * the worst possible advertisement for a mastering chain.
              */
-            check(peak <= 1.0f,
-                  label + " does not clip (peak " + std::to_string(peak) + ")");
+            /*
+             * The ceiling, measured against what was asked for.
+             *
+             * `peak <= 1.0f` was here, and it could not fail: a tanh sat
+             * after the limiter and |tanh(x)| < 1 for every finite x. The
+             * demos could have been clipping into that tanh for their whole
+             * existence and this line would have passed every time.
+             */
+            const float ceilingLinear =
+                std::pow(10.0f, project.masterLimiterCeiling / 20.0f);
+            check(peak <= ceilingLinear + 1e-3f,
+                  label + " holds its ceiling: peak " + std::to_string(peak) +
+                      " against " + std::to_string(ceilingLinear));
+            check(peak > ceilingLinear - 0.10f,
+                  label + " reaches it too, rather than arriving quiet - " +
+                      std::to_string(peak));
+
+            /*
+             * And it is actually mastered, by the only measure that means
+             * anything: how loud it is.
+             *
+             * A demo at -20 LUFS is a mix somebody forgot to finish. A demo
+             * at -6 is squashed. The band here is wide on purpose - these
+             * are four different engines - but it excludes both failures,
+             * and it is a number rather than a flag.
+             */
+            check(lufs > -18.0f && lufs < -5.0f,
+                  label + " is mastered to a plausible loudness, got " +
+                      std::to_string(lufs) + " LUFS");
+
+            // True peak is what the listener's converter reconstructs, and
+            // for square waves it runs about two decibels above the sample
+            // peak. It may exceed the ceiling - that is the whole reason the
+            // measurement exists - but not by enough to clip a codec.
+            check(truePeak < 0.0f,
+                  label + " stays below full scale on a true-peak meter, " +
+                      std::to_string(truePeak) + " dBTP");
         }
     }
 
@@ -22638,6 +22678,224 @@ static void testMasterChain() {
         check(safe,
               "and with the limiter switched off nothing leaves the mixer "
               "outside the representable range");
+    }
+}
+
+// ============================================================================
+// True peak, DC, and why chiptune needs a different ceiling
+//
+// This is the part of mastering that matters most in THIS program and least
+// in a general-purpose DAW, because the difference is the waveform: a square
+// wave cannot be represented in a band-limited signal without overshooting,
+// and square waves are what a chiptune tracker makes.
+// ============================================================================
+static void testChipMastering() {
+    beginTest("True peak and the chiptune ceiling");
+
+    constexpr float SR = 44100.0f;
+
+    auto measureTruePeak = [](const std::vector<float>& signal) {
+        auto meterPtr = std::make_unique<TruePeakMeter>();
+        meterPtr->reset();
+        for (float s : signal) meterPtr->process(s);
+        return meterPtr->peakDb();
+    };
+
+    // ---- The meter agrees with a sine ---------------------------------------
+    //
+    // A band-limited signal has nothing between its samples that is not
+    // already implied by them, so a sine at full scale is at full scale. If
+    // this reads high the interpolator is wrong and every number below it is
+    // decoration.
+    {
+        std::vector<float> sine(4096);
+        for (size_t i = 0; i < sine.size(); ++i) {
+            sine[i] = std::sin(6.2831853f * 440.0f * float(i) / SR);
+        }
+        const float tp = measureTruePeak(sine);
+        check(std::fabs(tp) < 0.3f,
+              "a full-scale sine measures 0 dBTP, got " + std::to_string(tp));
+    }
+
+    // ---- And disagrees with a square, which is the point --------------------
+    {
+        std::vector<float> square(4096);
+        for (size_t i = 0; i < square.size(); ++i) {
+            const float phase =
+                std::fmod(440.0f * float(i) / SR, 1.0f);
+            square[i] = (phase < 0.5f) ? 1.0f : -1.0f;
+        }
+        const float tp = measureTruePeak(square);
+
+        check(tp > 1.0f,
+              "a full-scale square measures well above 0 dBTP - got " +
+                  std::to_string(tp) +
+                  " dBTP. This is why a chip render sitting at exactly 0 dBFS "
+                  "clips every codec it touches: an infinite-slope edge "
+                  "cannot exist in a band-limited signal, so reconstructing "
+                  "one overshoots.");
+
+        // A narrow pulse is worse than a square, and the noise channel is
+        // worse than either - which is the awkward part, because percussion
+        // is short and nobody looks at it.
+        std::vector<float> pulse(4096);
+        for (size_t i = 0; i < pulse.size(); ++i) {
+            const float phase = std::fmod(440.0f * float(i) / SR, 1.0f);
+            pulse[i] = (phase < 0.125f) ? 1.0f : -1.0f;
+        }
+        const float pulseTp = measureTruePeak(pulse);
+        check(pulseTp > 1.0f,
+              "a 12.5% pulse overshoots too, " + std::to_string(pulseTp) +
+                  " dBTP");
+    }
+
+    // ---- The DC a pulse wave has by construction ----------------------------
+    //
+    // A bipolar pulse is not centred: its DC component is 2*duty - 1, so the
+    // 12.5% duty that makes the classic NES lead sits at -0.75. That offset
+    // spends headroom on something nobody can hear, and it thumps at every
+    // note-on.
+    {
+        auto blockerPtr = std::make_unique<DCBlocker>();
+        blockerPtr->setSampleRate(SR);
+
+        // A 12.5% pulse, which has a large negative offset.
+        std::vector<float> before, after;
+        for (int i = 0; i < 44100; ++i) {
+            const float phase = std::fmod(440.0f * float(i) / SR, 1.0f);
+            const float sample = (phase < 0.125f) ? 1.0f : -1.0f;
+            before.push_back(sample);
+
+            float l = sample, r = sample;
+            blockerPtr->processStereo(l, r);
+            after.push_back(l);
+        }
+
+        auto meanOf = [](const std::vector<float>& v, size_t from) {
+            double sum = 0.0;
+            size_t n = 0;
+            for (size_t i = from; i < v.size(); ++i) { sum += v[i]; ++n; }
+            return (n > 0) ? sum / double(n) : 0.0;
+        };
+
+        const double dcBefore = meanOf(before, 4410);
+        const double dcAfter = meanOf(after, 4410);
+
+        check(dcBefore < -0.6,
+              "a 12.5% pulse really does carry a large offset: " +
+                  std::to_string(dcBefore) +
+                  ", which is 2*duty-1 and not a bug in the oscillator");
+        check(std::fabs(dcAfter) < 0.02,
+              "and the blocker removes it, leaving " +
+                  std::to_string(dcAfter));
+
+        /*
+         * A sine, which has none, must come through at its own level - a DC
+         * blocker that eats bass is worse than the offset it removes.
+         *
+         * Measured as amplitude, not sample by sample. A first-order
+         * high-pass at 10 Hz shifts a 200 Hz tone by about three degrees,
+         * which is inaudible and which a sample-by-sample comparison reports
+         * as 5% error. Comparing the two waveforms point for point measures
+         * the phase shift and calls it distortion; comparing their energy
+         * measures what the filter actually did to the sound.
+         */
+        blockerPtr->reset();
+        double energyIn = 0.0, energyOut = 0.0;
+        for (int i = 0; i < 44100; ++i) {
+            const float sample =
+                0.5f * std::sin(6.2831853f * 200.0f * float(i) / SR);
+            float l = sample, r = sample;
+            blockerPtr->processStereo(l, r);
+            if (i > 4410) {
+                energyIn += double(sample) * sample;
+                energyOut += double(l) * l;
+            }
+        }
+        const double ratio = std::sqrt(energyOut / std::max(energyIn, 1e-12));
+        const double lossDb = 20.0 * std::log10(std::max(ratio, 1e-6));
+        check(std::fabs(lossDb) < 0.2,
+              "and a 200 Hz tone keeps its level through it, " +
+                  std::to_string(lossDb) + " dB");
+    }
+
+    // ---- The profile decisions the measurements justify ---------------------
+    {
+        const MasteringProfile& chip = masteringProfile("Chiptune");
+        const MasteringProfile& pop = masteringProfile("Pop");
+
+        check(chip.ceilingDb < pop.ceilingDb - 0.3f,
+              "chiptune gets a lower true-peak ceiling than everything else "
+              "(" + std::to_string(chip.ceilingDb) + " against " +
+                  std::to_string(pop.ceilingDb) +
+                  ") - because its waveforms reconstruct about two decibels "
+                  "above their sample peak and a -1 dBTP chip master is fine "
+                  "on the meter and clipped in the codec");
+
+        check(chip.highGain <= 0.0f,
+              "and its high shelf is not positive, got " +
+                  std::to_string(chip.highGain) +
+                  " dB. Chip percussion is already all edge; lifting the top "
+                  "is the documented way to make it harsh.");
+
+        check(chip.width <= 1.001f,
+              "and its width is exactly 1, because a mid-side widener on a "
+              "mono source is a no-op at any setting - a 2A03 sums to one "
+              "pin, and width in chiptune comes from panning the channels");
+
+        check(chip.compRatio <= 2.0f && chip.compThreshold > -14.0f,
+              "and the compressor barely engages: a square wave's peak "
+              "equals its RMS, so there are no dynamics to glue");
+
+        // Every profile has to name a target, or the numbers are decoration
+        // again.
+        const char* GENRES[] = {"Synthwave", "Darksynth", "Techno", "House",
+                                "Hip Hop", "Trap", "Reggaeton", "Drum & Bass",
+                                "Lo-fi", "Pop", "Rock", "Ambient", "Chiptune"};
+        bool allTargeted = true;
+        std::string missing;
+        for (const char* genre : GENRES) {
+            const MasteringProfile& profile = masteringProfile(genre);
+            if (std::strcmp(profile.genre, genre) != 0) {
+                allTargeted = false;
+                missing = genre;
+                break;
+            }
+            if (!(profile.targetLUFS < -3.0f && profile.targetLUFS > -24.0f) ||
+                !(profile.ceilingDb < 0.0f && profile.ceilingDb > -6.0f)) {
+                allTargeted = false;
+                missing = genre;
+                break;
+            }
+        }
+        check(allTargeted,
+              "every genre resolves and carries a sane loudness target" +
+                  (allTargeted ? std::string() : " (" + missing + " does not)"));
+
+        // Ambient is the quietest and trap is among the loudest, which is
+        // the ordering that says these came from measurement rather than
+        // from one number nudged thirteen ways.
+        check(masteringProfile("Ambient").targetLUFS <
+                  masteringProfile("Trap").targetLUFS - 5.0f,
+              "ambient targets far quieter than trap");
+        check(masteringProfile("Ambient").compRatio <
+                  masteringProfile("Darksynth").compRatio,
+              "and is compressed far less than darksynth");
+    }
+
+    // ---- Applying a profile puts its ceiling on the project -----------------
+    {
+        auto p = std::make_unique<Project>();
+        applyMastering(*p, "Chiptune");
+        check(std::fabs(p->masterLimiterCeiling -
+                        masteringProfile("Chiptune").ceilingDb) < 1e-4f,
+              "applying the chiptune profile sets the chiptune ceiling, not a "
+              "fixed one - got " + std::to_string(p->masterLimiterCeiling));
+
+        applyMastering(*p, "Pop");
+        check(std::fabs(p->masterLimiterCeiling -
+                        masteringProfile("Pop").ceilingDb) < 1e-4f,
+              "and switching genres switches it");
     }
 }
 
@@ -25022,6 +25280,7 @@ int main(int argc, char** argv) {
     testCommandPaletteAndBrowser();
     testPluginHosting();
     testMasterChain();
+    testChipMastering();
     testChipInstrumentImport();
     testScopes();
     testWaveTools();

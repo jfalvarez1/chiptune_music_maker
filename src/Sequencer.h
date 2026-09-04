@@ -1003,6 +1003,10 @@ public:
     float masterLimiterReductionDB() const {
         return m_masterEffects.getLimiterGainReductionDB();
     }
+
+    // What the listener's converter will reconstruct, which for square waves
+    // runs about two decibels above what the file says.
+    float masterTruePeakDB() const { return m_masterEffects.getTruePeakDB(); }
     void resetLoudness() { m_masterEffects.lufsMeter.reset(); }
 
 private:

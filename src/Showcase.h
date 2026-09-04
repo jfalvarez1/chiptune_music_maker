@@ -127,8 +127,14 @@ inline void arrange(Project& project, int patternIndex, int channel,
  * flattening it.
  */
 inline void master(Project& project, float lowGain, float midGain,
-                   float highGain, float compThreshold = -14.0f) {
-    project.masterVolume = 0.72f;
+                   float highGain, float compThreshold = -14.0f,
+                   float width = 1.30f, float saturation = 1.7f,
+                   float level = 0.72f) {
+    // The trim INTO the chain, so it decides how hard the compressor and
+    // limiter work rather than how loud the result is afterwards. A dense
+    // sustained piece needs less of it than a sparse one to land in the same
+    // place.
+    project.masterVolume = level;
 
     project.masterEQEnabled = true;
     project.masterEQLowGain = lowGain;
@@ -137,14 +143,32 @@ inline void master(Project& project, float lowGain, float midGain,
 
     project.masterCompressorEnabled = true;
     project.masterCompThreshold = compThreshold;
-    project.masterCompRatio = 2.2f;      // gentle
-    project.masterCompAttack = 0.012f;   // slow enough to let transients through
-    project.masterCompRelease = 0.18f;
+    project.masterCompRatio = 2.0f;      // gentle
+    project.masterCompAttack = 0.020f;   // slow enough to let transients through
+    project.masterCompRelease = 0.20f;
     project.masterCompMakeup = 1.5f;
 
+    /*
+     * The two the demos did not have.
+     *
+     * This function set nine fields and none of them was width or
+     * saturation, both of which default to off. So the four songs that
+     * exist to show what a finished piece sounds like were getting EQ,
+     * compression and a limiter and nothing else - missing exactly the two
+     * stages this codebase argues hardest for, and the two a listener
+     * actually hears as the difference between a mix and a master.
+     */
+    project.masterWidthEnabled = true;
+    project.masterWidth = width;
+
+    project.masterSaturationEnabled = true;
+    project.masterSaturationDrive = saturation;
+
     project.masterLimiterEnabled = true;
-    project.masterLimiterCeiling = -0.3f;
-    project.masterLimiterRelease = 0.05f;
+    // -1 dBTP, not -0.3. A true-peak meter's own error is larger than
+    // 0.3 dB, and lossy encoding overshoots on top of that.
+    project.masterLimiterCeiling = -1.0f;
+    project.masterLimiterRelease = 0.12f;
 }
 
 } // namespace showcase
@@ -255,7 +279,10 @@ inline Project makeShowcaseFMBells() {
     arrange(project, addPattern(project, drumPattern, loop), 3, loop, 2);
 
     // Warm, with the top left alone so the bells keep their air.
-    showcase::master(project, 1.0f, -0.5f, 1.5f, -14.0f);
+    // FM bells: bright and already wide from the detuned operators, so the
+    // widener stays modest and the saturation is light - harmonics on top of
+    // FM harmonics is where it turns to glass.
+    showcase::master(project, 1.0f, -0.5f, 1.5f, -14.0f, 1.25f, 1.5f);
     return project;
 }
 
@@ -377,7 +404,13 @@ inline Project makeShowcaseWavetable() {
     }
     arrange(project, addPattern(project, drumPattern, loop), 3, loop, 2);
 
-    showcase::master(project, 1.5f, -1.0f, 2.0f, -13.0f);
+    // Wavetable motion: the morph is the movement, so the compression is
+    // slow enough not to fight it and the width is generous.
+    // Driven less than the others: a sustained wavetable pad has no gaps,
+    // so the same trim lands it several decibels louder. Measured at -6.8
+    // LUFS before this, which is past squashed and louder than any genre
+    // target in the table.
+    showcase::master(project, 1.5f, -1.0f, 2.0f, -11.0f, 1.45f, 1.8f, 0.52f);
     return project;
 }
 
@@ -469,7 +502,9 @@ inline Project makeShowcaseGranular() {
     arrange(project, addPattern(project, bassPattern, loop), 3, loop, 2);
 
     // Low end kept in check, since four sustained parts stack up.
-    showcase::master(project, -1.0f, 0.5f, 1.0f, -16.0f);
+    // Granular clouds: dense and diffuse to begin with, so almost no
+    // saturation - it is the one texture that turns to mud rather than warm.
+    showcase::master(project, -1.0f, 0.5f, 1.0f, -16.0f, 1.50f, 1.3f);
     return project;
 }
 
@@ -584,7 +619,10 @@ inline Project makeShowcaseDrums() {
     arrange(project, addPattern(project, bassPattern, loop), 3, loop, 4);
 
     // Punchy, with a little lift on top for the hats.
-    showcase::master(project, 1.5f, 0.0f, 1.0f, -12.0f);
+    // Modelled drums: transients are the whole point, so the widest
+    // saturation setting here is still gentle and the width is held back to
+    // keep the kick and snare in the middle where they belong.
+    showcase::master(project, 1.5f, 0.0f, 1.0f, -12.0f, 1.20f, 2.0f);
     return project;
 }
 
