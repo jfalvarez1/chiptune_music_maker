@@ -129,15 +129,35 @@ public:
             m_filled = WINDOW - HOP;
         }
 
+        /*
+         * Silence until a full window has been through, rather than the
+         * partial overlap-add that would otherwise ramp in.
+         *
+         * The read head does not move during priming, and that is the whole
+         * point. It used to advance from the first sample, so it ran AHEAD
+         * of the overlap-add: index i was read at time i, while the frame
+         * that completes index i is not added until time WINDOW-1+i rounded
+         * down to a hop. Every read landed on a slot nothing had written
+         * yet, and the output was whatever the ring held from its previous
+         * lap - which is why the effect worked at all, and why it worked one
+         * whole extra ring lap late.
+         *
+         * Measured rather than reasoned about: correlating a signal against
+         * the output gave a group delay of 2048 samples, exactly twice the
+         * window the effect reported. Every vocoder effect - pitch shift,
+         * formant shift, autotune - was 46 ms late and told the mixer it was
+         * 23 ms late. Holding the read head back until priming ends makes
+         * the delay a genuine WINDOW, which is both what latency() claims
+         * and half of what it used to cost.
+         */
+        if (m_primed < WINDOW) { ++m_primed; return 0.0f; }
+
         const size_t size = m_output.size();
         const size_t readAt = m_outputRead % size;
         const float out = m_output[readAt];
         m_output[readAt] = 0.0f;      // consumed; ready to be added into again
         ++m_outputRead;
 
-        // Silence until a full window has been through, rather than the
-        // partial overlap-add that would otherwise ramp in.
-        if (m_primed < WINDOW) { ++m_primed; return 0.0f; }
         return out;
     }
 

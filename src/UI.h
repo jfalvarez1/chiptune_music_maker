@@ -6816,17 +6816,29 @@ inline void DrawPluginsPanel(Project& project, UIState& ui, Sequencer& seq) {
     }
     if (!canAdd) ImGui::EndDisabled();
 
-    // A plugin insert delays its channel by a block. Said rather than
-    // hidden: nothing compensates for it yet, and a channel that is quietly
-    // late is a phase problem the user cannot see.
-    const int latency = seq.maxPluginLatencySamples();
+    /*
+     * What the latency costs, said rather than hidden.
+     *
+     * This used to read "nothing compensates for it yet", which was true and
+     * is no longer: every channel is now delayed to meet the latest one, so
+     * the parts stay in time with each other. What the user still pays is
+     * the monitoring delay - the whole mix is this far behind the keyboard -
+     * and that is the number worth showing.
+     */
+    const int latency = seq.compensatedLatencySamples();
     if (latency > 0) {
-        ImGui::TextDisabled("Plugin latency: %d samples on the busiest channel",
-                            latency);
+        const float ms = 1000.0f * static_cast<float>(latency) /
+                         std::max(1.0f, seq.sampleRate());
+        ImGui::TextDisabled("Latency: %d samples (%.1f ms), compensated",
+                            latency, ms);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
-                "A channel with plugins runs this far behind one without.\n"
-                "Nothing compensates for it yet.");
+                "Plugins and studio effects cannot produce output the instant\n"
+                "they receive input. Every channel is delayed to match the\n"
+                "latest one, so the parts stay in time with each other.\n\n"
+                "What is left is monitoring delay: notes you play live are\n"
+                "heard this far behind the key. Bypass the offending effect\n"
+                "while tracking if it gets in the way.");
         }
     }
 

@@ -22085,6 +22085,354 @@ static void testClickingHeadless() {
 }
 
 // ============================================================================
+// Delay compensation
+//
+// The tests that matter here measure WHERE A SOUND LANDS, not that a
+// function was called. A compensation that is applied in the wrong direction
+// still runs, still allocates nothing, and still reports plausible numbers -
+// it just makes the misalignment twice as bad. So every assertion below is
+// about a sample index.
+// ============================================================================
+static void testDelayCompensation() {
+    beginTest("Delay compensation");
+
+    // ---- The arithmetic, which is the part that is easy to get backwards ----
+    {
+        std::vector<int> delays;
+
+        computeCompensation({}, delays);
+        check(delays.empty(), "no channels, no delays");
+
+        computeCompensation({0, 0, 0}, delays);
+        check(delays == std::vector<int>({0, 0, 0}),
+              "a project with no latency anywhere delays nothing at all");
+
+        computeCompensation({0, 1024, 512}, delays);
+        check(delays == std::vector<int>({1024, 0, 512}),
+              "every channel waits for the latest one, and the latest waits "
+              "for nobody");
+
+        // The whole point, stated as the sum: after compensation every
+        // channel's own latency plus its wait is the same number.
+        {
+            const std::vector<int> latencies{0, 1024, 512, 37};
+            computeCompensation(latencies, delays);
+            bool aligned = true;
+            for (size_t i = 0; i < latencies.size(); ++i) {
+                if (latencies[i] + delays[i] != 1024) aligned = false;
+            }
+            check(aligned, "latency + wait is the same on every channel");
+        }
+
+        computeCompensation({-5, 100}, delays);
+        check(delays == std::vector<int>({100, 0}),
+              "a nonsense negative latency counts as none");
+
+        computeCompensation({0, 999999}, delays);
+        check(delays[0] == CompensationDelay::MAX_SAMPLES - 1,
+              "an absurd latency is clamped rather than indexing off the end");
+    }
+
+    // ---- The delay line ------------------------------------------------------
+    {
+        auto linePtr = std::make_unique<CompensationDelay>();
+        CompensationDelay& line = *linePtr;
+
+        check(line.delay() == 0, "a fresh line delays nothing");
+        check(line.process(0.5f) == 0.5f,
+              "and passes its input through untouched, so a project with no "
+              "latency pays nothing for this existing");
+
+        line.setDelay(4);
+        int impulseAt = -1;
+        for (int i = 0; i < 12; ++i) {
+            const float out = line.process(i == 0 ? 1.0f : 0.0f);
+            if (out > 0.5f && impulseAt < 0) impulseAt = i;
+        }
+        check(impulseAt == 4,
+              "an impulse comes out exactly four samples late, got " +
+                  std::to_string(impulseAt));
+
+        line.setDelay(CompensationDelay::MAX_SAMPLES * 4);
+        check(line.delay() == CompensationDelay::MAX_SAMPLES - 1,
+              "and the line refuses to be asked for more than it holds");
+    }
+
+    // ---- An effect's own dry path -------------------------------------------
+    //
+    // This was the bug underneath the bug. The vocoder's wet output is a
+    // window late; the dry path used to be the raw input, on time. So the
+    // effect emitted the same sound twice, 23 ms apart, at any mix between 0
+    // and 1 - and the channel had no single latency to compensate for.
+    //
+    // At mix 0 the output is pure dry, which makes the test exact: the
+    // impulse has to come out at the reported latency, not at zero.
+    {
+        auto shifterPtr = std::make_unique<PitchShifter>();
+        shifterPtr->configure(44100.0f);
+        shifterPtr->mix = 0.0f;
+        shifterPtr->semitones = 7.0f;
+
+        auto fxPtr = std::make_unique<PitchShiftFx>();
+        fxPtr->target = shifterPtr.get();
+
+        check(fxPtr->latencySamples() == PitchShifter::WINDOW,
+              "the shifter reports one window of latency");
+
+        int dryAt = -1;
+        const int span = PitchShifter::WINDOW * 3;
+        for (int i = 0; i < span; ++i) {
+            const float out = fxPtr->process(i == 0 ? 1.0f : 0.0f, 0.0f);
+            if (std::fabs(out) > 0.5f && dryAt < 0) dryAt = i;
+        }
+        check(dryAt == PitchShifter::WINDOW,
+              "the dry path is held back to meet the wet one, so it arrives "
+              "at sample " + std::to_string(PitchShifter::WINDOW) +
+                  " - got " + std::to_string(dryAt));
+    }
+
+    // ---- The reported latency has to be the real one -------------------------
+    //
+    // The check that caught the bug underneath everything else here.
+    //
+    // A number a plugin reports about itself is worth nothing unless
+    // something measures it. This one was wrong by a factor of two: the
+    // vocoder's overlap-add ring was read a lap behind where it was written,
+    // so every vocoder effect came out 2048 samples late while telling the
+    // mixer 1024. Compensating for a latency an effect does not actually
+    // have puts the song out of time just as surely as not compensating at
+    // all - it simply moves the error onto a different channel.
+    //
+    // Measured by correlating the output against the input at every lag and
+    // taking the best, which is what the number means. A signal of three
+    // inharmonic partials, so the correlation peak cannot be an artefact of
+    // periodicity.
+    {
+        auto groupDelayOf = [](PhaseVocoder& vocoder) {
+            std::vector<float> in, out;
+            for (int i = 0; i < 8192; ++i) {
+                const float t = static_cast<float>(i) / 44100.0f;
+                const float s =
+                    0.5f * std::sin(6.2831853f * 220.0f * t) +
+                    0.3f * std::sin(6.2831853f * 331.0f * t + 1.1f) +
+                    0.2f * std::sin(6.2831853f * 97.0f * t + 2.3f);
+                in.push_back(s);
+                out.push_back(vocoder.process(s));
+            }
+            double best = -1e18;
+            int bestLag = -1;
+            for (int lag = 0; lag <= 3072; ++lag) {
+                double acc = 0.0;
+                for (int i = 6000; i < 8000; ++i) {
+                    acc += double(out[i]) * double(in[i - lag]);
+                }
+                if (acc > best) { best = acc; bestLag = lag; }
+            }
+            return bestLag;
+        };
+
+        {
+            auto shifterPtr = std::make_unique<PitchShifter>();
+            shifterPtr->configure(44100.0f);
+            shifterPtr->mix = 1.0f;
+            shifterPtr->semitones = 0.0f;   // at unison the output is the input, late
+            const int measured = groupDelayOf(*shifterPtr);
+            check(measured == shifterPtr->latency(),
+                  "the pitch shifter is late by exactly what it reports: "
+                  "reported " + std::to_string(shifterPtr->latency()) +
+                      ", measured " + std::to_string(measured));
+        }
+        {
+            auto formantPtr = std::make_unique<FormantShifter>();
+            formantPtr->configure(44100.0f);
+            formantPtr->mix = 1.0f;
+            formantPtr->semitones = 0.0f;
+            const int measured = groupDelayOf(*formantPtr);
+            check(measured == formantPtr->latency(),
+                  "and so is the formant shifter, measured " +
+                      std::to_string(measured));
+        }
+    }
+
+    // ---- End to end, through the mixer --------------------------------------
+    //
+    // Two channels playing the same note at the same instant. One of them
+    // gets a pitch shifter. The question the test asks is the one a user
+    // would ask: does the other channel still land on the beat with it?
+    {
+        auto onsetOfChannel = [](bool shiftChannel0, int keepChannel,
+                                 int* latency0 = nullptr,
+                                 int* latency1 = nullptr,
+                                 int* compensated = nullptr) -> int {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterVolume = 0.8f;
+
+            for (int ch = 0; ch < 2; ++ch) {
+                ChannelConfig& config = p.channels[static_cast<size_t>(ch)];
+                config.oscillator.type = OscillatorType::Pulse;
+                config.volume = 0.9f;
+                config.pan = 0.0f;
+                config.muted = (ch != keepChannel);
+                // A sharp onset, so "where does the sound start" has an
+                // answer to the sample rather than to the tenth of a second.
+                config.envelope.attack = 0.0f;
+                config.envelope.decay = 0.0f;
+                config.envelope.sustain = 1.0f;
+                config.envelope.release = 0.05f;
+            }
+
+            if (shiftChannel0) {
+                p.channels[0].pitchShiftEnabled = true;
+                p.channels[0].pitchShiftSemitones = 5.0f;
+                p.channels[0].pitchShiftMix = 1.0f;
+            }
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 60;
+            note.startTime = 0.0f;
+            note.duration = 2.0f;
+            note.oscillatorType = OscillatorType::Pulse;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+            p.arrangement.push_back(Clip{0, 1, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+
+            if (latency0 != nullptr) *latency0 = seqPtr->channelLatencySamples(0);
+            if (latency1 != nullptr) *latency1 = seqPtr->channelLatencySamples(1);
+            if (compensated != nullptr) {
+                *compensated = seqPtr->compensatedLatencySamples();
+            }
+
+            seqPtr->play();
+
+            std::vector<float> l(256), r(256);
+            std::vector<float> collected;
+            for (int b = 0; b < 40; ++b) {
+                seqPtr->process(l.data(), r.data(), 256);
+                collected.insert(collected.end(), l.begin(), l.end());
+            }
+
+            float peak = 0.0f;
+            for (float v : collected) peak = std::max(peak, std::fabs(v));
+            if (peak < 1e-4f) return -1;
+
+            const float threshold = peak * 0.1f;
+            for (size_t i = 0; i < collected.size(); ++i) {
+                if (std::fabs(collected[i]) > threshold) {
+                    return static_cast<int>(i);
+                }
+            }
+            return -1;
+        };
+
+        // Baseline: nothing anywhere has latency, so both channels start
+        // together and start immediately.
+        int base0 = 0, base1 = 0, baseWorst = 0;
+        const int plain0 = onsetOfChannel(false, 0, &base0, &base1, &baseWorst);
+        const int plain1 = onsetOfChannel(false, 1);
+        check(plain0 >= 0 && plain1 >= 0, "both channels make a sound");
+        check(base0 == 0 && base1 == 0 && baseWorst == 0,
+              "with no effects on, no channel reports any latency");
+        check(std::abs(plain0 - plain1) <= 2,
+              "and the two channels start together, within " +
+                  std::to_string(std::abs(plain0 - plain1)) + " samples");
+
+        // Now one channel gets a phase vocoder.
+        int shifted0 = 0, shifted1 = 0, worst = 0;
+        const int lateChannel =
+            onsetOfChannel(true, 0, &shifted0, &shifted1, &worst);
+        const int otherChannel = onsetOfChannel(true, 1);
+
+        check(shifted0 == PitchShifter::WINDOW,
+              "the shifted channel reports a window of latency, got " +
+                  std::to_string(shifted0));
+        check(shifted1 == 0, "and the untouched channel reports none");
+        check(worst == PitchShifter::WINDOW,
+              "so the mix as a whole is one window late, got " +
+                  std::to_string(worst));
+
+        /*
+         * The assertion the whole feature exists for.
+         *
+         * Channel 1 has no effects at all, and yet its sound must now come
+         * out one window later than it did - because channel 0 cannot come
+         * out any sooner, and a drum that arrives 23 ms before the bass it
+         * was played with is the audible bug.
+         *
+         * Before compensation this number was plain1: the untouched channel
+         * ignored the shifted one entirely.
+         */
+        const int expected = plain1 + PitchShifter::WINDOW;
+        check(std::abs(otherChannel - expected) <= 2,
+              "the untouched channel waits exactly one window for the shifted "
+              "one - expected " + std::to_string(expected) + ", got " +
+                  std::to_string(otherChannel));
+
+        // And the two are back in time with each other. The vocoder's output
+        // fades in over its overlap, so the shifted channel's own onset is
+        // soft by up to a hop; a tenth of a window is well inside "nobody
+        // can hear that" and well outside "the compensation did nothing".
+        const int drift = std::abs(lateChannel - otherChannel);
+        check(drift <= PitchShifter::WINDOW / 4,
+              "and the two channels are back in time with each other, " +
+                  std::to_string(drift) + " samples apart");
+
+        if (g_verbose) {
+            std::printf("        plain: ch0 %d, ch1 %d | shifted: ch0 %d, ch1 %d\n",
+                        plain0, plain1, lateChannel, otherChannel);
+        }
+        std::printf("        untouched channel moved %d -> %d samples "
+                    "(one %d-sample window)\n",
+                    plain1, otherChannel, PitchShifter::WINDOW);
+    }
+
+    // ---- Switching the effect off gives the time back ------------------------
+    //
+    // A compensation that is applied and never withdrawn leaves the whole
+    // song permanently late, which is harmless but is also a leak: turn on a
+    // reverb, turn it off, and the latency should be gone.
+    {
+        auto p = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(p.get());
+
+        check(seqPtr->compensatedLatencySamples() == 0,
+              "a fresh project is not late");
+
+        p->channels[3].convolutionEnabled = true;
+        p->channels[3].convolutionIR = static_cast<int>(ImpulseResponse::LargeHall);
+        seqPtr->updateChannelConfigs();
+        check(seqPtr->channelLatencySamples(3) == ConvolutionEngine::BLOCK,
+              "a convolution reverb costs its block, got " +
+                  std::to_string(seqPtr->channelLatencySamples(3)));
+        check(seqPtr->compensatedLatencySamples() == ConvolutionEngine::BLOCK,
+              "and the mix waits for it");
+
+        p->channels[3].convolutionEnabled = false;
+        seqPtr->updateChannelConfigs();
+        check(seqPtr->channelLatencySamples(3) == 0,
+              "switching it off costs nothing again");
+        check(seqPtr->compensatedLatencySamples() == 0,
+              "and the mix stops waiting");
+    }
+}
+
+// ============================================================================
 // Runner
 // ============================================================================
 int main(int argc, char** argv) {
@@ -22217,6 +22565,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testDelayCompensation();
     testPluginsPanel();
     testVoiceDetectionBenchmark();
     testKeyDetectionBias();

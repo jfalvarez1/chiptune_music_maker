@@ -12,6 +12,7 @@
 #include "Reverbs.h"
 #include "Convolution.h"
 #include "EqualizerSuite.h"
+#include "DelayCompensation.h"
 #include <cmath>
 #include <cstring>
 #include <array>
@@ -1398,6 +1399,43 @@ public:
  * bypassed-by-mix effect still runs its analysis and does not click when the
  * mix is brought back up.
  */
+
+/*
+ * Mixing a dry path against a wet one that arrives late.
+ *
+ * This is the part that made the reported latency a half-truth. The wet
+ * signal comes out of a phase vocoder a window later than it went in; the
+ * dry signal used to be the raw input, on time. So at any mix between 0 and
+ * 1 the effect emitted the same sound twice, 23 ms apart - an audible flam
+ * on transients, and a comb filter on anything sustained.
+ *
+ * It also made delay compensation impossible to get right, because the
+ * channel had no single latency to compensate for: part of it was late and
+ * part of it was not.
+ *
+ * Holding the dry path back to meet the wet one fixes both. The effect then
+ * has one honest latency, which is what latencySamples() reports and what
+ * the mixer delays every other channel by.
+ *
+ * The line is sized from latencySamples() on each call. That is a compare in
+ * the steady state; it only does work at the instant the latency changes,
+ * which is when the effect is switched on and is already the moment a click
+ * is expected. It never allocates.
+ */
+class LatentDryMix {
+public:
+    float blend(float input, float wet, float mix, int latencySamples) {
+        m_dry.setDelay(latencySamples);
+        const float dry = m_dry.process(input);
+        const float amount = std::clamp(mix, 0.0f, 1.0f);
+        return dry * (1.0f - amount) + wet * amount;
+    }
+    void reset() { m_dry.clear(); }
+
+private:
+    DryPathDelay m_dry;
+};
+
 class PitchShiftFx final : public IEffect {
 public:
     PitchShifter* target = nullptr;
@@ -1406,16 +1444,21 @@ public:
         (void)time;
         if (target == nullptr) return input;
         const float wet = target->process(input);
-        const float mix = std::clamp(target->mix, 0.0f, 1.0f);
-        return input * (1.0f - mix) + wet * mix;
+        return m_mix.blend(input, wet, target->mix, latencySamples());
     }
     void setSampleRate(float sampleRate) override {
         if (target) target->configure(sampleRate);
     }
-    void reset() override { if (target) target->reset(); }
+    void reset() override {
+        if (target) target->reset();
+        m_mix.reset();
+    }
     int latencySamples() const override {
         return target ? target->latency() : 0;
     }
+
+private:
+    LatentDryMix m_mix;
 };
 
 class FormantShiftFx final : public IEffect {
@@ -1426,16 +1469,21 @@ public:
         (void)time;
         if (target == nullptr) return input;
         const float wet = target->process(input);
-        const float mix = std::clamp(target->mix, 0.0f, 1.0f);
-        return input * (1.0f - mix) + wet * mix;
+        return m_mix.blend(input, wet, target->mix, latencySamples());
     }
     void setSampleRate(float sampleRate) override {
         if (target) target->configure(sampleRate);
     }
-    void reset() override { if (target) target->reset(); }
+    void reset() override {
+        if (target) target->reset();
+        m_mix.reset();
+    }
     int latencySamples() const override {
         return target ? target->latency() : 0;
     }
+
+private:
+    LatentDryMix m_mix;
 };
 
 class AutoTuneFx final : public IEffect {
@@ -1446,16 +1494,21 @@ public:
         (void)time;
         if (target == nullptr) return input;
         const float wet = target->process(input);
-        const float mix = std::clamp(target->mix, 0.0f, 1.0f);
-        return input * (1.0f - mix) + wet * mix;
+        return m_mix.blend(input, wet, target->mix, latencySamples());
     }
     void setSampleRate(float sampleRate) override {
         if (target) target->configure(sampleRate);
     }
-    void reset() override { if (target) target->reset(); }
+    void reset() override {
+        if (target) target->reset();
+        m_mix.reset();
+    }
     int latencySamples() const override {
         return target ? target->latency() : 0;
     }
+
+private:
+    LatentDryMix m_mix;
 };
 
 /*
@@ -1480,13 +1533,19 @@ public:
         (void)time;
         if (target == nullptr || !target->active()) return input;
         const float wet = target->process(input);
-        const float amount = std::clamp((mix != nullptr) ? *mix : 0.35f, 0.0f, 1.0f);
-        return input * (1.0f - amount) + wet * amount;
+        const float amount = (mix != nullptr) ? *mix : 0.35f;
+        return m_mix.blend(input, wet, amount, latencySamples());
     }
-    void reset() override { if (target) target->reset(); }
+    void reset() override {
+        if (target) target->reset();
+        m_mix.reset();
+    }
     int latencySamples() const override {
         return target ? target->latency() : 0;
     }
+
+private:
+    LatentDryMix m_mix;
 };
 
 class TiltEqFx final : public IEffect {
@@ -1730,6 +1789,31 @@ struct EffectsChain {
      * external.
      */
     IEffect* effectFor(EffectType type) { return lookup(type); }
+
+    /*
+     * How late this chain's output is, in samples.
+     *
+     * The sum over the effects that are actually enabled, because a
+     * convolution reverb that is switched off costs nothing and must not
+     * make the rest of the song wait for it.
+     *
+     * This is what delay compensation needs and what nothing was
+     * calculating: each effect knew its own latency, the interface exposed
+     * it, and no caller ever added it up.
+     */
+    int latencySamples() {
+        int total = 0;
+        const RackOrder& order = rack();
+
+        for (int slot = 0; slot < order.count; ++slot) {
+            const EffectType type = order.slots[slot];
+            if (!isEnabled(type)) continue;
+
+            IEffect* effect = lookup(type);
+            if (effect != nullptr) total += effect->latencySamples();
+        }
+        return total;
+    }
 
     IEffect* lookup(EffectType type) {
         switch (type) {

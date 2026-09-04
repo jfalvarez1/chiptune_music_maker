@@ -15,6 +15,7 @@
 #include "Synthesizer.h"
 #include "MasterEffects.h"
 #include "PluginHost.h"
+#include "DelayCompensation.h"
 #include "SpectrumAnalyzer.h"
 #include "MIDIInput.h"
 #include <array>
@@ -267,6 +268,21 @@ public:
                     channelSamples[ch] =
                         m_pluginChains[ch].processSample(channelSamples[ch]);
                 }
+
+                /*
+                 * Delay compensation.
+                 *
+                 * Some effects cannot produce output at the instant they
+                 * receive input - a convolution has to fill a block, a
+                 * phase vocoder needs a whole window - so the channels
+                 * carrying them come out late. Every other channel waits
+                 * the difference, so the song is late as a whole by a fixed
+                 * and inaudible amount and internally in time.
+                 *
+                 * Free when nothing has latency: the delay line returns its
+                 * input directly at zero.
+                 */
+                channelSamples[ch] = m_compensation[ch].process(channelSamples[ch]);
             }
 
             // Audio clips join their channel here, before the insert rack -
@@ -558,6 +574,10 @@ public:
                     " - " + pluginLoadErrorText(errors[i]));
             }
         }
+
+        // A plugin is the largest single source of latency in the program, so
+        // this is the call site that matters most.
+        updateDelayCompensation();
     }
 
     PluginChain& pluginChain(int channel) {
@@ -573,6 +593,55 @@ public:
      * and claiming otherwise would be worse than saying plainly that a
      * channel with an insert runs a block late.
      */
+    /*
+     * Recompute the compensating delays. UI thread.
+     *
+     * Called whenever the effects or the plugins change, which is the only
+     * time a channel's latency can move. Doing it per sample would mean
+     * summing a rack in the audio callback for no benefit, since the answer
+     * cannot change between one sample and the next.
+     */
+    void updateDelayCompensation() {
+        std::vector<int> latencies(MAX_CHANNELS, 0);
+
+        for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            int total = m_synths[ch].effects().latencySamples();
+            if (m_pluginChains[ch].active()) {
+                total += m_pluginChains[ch].latencySamples();
+            }
+            latencies[static_cast<size_t>(ch)] = total;
+            m_channelLatency[static_cast<size_t>(ch)] = total;
+        }
+
+        std::vector<int> delays;
+        computeCompensation(latencies, delays);
+
+        for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            m_compensation[ch].setDelay(delays[static_cast<size_t>(ch)]);
+        }
+    }
+
+    // What the whole mix is delayed by, for anything that needs to know -
+    // it is the latency of the latest channel, since every other one is
+    // brought out to meet it.
+    int compensatedLatencySamples() const {
+        int worst = 0;
+        for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            worst = std::max(worst, m_compensation[ch].delay() +
+                                        m_channelLatency[ch]);
+        }
+        return worst;
+    }
+
+    // Needed to turn a sample count into milliseconds anywhere the number is
+    // shown to a person, who thinks in milliseconds and not in samples.
+    float sampleRate() const { return m_sampleRate; }
+
+    int channelLatencySamples(int channel) const {
+        const int index = std::clamp(channel, 0, MAX_CHANNELS - 1);
+        return m_channelLatency[static_cast<size_t>(index)];
+    }
+
     int maxPluginLatencySamples() const {
         int worst = 0;
         for (const PluginChain& chain : m_pluginChains) {
@@ -662,6 +731,16 @@ public:
             // full per-channel effects chain (see Synthesizer::setChannelConfig).
             m_synths[ch].setChannelConfig(config);
         }
+
+        /*
+         * Latency changed, so the compensation has to be recomputed.
+         *
+         * Here rather than at every call site: switching on a convolution
+         * reverb or a pitch shifter goes through this function, and a
+         * compensation that is only updated when somebody remembers is one
+         * that is wrong exactly when it matters.
+         */
+        updateDelayCompensation();
 
         // Aux buses. Their strips are ChannelConfigs, so the same rack sync
         // the channels use configures them - one code path, not two.
@@ -1270,6 +1349,15 @@ private:
      * not.
      */
     std::array<PluginChain, MAX_CHANNELS> m_pluginChains;
+
+    /*
+     * One compensating delay per channel, and what each channel's own
+     * latency was when they were last computed.
+     *
+     * Fixed-capacity lines, so nothing allocates on the audio thread.
+     */
+    std::array<CompensationDelay, MAX_CHANNELS> m_compensation;
+    std::array<int, MAX_CHANNELS> m_channelLatency{};
 
     // Decaying peak level per channel, for the mixer meters
     std::array<float, MAX_CHANNELS> m_channelPeaks = {};
