@@ -11,6 +11,20 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Added
 
+- **Per-channel oscilloscopes**, and an X-Y plot. A level meter says a
+  channel is doing something; it cannot say what. On chip work that gap is
+  most of the job - a duty change and a volume change look identical on a
+  meter, a wave with a DC offset looks perfectly healthy, and two channels
+  beating against each other look like two channels. All of it is obvious the
+  moment you can see the shape.
+
+  Each tile triggers on a rising zero crossing, so the picture holds still
+  instead of crawling, and sizes its window from the pitch actually sounding
+  so a bass and a lead both show two cycles rather than one and eight. The
+  X-Y plot puts one signal against another: two in phase draw a diagonal, two
+  out of phase draw the other diagonal, and a mix that has quietly collapsed
+  is visible there and nowhere else in the program.
+
 - **Wave tools and Shapes, in the wavetable editor.** It could draw a wave by
   hand and initialise four presets; everything past that was a matter of
   redrawing 256 samples with a mouse. Now: scale the wave horizontally with a

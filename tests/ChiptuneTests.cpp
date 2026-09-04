@@ -21848,6 +21848,7 @@ static void testPanelsDrawHeadless() {
         {"Browser",        [](Project& p, UIState& u, Sequencer& s) { u.showBrowser = true; DrawBrowser(p, u, s); }},
         {"Shortcuts",      [](Project& p, UIState& u, Sequencer& s) { u.showShortcuts = true; DrawShortcutsPanel(p, u, s); }},
         {"Plugins",        [](Project& p, UIState& u, Sequencer& s) { u.showPlugins = true; DrawPluginsPanel(p, u, s); }},
+        {"Scopes",         [](Project& p, UIState& u, Sequencer& s) { u.showScopes = true; DrawScopes(p, u, s); }},
         // Both sections forced open, because a closed header draws none of
         // the widgets inside it and a test that never opens one is testing
         // the header.
@@ -22259,6 +22260,182 @@ static void testClickingHeadless() {
         // it is showing.
         check(project.channels[0].noteFX.size() == 2,
               "drawing the panel leaves the rack alone");
+    }
+}
+
+// ============================================================================
+// Oscilloscopes
+//
+// The thing worth testing is not that the ring stores samples. It is that
+// what comes out is a stable, correctly-triggered picture of the channel -
+// because an untriggered scope crawls, and a crawling scope is one nobody
+// can read a duty cycle off.
+// ============================================================================
+static void testScopes() {
+    beginTest("Oscilloscopes");
+
+    // ---- The ring ------------------------------------------------------------
+    {
+        auto scopePtr = std::make_unique<ScopeBuffer>();
+        ScopeBuffer& scope = *scopePtr;
+
+        std::vector<float> out(64);
+        check(!scope.started(), "a fresh scope has seen nothing");
+        check(!scope.read(out.data(), 64),
+              "and reading one gives nothing rather than a flat line, which "
+              "would look exactly like a channel that had gone silent");
+
+        // Silence is refused too, for the same reason.
+        for (int i = 0; i < ScopeBuffer::SIZE; ++i) scope.write(0.0f);
+        check(scope.started(), "after writing, it has seen something");
+        check(!scope.read(out.data(), 64),
+              "but pure silence still reads as silent");
+    }
+
+    // ---- Triggering ----------------------------------------------------------
+    //
+    // The property that makes a scope readable: the same waveform, sampled at
+    // two different moments, has to produce the same picture. Without a
+    // trigger the window lands wherever the write head happened to be, and a
+    // steady note crawls across the display.
+    {
+        auto scopePtr = std::make_unique<ScopeBuffer>();
+        ScopeBuffer& scope = *scopePtr;
+
+        // A sine at a period that does not divide the read window, so an
+        // untriggered read really would land somewhere different each time.
+        const float period = 97.0f;
+        int phase = 0;
+        auto fill = [&](int count) {
+            for (int i = 0; i < count; ++i) {
+                scope.write(std::sin(6.2831853f * float(phase++) / period));
+            }
+        };
+
+        fill(ScopeBuffer::SIZE);
+
+        std::vector<float> first(256), second(256);
+        check(scope.read(first.data(), 256), "a sounding channel reads");
+
+        // Advance by a non-multiple of the period and read again.
+        fill(37);
+        check(scope.read(second.data(), 256), "and reads again after more audio");
+
+        double worst = 0.0;
+        for (int i = 0; i < 256; ++i) {
+            worst = std::max(worst, std::fabs(double(first[i]) - double(second[i])));
+        }
+        check(worst < 0.05,
+              "the picture holds still between reads - worst difference " +
+                  std::to_string(worst) +
+                  ". Without triggering this is where a steady note crawls.");
+
+        // And it starts on a rising edge through zero, which is what a scope
+        // means by triggered.
+        check(std::fabs(first[0]) < 0.1f && first[1] > first[0],
+              "the window starts at a rising zero crossing, got " +
+                  std::to_string(first[0]) + " then " + std::to_string(first[1]));
+    }
+
+    // ---- The window follows the pitch ----------------------------------------
+    //
+    // A fixed window shows one cycle of a lead and eight of a bass, and eight
+    // cycles is a blur rather than a shape.
+    {
+        const int low = scopeWindowForPitch(55.0f, 44100.0f, 2);
+        const int high = scopeWindowForPitch(880.0f, 44100.0f, 2);
+        check(low > high,
+              "a low note gets a longer window than a high one (" +
+                  std::to_string(low) + " against " + std::to_string(high) + ")");
+        check(std::abs(low - 1604) < 40,
+              "two cycles of 55 Hz at 44.1 kHz is about 1604 samples, got " +
+                  std::to_string(low));
+        check(scopeWindowForPitch(0.0f, 44100.0f) > 0 &&
+              scopeWindowForPitch(440.0f, 0.0f) > 0,
+              "and a silent or unconfigured channel still gets a usable "
+              "window rather than zero");
+    }
+
+    // ---- It shows the channel, through the mixer ----------------------------
+    //
+    // The structural guard, and the one that would catch the scope being
+    // wired to the wrong point in the chain: a square wave has to look like
+    // a square wave, and a channel with nothing on it has to look silent.
+    {
+        auto projectPtr = std::make_unique<Project>();
+        auto seqPtr = std::make_unique<Sequencer>();
+        Project& p = *projectPtr;
+
+        p.bpm = 120.0f;
+        p.masterLimiterEnabled = false;
+        p.masterCompressorEnabled = false;
+        p.masterEQEnabled = false;
+        p.chipMixEnabled = false;
+
+        p.channels[0].oscillator.type = OscillatorType::Pulse;
+        p.channels[0].volume = 0.9f;
+        p.channels[0].envelope.attack = 0.0f;
+        p.channels[0].envelope.decay = 0.0f;
+        p.channels[0].envelope.sustain = 1.0f;
+
+        p.patterns.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = 45;                 // A2, a long cycle to see clearly
+        note.startTime = 0.0f;
+        note.duration = 8.0f;
+        note.oscillatorType = OscillatorType::Pulse;
+        pattern.notes.push_back(note);
+        p.patterns.push_back(pattern);
+        p.arrangement.clear();
+        p.arrangement.push_back(Clip{0, 0, 0.0f, 8.0f, 0});
+
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(&p);
+        seqPtr->updateChannelConfigs();
+        seqPtr->updateMasterEffects();
+        seqPtr->play();
+
+        std::vector<float> l(512), r(512);
+        for (int b = 0; b < 30; ++b) seqPtr->process(l.data(), r.data(), 512);
+
+        const float frequency = seqPtr->channelFrequency(0);
+        check(frequency > 100.0f && frequency < 120.0f,
+              "the sequencer reports what channel 0 is playing (A2 is 110 Hz, "
+              "got " + std::to_string(frequency) + ")");
+
+        const int count = scopeWindowForPitch(frequency, 44100.0f, 2);
+        std::vector<float> window(static_cast<size_t>(count));
+        check(seqPtr->channelScope(0).read(window.data(), count),
+              "and the channel's scope has a picture");
+
+        /*
+         * A pulse wave spends its time near two values and very little
+         * between them. That is the shape, and it is what distinguishes a
+         * scope wired to the channel from one wired to silence, to the
+         * master, or to a filtered copy.
+         */
+        int extreme = 0;
+        float peak = 0.0f;
+        for (int i = 0; i < count; ++i) peak = std::max(peak, std::fabs(window[i]));
+        for (int i = 0; i < count; ++i) {
+            if (std::fabs(window[i]) > peak * 0.6f) ++extreme;
+        }
+        check(peak > 0.05f, "with real amplitude in it, peak " +
+                                std::to_string(peak));
+        check(extreme > count * 3 / 4,
+              "and it looks like a pulse - " + std::to_string(extreme) +
+                  " of " + std::to_string(count) +
+                  " samples sit near one extreme or the other");
+
+        // A channel that has never played reads as silent, not as zeros.
+        check(!seqPtr->channelScope(5).read(window.data(), count),
+              "a channel with nothing on it reads as silent");
+
+        // The master scope caught the mix.
+        std::vector<float> master(256);
+        check(seqPtr->masterScopeLeft().read(master.data(), 256),
+              "and the master scope has the mix in it");
     }
 }
 
@@ -24068,6 +24245,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testScopes();
     testWaveTools();
     testNoteFX();
     testDelayCompensation();

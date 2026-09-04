@@ -273,6 +273,15 @@ foreach ($panel in $panels) {
     args = "--demo --show plugins --focus `"Plugins`""
 })
 
+# The scopes, with the transport running so there is something in the rings
+# to draw. Every tile is a polyline built from beat and sample arithmetic
+# straight into the draw list, which is where a bad window length produces
+# either nothing or a NaN vertex.
+[void]$cases.Add(@{
+    name = "scopes"
+    args = "--demo --playing --show scopes --focus `"Scopes`""
+})
+
 # The wavetable editor with both new sections open. Closed, a header shows
 # nothing about what is inside it - and inside these are a per-component
 # stack of widgets whose count changes with a slider, which is the shape of

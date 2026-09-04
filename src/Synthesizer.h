@@ -1102,6 +1102,28 @@ public:
         return false;
     }
 
+    /*
+     * The pitch of whichever voice is loudest right now, or zero.
+     *
+     * For the oscilloscope, which needs to know how long a cycle is so it
+     * can show two of them rather than one of a lead and eight of a bass.
+     * The loudest voice rather than the newest: on a chord the newest note
+     * may still be in its attack, and triggering the sweep on a voice that
+     * is barely audible gives a picture dominated by one nobody is looking
+     * at.
+     */
+    float loudestVoiceFrequency() const {
+        float best = 0.0f;
+        float loudest = 0.0f;
+        for (const auto& v : m_voices) {
+            if (!v.active) continue;
+            if (v.envLevel <= loudest) continue;
+            loudest = v.envLevel;
+            best = v.frequency;
+        }
+        return best;
+    }
+
 private:
     // ========================================================================
     // Oscillator Generation

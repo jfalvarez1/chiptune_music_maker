@@ -1866,6 +1866,8 @@ struct UIState {
     // The per-channel note rack. Off by default like every other panel: a
     // workspace that opens with everything showing is one nobody can read.
     bool showNoteFX = false;
+    // Per-channel oscilloscopes. Off by default like the rest.
+    bool showScopes = false;
 
     /*
      * Where per-user settings live - key bindings among them.

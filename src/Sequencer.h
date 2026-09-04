@@ -16,6 +16,7 @@
 #include "MasterEffects.h"
 #include "PluginHost.h"
 #include "DelayCompensation.h"
+#include "Scopes.h"
 #include "SpectrumAnalyzer.h"
 #include "MIDIInput.h"
 #include <array>
@@ -283,6 +284,16 @@ public:
                  * input directly at zero.
                  */
                 channelSamples[ch] = m_compensation[ch].process(channelSamples[ch]);
+
+                /*
+                 * The channel oscilloscope, taken here.
+                 *
+                 * After the channel is finished with and before the mixer
+                 * touches it, so what the scope shows is the channel - not
+                 * the channel times its fader, and not the channel after
+                 * whatever the pan law did to it.
+                 */
+                m_scopes[ch].write(channelSamples[ch]);
             }
 
             // Audio clips join their channel here, before the insert rack -
@@ -511,6 +522,13 @@ public:
 
             // Feed to spectrum analyzer for visualization
             m_spectrumAnalyzer.process(left, right);
+
+            // And the master scope. Both sides separately, because the one
+            // question an X-Y plot answers is whether they agree - a mix
+            // that has gone out of phase is a straight diagonal, and it
+            // reads as normal on every other display in the program.
+            m_masterScopeLeft.write(left);
+            m_masterScopeRight.write(right);
 
             leftOut[i] = left;
             rightOut[i] = right;
@@ -748,6 +766,26 @@ public:
     // Needed to turn a sample count into milliseconds anywhere the number is
     // shown to a person, who thinks in milliseconds and not in samples.
     float sampleRate() const { return m_sampleRate; }
+
+    // ---- Oscilloscopes ---------------------------------------------------
+    const ScopeBuffer& channelScope(int channel) const {
+        const int index = std::clamp(channel, 0, MAX_CHANNELS - 1);
+        return m_scopes[static_cast<size_t>(index)];
+    }
+    const ScopeBuffer& masterScopeLeft() const { return m_masterScopeLeft; }
+    const ScopeBuffer& masterScopeRight() const { return m_masterScopeRight; }
+
+    /*
+     * What is sounding on a channel, so a scope can size its window to it.
+     *
+     * A fixed window shows one cycle of a lead and eight of a bass, and the
+     * bass is then an unreadable blur. Asking the synth what it is playing
+     * costs nothing and makes both legible.
+     */
+    float channelFrequency(int channel) const {
+        const int index = std::clamp(channel, 0, MAX_CHANNELS - 1);
+        return m_synths[static_cast<size_t>(index)].loudestVoiceFrequency();
+    }
 
     int channelLatencySamples(int channel) const {
         const int index = std::clamp(channel, 0, MAX_CHANNELS - 1);
@@ -1568,6 +1606,17 @@ private:
 
     // Decaying peak level per channel, for the mixer meters
     std::array<float, MAX_CHANNELS> m_channelPeaks = {};
+
+    /*
+     * One oscilloscope ring per channel, plus the master.
+     *
+     * A meter says a channel is doing something; a scope says what. On chip
+     * work that is most of the difference - a duty change and a volume
+     * change look the same on a meter.
+     */
+    std::array<ScopeBuffer, MAX_CHANNELS> m_scopes;
+    ScopeBuffer m_masterScopeLeft;
+    ScopeBuffer m_masterScopeRight;
 
     // Master bus effects (post-mixer processing)
     MasterEffects m_masterEffects;

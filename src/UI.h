@@ -5860,6 +5860,11 @@ inline void registerDefaultActions(ActionRegistry& registry) {
         "Hosted VST and CLAP plugins on this channel", Shortcut(),
         [](ActionContext& c) { c.ui->showPlugins = !c.ui->showPlugins; });
 
+    add("panel.scopes", "Scopes", "Panels",
+        "See each channel's waveform, and the master as an X-Y plot",
+        Shortcut(),
+        [](ActionContext& c) { c.ui->showScopes = !c.ui->showScopes; });
+
     add("panel.notefx", "Note FX", "Panels",
         "Chords, arpeggios and strums on this channel, without writing notes",
         Shortcut(),
@@ -6609,6 +6614,210 @@ inline PluginPanelState& pluginPanelState() { return g_PluginPanel; }
  */
 inline void ApplyPluginChanges(Project& project, Sequencer& seq) {
     seq.rebuildPluginChains(g_Plugins, &g_PluginPanel.problems);
+}
+
+// ============================================================================
+// Oscilloscopes
+// ============================================================================
+/*
+ * One waveform tile per channel, and an X-Y plot of the master.
+ *
+ * A level meter says a channel is doing something; it cannot say what. On
+ * chip work that gap is most of the job - a duty change and a volume change
+ * look identical on a meter, a wave with a DC offset looks perfectly
+ * healthy, and two channels beating against each other look like two
+ * channels. All of it is obvious the moment you can see the shape.
+ */
+inline void DrawScopes(Project& project, UIState& ui, Sequencer& seq) {
+    if (!ui.showScopes) return;
+
+    ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Scopes", &ui.showScopes)) {
+        ImGui::End();
+        return;
+    }
+
+    static bool s_showXY = true;
+    static int s_xyLeft = 0;
+    static int s_xyRight = 1;
+    static float s_gain = 1.0f;
+
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::SliderFloat("Gain", &s_gain, 0.25f, 8.0f, "%.2fx");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Display only. A quiet channel is still a shape.");
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("X-Y", &s_showXY);
+
+    ImGui::Separator();
+
+    const float sampleRate = seq.sampleRate();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+
+    // A tile per channel, wrapped to the window's width.
+    const float available = ImGui::GetContentRegionAvail().x;
+    const float tileWidth = std::max(110.0f, std::min(190.0f, available * 0.48f));
+    const float tileHeight = tileWidth * 0.5f;
+    const int perRow = std::max(1, static_cast<int>(available / (tileWidth + 8.0f)));
+
+    // Only the channels that exist in this project, not all thirty-two: a
+    // wall of flat lines for channels nobody has used is noise, and it
+    // pushes the ones that matter off the bottom.
+    const int channelCount =
+        std::clamp(static_cast<int>(project.channels.size()), 1,
+                   Project::MAX_CHANNELS);
+
+    std::vector<float> window(ScopeBuffer::SIZE / 2);
+
+    int drawnInRow = 0;
+    for (int ch = 0; ch < channelCount; ++ch) {
+        const ChannelConfig& config = project.channels[static_cast<size_t>(ch)];
+
+        if (drawnInRow > 0) ImGui::SameLine();
+
+        ImGui::PushID(3500 + ch);
+        ImGui::BeginGroup();
+
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const ImVec2 corner(origin.x + tileWidth, origin.y + tileHeight);
+
+        const bool selected = (ch == ui.selectedChannel);
+        draw->AddRectFilled(origin, corner, IM_COL32(14, 14, 22, 255));
+        draw->AddRect(origin, corner,
+                      selected ? IM_COL32(90, 200, 255, 255)
+                               : IM_COL32(70, 70, 90, 255));
+
+        const float centre = origin.y + tileHeight * 0.5f;
+        draw->AddLine(ImVec2(origin.x, centre), ImVec2(corner.x, centre),
+                      IM_COL32(50, 50, 62, 255));
+
+        const float frequency = seq.channelFrequency(ch);
+        const int count = std::min(scopeWindowForPitch(frequency, sampleRate),
+                                   static_cast<int>(window.size()));
+
+        const bool sounding = seq.channelScope(ch).read(window.data(), count);
+
+        if (sounding) {
+            const ImU32 colour = config.muted ? IM_COL32(120, 120, 130, 200)
+                                              : IM_COL32(90, 230, 160, 255);
+            ImVec2 previous(origin.x, centre);
+            for (int i = 0; i < count; ++i) {
+                const float x = origin.x + tileWidth * float(i) / float(count - 1);
+                const float value = std::clamp(window[static_cast<size_t>(i)] * s_gain,
+                                               -1.0f, 1.0f);
+                const ImVec2 point(x, centre - value * tileHeight * 0.45f);
+                if (i > 0) draw->AddLine(previous, point, colour, 1.4f);
+                previous = point;
+            }
+        } else {
+            // Said, not drawn as a flat line: a flat line at zero and a
+            // channel that is not playing look the same, and one of them is
+            // a bug.
+            draw->AddText(ImVec2(origin.x + 8.0f, centre - 7.0f),
+                          IM_COL32(90, 90, 105, 255), "silent");
+        }
+
+        // Clicking a tile selects that channel, which is the thing you want
+        // to do next after noticing something on it.
+        ImGui::InvisibleButton("##tile", ImVec2(tileWidth, tileHeight));
+        if (ImGui::IsItemClicked()) ui.selectedChannel = ch;
+        if (ImGui::IsItemHovered() && frequency > 1.0f) {
+            ImGui::SetTooltip("%s\n%.1f Hz, %d samples shown",
+                              config.name.c_str(), frequency, count);
+        }
+
+        ImGui::TextDisabled("%.14s", config.name.c_str());
+        ImGui::EndGroup();
+        ImGui::PopID();
+
+        ++drawnInRow;
+        if (drawnInRow >= perRow) drawnInRow = 0;
+    }
+
+    if (!s_showXY) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Separator();
+
+    /*
+     * The X-Y plot.
+     *
+     * One signal against another rather than either against time. Two
+     * identical signals draw a diagonal line, two that are out of phase draw
+     * the opposite diagonal, and anything uncorrelated fills the square - so
+     * a mix that has collapsed to mono, or one whose sides have gone out of
+     * phase, is visible here and on nothing else in the program.
+     */
+    ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "X-Y");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(70.0f);
+    ImGui::SliderInt("##x", &s_xyLeft, -1, channelCount - 1,
+                     s_xyLeft < 0 ? "Master L" : "Ch %d");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(70.0f);
+    ImGui::SliderInt("##y", &s_xyRight, -1, channelCount - 1,
+                     s_xyRight < 0 ? "Master R" : "Ch %d");
+
+    const float side = std::max(120.0f, std::min(240.0f,
+                                                 ImGui::GetContentRegionAvail().x));
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 corner(origin.x + side, origin.y + side);
+
+    draw->AddRectFilled(origin, corner, IM_COL32(14, 14, 22, 255));
+    draw->AddRect(origin, corner, IM_COL32(70, 70, 90, 255));
+    draw->AddLine(ImVec2(origin.x, origin.y + side * 0.5f),
+                  ImVec2(corner.x, origin.y + side * 0.5f),
+                  IM_COL32(45, 45, 58, 255));
+    draw->AddLine(ImVec2(origin.x + side * 0.5f, origin.y),
+                  ImVec2(origin.x + side * 0.5f, corner.y),
+                  IM_COL32(45, 45, 58, 255));
+
+    {
+        constexpr int POINTS = 512;
+        std::vector<float> xs(POINTS), ys(POINTS);
+
+        const ScopeBuffer& sourceX =
+            (s_xyLeft < 0) ? seq.masterScopeLeft() : seq.channelScope(s_xyLeft);
+        const ScopeBuffer& sourceY =
+            (s_xyRight < 0) ? seq.masterScopeRight() : seq.channelScope(s_xyRight);
+
+        /*
+         * Both read untriggered and from the same length of history.
+         *
+         * Triggering each side independently would align them to their own
+         * zero crossings and destroy the very thing this plot measures: the
+         * phase relationship between them.
+         */
+        const bool anyX = sourceX.read(xs.data(), POINTS, 0.0f);
+        const bool anyY = sourceY.read(ys.data(), POINTS, 0.0f);
+
+        if (anyX || anyY) {
+            ImVec2 previous(0.0f, 0.0f);
+            for (int i = 0; i < POINTS; ++i) {
+                const float x = std::clamp(xs[static_cast<size_t>(i)] * s_gain,
+                                           -1.0f, 1.0f);
+                const float y = std::clamp(ys[static_cast<size_t>(i)] * s_gain,
+                                           -1.0f, 1.0f);
+                const ImVec2 point(origin.x + side * (0.5f + x * 0.45f),
+                                   origin.y + side * (0.5f - y * 0.45f));
+                if (i > 0) draw->AddLine(previous, point, IM_COL32(255, 180, 90, 140), 1.0f);
+                previous = point;
+            }
+        } else {
+            draw->AddText(ImVec2(origin.x + 10.0f, origin.y + side * 0.5f),
+                          IM_COL32(90, 90, 105, 255), "silent");
+        }
+    }
+
+    ImGui::Dummy(ImVec2(side, side));
+    ImGui::TextDisabled(
+        "A diagonal is two signals in phase. The other diagonal is out of "
+        "phase. A filled square is uncorrelated.");
+
+    ImGui::End();
 }
 
 // ============================================================================

@@ -480,6 +480,7 @@ inline void applyCaptureState(const CaptureRequest& request,
         if (window == "browser")   ui.showBrowser = true;
         if (window == "shortcuts") ui.showShortcuts = true;
         if (window == "plugins")   ui.showPlugins = true;
+        if (window == "scopes")    ui.showScopes = true;
 
         // The note rack, with something already in it. Empty, the panel is a
         // paragraph of text and a combo box; what is worth a shot - and what
