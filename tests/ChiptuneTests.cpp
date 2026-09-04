@@ -22318,6 +22318,124 @@ static void testClickingHeadless() {
 }
 
 // ============================================================================
+// The user guide
+//
+// A document nobody can navigate is a document nobody reads. The guide keeps
+// its sections in three places - the section tags themselves, the numbered
+// contents list, and the side navigation - and all three are maintained by
+// hand, which means all three drift. Two sections had no contents entry and
+// were reachable only by scrolling past them; the side nav was missing
+// several more that had been in the guide for versions.
+//
+// This is a cheap check for an expensive kind of rot: a feature documented in
+// a section nobody can find is documented nowhere.
+// ============================================================================
+static void testUserGuide() {
+    beginTest("User guide navigation");
+
+#ifdef CHIPTUNE_SOURCE_DIR
+    const std::string path =
+        std::string(CHIPTUNE_SOURCE_DIR) + "/docs/ChiptuneTracker_Guide.html";
+    std::ifstream file(path);
+    check(file.is_open(), "the guide is where it is expected");
+    if (!file.is_open()) return;
+
+    std::string body((std::istreambuf_iterator<char>(file)),
+                     std::istreambuf_iterator<char>());
+
+    /*
+     * Pull the ids out of each of the three lists, in document order.
+     *
+     * Anchored on what comes AFTER the closing quote rather than searching
+     * for it: the side nav and the contents list both start `<a href="#`,
+     * and a search for the contents list's trailing markup from a nav link's
+     * position happily skips over every nav entry in between and returns one
+     * enormous id. Which is how the first version of this test failed on a
+     * guide that was correct.
+     */
+    auto collect = [&body](const std::string& opener, const std::string& after) {
+        std::vector<std::string> found;
+        size_t at = 0;
+        while (true) {
+            const size_t start = body.find(opener, at);
+            if (start == std::string::npos) break;
+            const size_t from = start + opener.size();
+            const size_t quote = body.find('"', from);
+            at = from;
+            if (quote == std::string::npos) break;
+            at = quote + 1;
+            if (body.compare(quote + 1, after.size(), after) != 0) continue;
+            found.push_back(body.substr(from, quote - from));
+        }
+        return found;
+    };
+
+    const std::vector<std::string> sections = collect("<section id=\"", ">");
+    const std::vector<std::string> contents =
+        collect("<a href=\"#", "><span class=\"toc-number\">");
+    const std::vector<std::string> nav = collect("<a href=\"#", " data-section=");
+
+    check(sections.size() > 20,
+          "the guide has its sections (" + std::to_string(sections.size()) + ")");
+
+    check(sections == contents,
+          "every section has a numbered contents entry, in the same order - " +
+              std::to_string(sections.size()) + " sections against " +
+              std::to_string(contents.size()) + " entries");
+
+    check(sections == nav,
+          "and a side-navigation entry - " + std::to_string(sections.size()) +
+              " sections against " + std::to_string(nav.size()) + " links");
+
+    /*
+     * And the newest features are actually in it.
+     *
+     * The structural check above passes on a guide that is beautifully
+     * navigable and three versions out of date. These are the sections that
+     * have to exist for the guide to describe the program that ships.
+     */
+    const char* REQUIRED[] = {"voice-mode", "note-rack", "wave-tools",
+                              "scopes", "mastering", "walkthroughs"};
+    for (const char* id : REQUIRED) {
+        bool present = false;
+        for (const std::string& section : sections) {
+            if (section == id) { present = true; break; }
+        }
+        check(present, std::string("the guide covers '") + id + "'");
+    }
+
+    // Every internal link resolves. A dead anchor in a guide is a dead end
+    // for whoever followed it.
+    {
+        std::vector<std::string> broken;
+        size_t at = 0;
+        while (true) {
+            const size_t start = body.find("href=\"#", at);
+            if (start == std::string::npos) break;
+            const size_t from = start + 7;
+            const size_t end = body.find('"', from);
+            if (end == std::string::npos) break;
+            const std::string target = body.substr(from, end - from);
+            at = end;
+
+            if (target.empty()) continue;
+            bool found = false;
+            for (const std::string& section : sections) {
+                if (section == target) { found = true; break; }
+            }
+            if (!found && body.find("id=\"" + target + "\"") == std::string::npos) {
+                broken.push_back(target);
+            }
+        }
+        check(broken.empty(),
+              "every link inside the guide points at something that exists" +
+                  (broken.empty() ? std::string()
+                                  : " (broken: " + broken.front() + ")"));
+    }
+#endif
+}
+
+// ============================================================================
 // The master chain
 //
 // Everything here measures the OUTPUT. The suite already had mastering
@@ -25279,6 +25397,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testUserGuide();
     testMasterChain();
     testChipMastering();
     testChipInstrumentImport();
