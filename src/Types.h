@@ -17,6 +17,7 @@
 
 #include "Snap.h"
 #include "NoteFX.h"
+#include "ChipModel.h"
 #include "Sample.h"
 #include "TempoMap.h"
 #include "FMSynth.h"
@@ -1242,7 +1243,21 @@ struct Project {
 
     bool chipMixEnabled = false;      // non-linear pulse / triangle-noise DACs
     bool chipFilterEnabled = false;   // the console's own output filters
-    bool chipFilterFamicom = false;   // Famicom voicing rather than NES
+    bool chipFilterFamicom = false;
+
+    /*
+     * Which region the chip behaves like.
+     *
+     * Not cosmetic. The CPU clock differs by 7.65%, so every pitch does; the
+     * frame counter that drives envelopes runs at 240 Hz against 200; and
+     * the noise period table is different and crosses over - at index 2 the
+     * PAL period is SHORTER, so PAL noise is brighter there and darker
+     * everywhere else. A tune written against one and played on the other is
+     * a semitone and a bit out.
+     *
+     * NTSC by default, which is what every existing project implies.
+     */
+    ChipRegion chipRegion = ChipRegion::NTSC;   // Famicom voicing rather than NES
 
     // Swing/groove settings
     float swing = 0.0f;             // Swing amount: 0.0 = no swing, 1.0 = max swing (triplet feel)

@@ -501,6 +501,17 @@ public:
         }
     }
 
+    /*
+     * Which region the chip is pretending to be. UI thread.
+     *
+     * Only the noise generator reads it today - it is the one place where
+     * the two regions differ by a table rather than by a scale factor - but
+     * it lives on the synth rather than being passed per call because it is
+     * a property of the machine, not of a note.
+     */
+    void setChipRegion(ChipRegion region) { m_chipRegion = region; }
+    ChipRegion chipRegion() const { return m_chipRegion; }
+
     void setSampleRate(float sr) {
         m_sampleRate = sr;
         m_effects.setSampleRate(sr);
@@ -1707,10 +1718,16 @@ private:
     // Real hardware cannot sweep noise continuously - it picks one of these,
     // which is why NES noise has that stepped, pitched quality rather than
     // sounding like a filtered hiss.
-    static constexpr int NES_NOISE_PERIODS[16] = {
-        4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
-    };
-    static constexpr float NES_CPU_HZ = 1789773.0f;   // NTSC
+    /*
+     * The period table and the clock now come from ChipModel.h, which holds
+     * both regions.
+     *
+     * They were a private NTSC-only copy here. PAL is not a scaled version
+     * of NTSC: the tables cross at index 2, where the PAL period is SHORTER
+     * (14 cycles against 16), so PAL noise is brighter there and darker
+     * everywhere else. A single table with a multiplier cannot express that,
+     * which is why there are two.
+     */
 
     float generateNoise(Voice& voice) {
         // How fast the shift register is clocked.
@@ -1721,7 +1738,7 @@ private:
         // keyboard.
         float clockRate;
         if (m_oscConfig.noisePeriod >= 0 && m_oscConfig.noisePeriod < 16) {
-            clockRate = NES_CPU_HZ / float(NES_NOISE_PERIODS[m_oscConfig.noisePeriod]);
+            clockRate = nes::noiseClockHz(m_chipRegion, m_oscConfig.noisePeriod);
             voice.noiseAccum += clockRate / m_sampleRate;
         } else {
             voice.noiseAccum += voice.phaseIncrement * 16.0f;
@@ -3429,6 +3446,8 @@ private:
     // the call it precedes.
     bool m_pendingTie = false;
     float m_pendingGlide = 0.0f;
+
+    ChipRegion m_chipRegion = ChipRegion::NTSC;
 
     std::array<Voice, MAX_VOICES> m_voices;
 

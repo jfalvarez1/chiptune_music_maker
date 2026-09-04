@@ -5312,6 +5312,35 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
     }
 
     if (ImGui::CollapsingHeader("Chip Accuracy")) {
+            /*
+              * Region.
+              *
+              * Above the channel cap because it changes more: every pitch by
+              * 7.65%, the envelope rate, and the noise period table - which
+              * is a different table rather than a scaled one, and crosses
+              * over at index 2 where PAL is brighter.
+              */
+            {
+                int region = static_cast<int>(project.chipRegion);
+                ImGui::SetNextItemWidth(140);
+                if (ImGui::Combo("Region", &region, "NTSC\0PAL\0")) {
+                    project.chipRegion = (region == 1) ? ChipRegion::PAL
+                                                       : ChipRegion::NTSC;
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Which machine the chip behaves like.\n\n"
+                        "The CPU clock differs by 7.65%%, so every pitch does.\n"
+                        "The envelope rate differs (240 Hz against 200), and\n"
+                        "neither is the 60 Hz people assume.\n\n"
+                        "And the noise period table is a DIFFERENT table, not\n"
+                        "a scaled one: at setting 2 the PAL period is shorter,\n"
+                        "so PAL noise is brighter there and darker everywhere\n"
+                        "else.");
+                }
+            }
+
             ImGui::Checkbox("8 channels only", &project.chipAuthentic);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(

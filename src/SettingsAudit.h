@@ -521,7 +521,77 @@ inline std::vector<AuditFinding> auditProject(const Project& project) {
         }
     }
 
+    /*
+     * ---- Notes the hardware could not play -----------------------------
+     *
+     * Only when the project has said it wants to be chip-legal, because
+     * outside that this is not a fault - it is the whole point of a float
+     * engine.
+     *
+     * Two separate problems, and they fail differently. A note below the
+     * longest period the register can hold simply does not exist on the
+     * chip. A note near the top exists and is out of tune, by more the
+     * higher it goes, because the period steps get further apart than the
+     * notes do - and above about G#8 there is no chromatic scale at all.
+     */
     if (project.chipAuthentic) {
+        int belowRange = 0;
+        int badlyTuned = 0;
+        float worstCents = 0.0f;
+        int worstPitch = 0;
+
+        for (const Pattern& pattern : project.patterns) {
+            for (const Note& note : pattern.notes) {
+                const float hz = noteToHz(note.pitch);
+                const ChipPitchCheck check =
+                    checkChipPitch(ChipVoice::NESPulse, hz, project.chipRegion);
+
+                if (check.belowRange) {
+                    ++belowRange;
+                } else if (std::fabs(check.errorCents) >
+                           CHIP_TUNING_TOLERANCE_CENTS) {
+                    ++badlyTuned;
+                    if (std::fabs(check.errorCents) > std::fabs(worstCents)) {
+                        worstCents = check.errorCents;
+                        worstPitch = note.pitch;
+                    }
+                }
+            }
+        }
+
+        if (belowRange > 0) {
+            findings.push_back({
+                AuditSeverity::Warning, -1,
+                std::to_string(belowRange) + " note" +
+                    (belowRange == 1 ? " is" : "s are") +
+                    " below what a pulse channel can reach",
+                std::string("The period register runs out at about ") +
+                    (project.chipRegion == ChipRegion::PAL ? "50.7" : "54.6") +
+                    " Hz on " + chipRegionName(project.chipRegion) +
+                    ", which is just under A1. A real chip would play the "
+                    "lowest note it has, not the note that was written.",
+                "Move them up an octave, or put the bass on the triangle "
+                "channel - it reaches an octave lower for the same register."
+            });
+        }
+
+        if (badlyTuned > 0) {
+            findings.push_back({
+                AuditSeverity::Note, -1,
+                std::to_string(badlyTuned) + " note" +
+                    (badlyTuned == 1 ? "" : "s") +
+                    " land more than a quarter-tone off on real hardware",
+                "The pitch register is eleven bits, so its steps get further "
+                "apart the higher you go - inaudible at the bottom of the "
+                "keyboard and more than a semitone at the top. The worst here "
+                "is " + std::to_string(static_cast<int>(worstCents)) +
+                    " cents, on MIDI note " + std::to_string(worstPitch) + ".",
+                "This is what chiptune leads actually sound like up there, so "
+                "it may be exactly right. Move them down an octave if it is "
+                "not."
+            });
+        }
+
         // Engines no chip could run, on a project claiming to be chip-legal.
         int modern = 0;
         for (int ch = 0; ch < activeChannels; ++ch) {

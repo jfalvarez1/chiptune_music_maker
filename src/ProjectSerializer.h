@@ -622,6 +622,12 @@ inline bool writeProject(std::ostream& file, const Project& project) {
     file << "NAME " << project.name << "\n";
     file << "BPM " << ctp::floatToToken(project.bpm) << "\n";
     file << "BEATS_PER_MEASURE " << project.beatsPerMeasure << "\n";
+
+    // Omit-if-default: NTSC is what every project before this implied, so a
+    // line only appears if somebody chose PAL.
+    if (project.chipRegion != ChipRegion::NTSC) {
+        file << "CHIP_REGION " << static_cast<int>(project.chipRegion) << "\n";
+    }
     file << "MASTER_VOLUME " << ctp::floatToToken(project.masterVolume) << "\n";
     file << "SONG_LENGTH " << ctp::floatToToken(project.songLength) << "\n";
 
@@ -1150,6 +1156,11 @@ inline bool readProject(std::istream& file, Project& project) {
         }
         else if (cmd == "BPM")               { iss >> project.bpm; }
         else if (cmd == "BEATS_PER_MEASURE") { iss >> project.beatsPerMeasure; }
+        else if (cmd == "CHIP_REGION") {
+            int region = 0;
+            iss >> region;
+            project.chipRegion = (region == 1) ? ChipRegion::PAL : ChipRegion::NTSC;
+        }
         else if (cmd == "MASTER_VOLUME")     { iss >> project.masterVolume; }
         else if (cmd == "SONG_LENGTH")       { iss >> project.songLength; }
         else if (cmd == "MASTER") {

@@ -903,6 +903,7 @@ public:
             const auto& config = m_project->channels[ch];
             // Single sync point: oscillator, envelope, filter envelope and the
             // full per-channel effects chain (see Synthesizer::setChannelConfig).
+            m_synths[ch].setChipRegion(m_project->chipRegion);
             m_synths[ch].setChannelConfig(config);
 
             // The note rack, copied into a fixed-size array. The project
