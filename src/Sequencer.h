@@ -1405,7 +1405,22 @@ private:
     // Apply swing to a beat position
     // Swing shifts off-beat notes forward in time (e.g., 8th note upbeats)
     float applySwing(float beat) const {
-        if (!m_project || m_project->swing <= 0.0f) return beat;
+        if (!m_project) return beat;
+
+        /*
+         * A groove takes over from swing when there is one.
+         *
+         * Not both: swing displaces every off-beat by a fraction of the
+         * grid, and a groove has already decided where every row falls, so
+         * applying swing afterwards would swing an already swung row. Then
+         * neither control would mean what it says and the only way to find
+         * a feel would be by trial. Project Check says so if both are set.
+         */
+        if (m_project->groove.active()) {
+            return m_project->groove.displace(beat);
+        }
+
+        if (m_project->swing <= 0.0f) return beat;
 
         float grid = m_project->swingGrid;  // e.g., 0.5 for 8th notes
         float swing = m_project->swing;     // 0.0 to 1.0

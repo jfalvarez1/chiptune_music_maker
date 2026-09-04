@@ -5461,6 +5461,105 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
     }
 
     if (ImGui::CollapsingHeader("Groove", ImGuiTreeNodeFlags_DefaultOpen)) {
+        /*
+         * ------------------------------------------------------------------
+         * Per-row timing
+         *
+         * The swing slider below is one number applied to every off-beat,
+         * which can express "7 5" and nothing else. This is the list, so a
+         * shuffle that limps only on the first half of the beat - or
+         * resolves once a bar rather than once a beat - is writable.
+         *
+         * A text box rather than a row of spin boxes because a groove is a
+         * short list people already write down that way, copy from a forum
+         * post, and compare at a glance.
+         * ------------------------------------------------------------------
+         */
+        {
+            static char grooveText[96] = "";
+            static bool grooveLoaded = false;
+
+            // Reloaded from the project whenever it disagrees, so undo,
+            // loading a file and the preset buttons all show up here.
+            const std::string current = grooveToText(project.groove);
+            if (!grooveLoaded || current != std::string(grooveText)) {
+                std::snprintf(grooveText, sizeof(grooveText), "%s",
+                              current.c_str());
+                grooveLoaded = true;
+            }
+
+            ImGui::TextDisabled("Ticks per row (a repeating list):");
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::InputText("##groove", grooveText, sizeof(grooveText))) {
+                g_UndoHistory.saveState(project, "Groove");
+                GroovePattern parsed;
+                parsed.clear();
+                parsed.rowsPerBeat = project.groove.rowsPerBeat;
+                grooveFromText(grooveText, parsed);
+                project.groove = parsed;
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How long each row lasts, repeating.\n\n"
+                    "  6 6        straight\n"
+                    "  7 5        swing\n"
+                    "  7 5 6 6    swung on the first half of the beat only\n\n"
+                    "Only the ratios matter - \"7 5\" and \"14 10\" are the\n"
+                    "same groove. A full cycle always covers the same amount\n"
+                    "of time as the same number of straight rows, so a groove\n"
+                    "never changes the tempo.\n\n"
+                    "Empty means straight timing.");
+            }
+
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110);
+            int rowsPerBeat = project.groove.rowsPerBeat;
+            if (ImGui::SliderInt("per beat", &rowsPerBeat, 1, 16)) {
+                project.groove.rowsPerBeat = std::clamp(rowsPerBeat, 1, 16);
+                seq.updateChannelConfigs();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("How many rows the list covers in one beat.\n"
+                                  "Four is one entry per sixteenth note.");
+            }
+
+            for (int i = 0; i < GROOVE_TIMING_PRESET_COUNT; ++i) {
+                if (i % 3 != 0) ImGui::SameLine();
+                if (ImGui::SmallButton(GROOVE_TIMING_PRESETS[i].name)) {
+                    g_UndoHistory.saveState(project, "Groove Preset");
+                    GroovePattern parsed;
+                    parsed.clear();
+                    parsed.rowsPerBeat = project.groove.rowsPerBeat;
+                    grooveFromText(GROOVE_TIMING_PRESETS[i].speeds, parsed);
+                    project.groove = parsed;
+                    grooveLoaded = false;
+                    seq.updateChannelConfigs();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s\n\n%s",
+                                      GROOVE_TIMING_PRESETS[i].speeds,
+                                      GROOVE_TIMING_PRESETS[i].description);
+                }
+            }
+
+            // Said here rather than left to be discovered: the slider below
+            // stops doing anything while a groove is set.
+            if (project.groove.active()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f),
+                                   "A groove is set, so the swing slider "
+                                   "below is ignored.");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "A groove has already decided where every row falls.\n"
+                        "Swinging it again would swing an already swung row,\n"
+                        "and then neither control would mean what it says.");
+                }
+            }
+
+            ImGui::Separator();
+        }
+
         // ------------------------------------------------------------------
         // Feel presets
         //

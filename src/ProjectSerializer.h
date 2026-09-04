@@ -628,6 +628,17 @@ inline bool writeProject(std::ostream& file, const Project& project) {
     if (project.chipRegion != ChipRegion::NTSC) {
         file << "CHIP_REGION " << static_cast<int>(project.chipRegion) << "\n";
     }
+
+    // The groove, written the way it is typed. A project with no groove
+    // writes no line.
+    if (project.groove.count > 0) {
+        file << "GROOVE " << project.groove.rowsPerBeat;
+        for (int i = 0;
+             i < std::min(project.groove.count, GroovePattern::MAX_STEPS); ++i) {
+            file << ' ' << project.groove.speeds[static_cast<size_t>(i)];
+        }
+        file << "\n";
+    }
     file << "MASTER_VOLUME " << ctp::floatToToken(project.masterVolume) << "\n";
     file << "SONG_LENGTH " << ctp::floatToToken(project.songLength) << "\n";
 
@@ -1160,6 +1171,20 @@ inline bool readProject(std::istream& file, Project& project) {
             int region = 0;
             iss >> region;
             project.chipRegion = (region == 1) ? ChipRegion::PAL : ChipRegion::NTSC;
+        }
+        else if (cmd == "GROOVE") {
+            project.groove.clear();
+            int rowsPerBeat = 4;
+            iss >> rowsPerBeat;
+            project.groove.rowsPerBeat = std::clamp(rowsPerBeat, 1, 16);
+
+            int speed = 0;
+            while (project.groove.count < GroovePattern::MAX_STEPS &&
+                   (iss >> speed)) {
+                project.groove.speeds[
+                    static_cast<size_t>(project.groove.count++)] =
+                        std::clamp(speed, 1, 31);
+            }
         }
         else if (cmd == "MASTER_VOLUME")     { iss >> project.masterVolume; }
         else if (cmd == "SONG_LENGTH")       { iss >> project.songLength; }

@@ -22365,6 +22365,408 @@ static void testClickingHeadless() {
 }
 
 // ============================================================================
+// Groove
+//
+// The property that matters more than any feel is that a groove must not
+// change the tempo. One that ran two percent fast would drift against every
+// audio clip in the project and against anything the song is played
+// alongside - and it would do it silently, because a groove is supposed to
+// move notes around. So that is asserted first and hardest.
+// ============================================================================
+static void testGrooveTiming() {
+    beginTest("Groove timing");
+
+    auto make = [](const char* text, int rowsPerBeat = 4) {
+        GroovePattern groove;
+        groove.clear();
+        grooveFromText(text, groove);
+        groove.rowsPerBeat = rowsPerBeat;
+        return groove;
+    };
+
+    // ---- No groove is no change ---------------------------------------------
+    {
+        GroovePattern none;
+        none.clear();
+        check(!none.active(), "an empty groove is not active");
+        check(none.displace(1.234f) == 1.234f,
+              "and displaces nothing, so a project without one is exactly the "
+              "project it was");
+
+        // A list whose entries are all the same is straight timing written
+        // the long way; doing the arithmetic for it would only add rounding.
+        const GroovePattern flat = make("6 6 6 6");
+        check(!flat.active(),
+              "a list of identical speeds is recognised as straight rather "
+              "than round-tripped through the arithmetic");
+    }
+
+    // ---- The tempo does not move --------------------------------------------
+    //
+    // A full cycle of the list has to cover exactly as many rows of straight
+    // time as it has entries, whatever numbers are in it. Which also means
+    // somebody can type "9 4 7 3" without having to make it average out.
+    {
+        const char* PATTERNS[] = {"7 5", "8 4", "7 5 6 6", "9 4 7 3",
+                                  "5 7", "3 3 3 9", "7 5 7 5 6 6 6 6"};
+
+        bool allHold = true;
+        std::string failed;
+        for (const char* text : PATTERNS) {
+            const GroovePattern groove = make(text);
+            if (!groove.active()) continue;
+
+            // Every cycle boundary must land exactly where it would have.
+            for (int cycle = 1; cycle <= 8; ++cycle) {
+                const float rows = float(cycle * groove.count);
+                const float straight = rows / float(groove.rowsPerBeat);
+                const float displaced = groove.displace(straight);
+                if (std::fabs(displaced - straight) > 1e-4f) {
+                    allHold = false;
+                    failed = std::string(text) + " at cycle " +
+                             std::to_string(cycle) + ": " +
+                             std::to_string(displaced) + " against " +
+                             std::to_string(straight);
+                    break;
+                }
+            }
+            if (!allHold) break;
+        }
+        check(allHold,
+              "a full cycle of any groove covers exactly its own number of "
+              "rows, so the tempo never moves" +
+                  (allHold ? std::string() : " (" + failed + ")"));
+
+        // And it holds a long way in, where a per-row accumulation would
+        // have drifted visibly.
+        // Named deepIn rather than far: <windows.h> still defines  and
+        //  as macros, and a local called either one becomes a syntax
+        // error whose message names neither.
+        const GroovePattern groove = make("9 4 7 3");
+        const float deepIn = 400.0f;   // 1600 rows, 400 cycles
+        check(std::fabs(groove.displace(deepIn) - deepIn) < 1e-2f,
+              "including four hundred beats in, where anything accumulating "
+              "per row would have drifted - got " +
+                  std::to_string(groove.displace(deepIn)));
+    }
+
+    // ---- It actually swings --------------------------------------------------
+    {
+        const GroovePattern swung = make("7 5");
+
+        // Row 0 is on the beat; row 1 is late by the extra tick.
+        check(std::fabs(swung.displace(0.0f)) < 1e-5f,
+              "the first row stays where it is");
+
+        const float rowOne = swung.displace(0.25f);   // row 1 at 4 rows/beat
+        check(rowOne > 0.25f,
+              "the second row arrives late, at " + std::to_string(rowOne) +
+                  " rather than 0.25");
+
+        // 7 of 12 ticks through a 2-row cycle: 7/12 * 2 rows = 1.1667 rows,
+        // which at four rows to the beat is 0.29167.
+        check(std::fabs(rowOne - 0.291667f) < 1e-4f,
+              "by exactly the fraction the tick counts describe - expected "
+              "0.29167, got " + std::to_string(rowOne));
+
+        check(std::fabs(swung.displace(0.5f) - 0.5f) < 1e-5f,
+              "and the third row is back on the beat, because the cycle "
+              "closed");
+
+        // The other direction really is the other direction.
+        const GroovePattern dragged = make("5 7");
+        check(dragged.displace(0.25f) < 0.25f,
+              "a drag makes the off-beat early instead of late, " +
+                  std::to_string(dragged.displace(0.25f)));
+    }
+
+    // ---- A groove is a pattern, not an amount --------------------------------
+    //
+    // This is what the existing swing control cannot do: swing the first half
+    // of the beat and leave the second alone.
+    {
+        const GroovePattern shuffle = make("7 5 6 6");
+
+        const float first = shuffle.displace(0.25f);    // row 1, swung
+        const float third = shuffle.displace(0.75f);    // row 3, straight
+
+        check(first > 0.25f + 1e-4f,
+              "the first off-beat is displaced");
+        check(std::fabs(third - 0.75f) < 1e-3f,
+              "and the second one is not - " + std::to_string(third) +
+                  ". One swing amount cannot express that, which is the "
+                  "whole reason a groove is a list.");
+    }
+
+    // ---- Only the ratios matter ---------------------------------------------
+    {
+        const GroovePattern tight = make("7 5");
+        const GroovePattern large = make("14 10");
+        bool same = true;
+        for (float beat = 0.0f; beat < 4.0f; beat += 0.0625f) {
+            if (std::fabs(tight.displace(beat) - large.displace(beat)) > 1e-4f) {
+                same = false;
+                break;
+            }
+        }
+        check(same,
+              "\"7 5\" and \"14 10\" are the same groove, because a cycle is "
+              "normalised onto the same span either way");
+    }
+
+    // ---- Reading and writing it as text -------------------------------------
+    {
+        GroovePattern groove;
+        groove.clear();
+        check(grooveFromText("7 5 6 6", groove), "a groove parses from text");
+        check(groove.count == 4 && groove.speeds[0] == 7 && groove.speeds[1] == 5,
+              "with the values in order");
+        check(grooveToText(groove) == "7 5 6 6",
+              "and writes back the same, got '" + grooveToText(groove) + "'");
+
+        // Whatever separators it arrives with. A groove copied from a forum
+        // post is written however that place writes them.
+        GroovePattern commas;
+        commas.clear();
+        check(grooveFromText("7,5,6,6", commas) && commas.count == 4,
+              "commas work");
+        GroovePattern slashes;
+        slashes.clear();
+        check(grooveFromText("7 / 5", slashes) && slashes.count == 2,
+              "and slashes");
+
+        // A zero would be a row that takes no time, collapsing the cycle
+        // onto one instant.
+        GroovePattern zeroed;
+        zeroed.clear();
+        grooveFromText("0 6", zeroed);
+        check(zeroed.speeds[0] >= 1,
+              "a speed of zero is refused rather than collapsing the cycle");
+
+        GroovePattern nothing;
+        nothing.clear();
+        check(!grooveFromText("", nothing) && nothing.count == 0,
+              "and empty text is no groove rather than a broken one");
+
+        // Longer than the cap is truncated, not overflowed.
+        GroovePattern tooLong;
+        tooLong.clear();
+        grooveFromText("1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20",
+                       tooLong);
+        check(tooLong.count == GroovePattern::MAX_STEPS,
+              "and a list longer than the cap stops at it, got " +
+                  std::to_string(tooLong.count));
+    }
+
+    // ---- Every preset is a real groove --------------------------------------
+    {
+        bool allValid = true;
+        std::string bad;
+        for (int i = 0; i < GROOVE_TIMING_PRESET_COUNT; ++i) {
+            GroovePattern groove;
+            groove.clear();
+            if (!grooveFromText(GROOVE_TIMING_PRESETS[i].speeds, groove)) {
+                allValid = false;
+                bad = GROOVE_TIMING_PRESETS[i].name;
+                break;
+            }
+            // The tempo property again, on the ones that ship.
+            const float rows = float(groove.count);
+            const float straight = rows / float(groove.rowsPerBeat);
+            if (std::fabs(groove.displace(straight) - straight) > 1e-4f) {
+                allValid = false;
+                bad = GROOVE_TIMING_PRESETS[i].name;
+                break;
+            }
+        }
+        check(allValid,
+              "every shipped preset parses and holds the tempo" +
+                  (allValid ? std::string() : " (" + bad + " does not)"));
+
+        // The first one is straight, so there is a way back.
+        GroovePattern straight;
+        straight.clear();
+        grooveFromText(GROOVE_TIMING_PRESETS[0].speeds, straight);
+        check(!straight.active(),
+              "and the first is straight, so there is an obvious way back");
+    }
+
+    // ---- It reaches the audio ------------------------------------------------
+    {
+        auto render = [](const char* grooveText) {
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.swing = 0.0f;
+
+            if (grooveText != nullptr) {
+                grooveFromText(grooveText, p.groove);
+                p.groove.rowsPerBeat = 4;
+            }
+
+            p.channels[0].oscillator.type = OscillatorType::Pulse;
+            p.channels[0].volume = 0.9f;
+            p.channels[0].envelope.attack = 0.0f;
+            p.channels[0].envelope.decay = 0.02f;
+            p.channels[0].envelope.sustain = 0.0f;
+            p.channels[0].envelope.release = 0.01f;
+
+            p.patterns.clear();
+            Pattern pattern;
+            for (int i = 0; i < 8; ++i) {
+                Note note;
+                note.pitch = 60;
+                note.startTime = float(i) * 0.25f;   // one per row
+                note.duration = 0.1f;
+                note.oscillatorType = OscillatorType::Pulse;
+                pattern.notes.push_back(note);
+            }
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(256), r(256), collected;
+            for (int b = 0; b < 200; ++b) {
+                seqPtr->process(l.data(), r.data(), 256);
+                collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        // Where each hit lands, by looking for the onsets.
+        auto onsetsOf = [](const std::vector<float>& signal) {
+            std::vector<size_t> onsets;
+            float peak = 0.0f;
+            for (float v : signal) peak = std::max(peak, std::fabs(v));
+            const float threshold = peak * 0.3f;
+
+            bool inHit = false;
+            for (size_t i = 0; i < signal.size(); ++i) {
+                const bool loud = std::fabs(signal[i]) > threshold;
+                if (loud && !inHit) { onsets.push_back(i); inHit = true; }
+                if (!loud && inHit) {
+                    // A gap of a few hundred samples ends the hit rather
+                    // than a single quiet sample inside a waveform.
+                    size_t quiet = 0;
+                    while (i + quiet < signal.size() && quiet < 400 &&
+                           std::fabs(signal[i + quiet]) <= threshold) {
+                        ++quiet;
+                    }
+                    if (quiet >= 400) inHit = false;
+                }
+            }
+            return onsets;
+        };
+
+        const std::vector<float> straight = render(nullptr);
+        const std::vector<float> swung = render("7 5");
+
+        const std::vector<size_t> straightHits = onsetsOf(straight);
+        const std::vector<size_t> swungHits = onsetsOf(swung);
+
+        check(straightHits.size() >= 4 && swungHits.size() >= 4,
+              "both renders have hits to compare (" +
+                  std::to_string(straightHits.size()) + " and " +
+                  std::to_string(swungHits.size()) + ")");
+
+        if (straightHits.size() >= 3 && swungHits.size() >= 3) {
+            // The second hit is the one the groove moves.
+            check(swungHits[1] > straightHits[1] + 500,
+                  "the groove pushes the second hit later, from sample " +
+                      std::to_string(straightHits[1]) + " to " +
+                      std::to_string(swungHits[1]));
+
+            // And the third is back where it was, because the cycle closed.
+            const long long drift =
+                static_cast<long long>(swungHits[2]) -
+                static_cast<long long>(straightHits[2]);
+            check(std::llabs(drift) < 800,
+                  "and the third lands back on the beat, " +
+                      std::to_string(drift) + " samples out - which is the "
+                      "tempo not moving, measured through the mixer");
+        }
+    }
+
+    // ---- Project Check notices a groove and a swing together ----------------
+    {
+        auto p = std::make_unique<Project>();
+        grooveFromText("7 5", p->groove);
+        p->swing = 0.5f;
+
+        const std::vector<AuditFinding> findings = auditProject(*p);
+        bool mentioned = false;
+        for (const AuditFinding& finding : findings) {
+            if (finding.what.find("groove and a swing") != std::string::npos) {
+                mentioned = true;
+            }
+        }
+        check(mentioned,
+              "setting both a groove and a swing is reported - the swing is "
+              "ignored while a groove is active, and comes back the moment "
+              "the groove is cleared, which looks like the timing changing "
+              "on its own");
+    }
+
+    // ---- It survives the file, and costs nothing when unused ----------------
+    {
+        auto original = std::make_unique<Project>();
+        grooveFromText("7 5 6 6", original->groove);
+        original->groove.rowsPerBeat = 4;
+
+        const std::string path = testPath("groove.ctp");
+        check(saveProject(*original, path), "a project with a groove saves");
+
+        auto loaded = std::make_unique<Project>();
+        check(loadProject(*loaded, path), "and loads");
+        check(loaded->groove.count == 4 && loaded->groove.speeds[0] == 7 &&
+              loaded->groove.speeds[1] == 5 && loaded->groove.rowsPerBeat == 4,
+              "with the groove intact, got '" + grooveToText(loaded->groove) +
+                  "'");
+
+        auto plain = std::make_unique<Project>();
+        const std::string plainPath = testPath("groove-none.ctp");
+        check(saveProject(*plain, plainPath), "a project without one saves");
+        std::ifstream file(plainPath);
+        std::string body((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+        check(body.find("GROOVE") == std::string::npos,
+              "and writes no groove line at all");
+
+        std::remove(path.c_str());
+        std::remove(plainPath.c_str());
+    }
+
+    // ---- A damaged file cannot stop time ------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->groove.count = 99;
+        p->groove.rowsPerBeat = 0;
+        p->groove.speeds[0] = 0;
+        p->groove.speeds[1] = -4;
+
+        clampProjectToValidRanges(*p);
+
+        check(p->groove.count <= GroovePattern::MAX_STEPS,
+              "a groove longer than the cap is trimmed to it");
+        check(p->groove.rowsPerBeat >= 1,
+              "and a zero rows-per-beat is repaired");
+        check(p->groove.speeds[0] >= 1 && p->groove.speeds[1] >= 1,
+              "and a speed of zero - which would collapse the whole cycle "
+              "onto one instant, landing every note in the song at the same "
+              "time - is repaired to something that takes time");
+    }
+}
+
+// ============================================================================
 // What the hardware could actually play
 //
 // A wrong period table does not produce an error. It produces noise that is
@@ -26152,6 +26554,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testGrooveTiming();
     testChipModel();
     testLegato();
     testUserGuide();

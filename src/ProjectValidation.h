@@ -562,6 +562,22 @@ inline void clampProjectToValidRanges(Project& project) {
         }
     }
 
+    /*
+     * The groove.
+     *
+     * Read on the audio thread for every note, and a speed of zero would
+     * collapse the whole cycle onto one instant - so a hand-edited file with
+     * one in it would not be a wrong feel, it would be every note in the
+     * song landing at the same time.
+     */
+    project.groove.rowsPerBeat = std::clamp(project.groove.rowsPerBeat, 1, 16);
+    project.groove.count =
+        std::clamp(project.groove.count, 0, GroovePattern::MAX_STEPS);
+    for (int i = 0; i < GroovePattern::MAX_STEPS; ++i) {
+        int& speed = project.groove.speeds[static_cast<size_t>(i)];
+        speed = std::clamp(speed, 1, 31);
+    }
+
     // Take lanes. A segment naming a take that is gone would index off the
     // end of the vector during flattening.
     clampCompGroups(project);

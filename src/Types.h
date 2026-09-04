@@ -18,6 +18,7 @@
 #include "Snap.h"
 #include "NoteFX.h"
 #include "ChipModel.h"
+#include "GrooveTiming.h"
 #include "Sample.h"
 #include "TempoMap.h"
 #include "FMSynth.h"
@@ -1257,7 +1258,22 @@ struct Project {
      *
      * NTSC by default, which is what every existing project implies.
      */
-    ChipRegion chipRegion = ChipRegion::NTSC;   // Famicom voicing rather than NES
+    ChipRegion chipRegion = ChipRegion::NTSC;
+
+    /*
+     * Per-row timing.
+     *
+     * The swing above is one number applied to every off-beat, which can
+     * express "7 5" and nothing else. This is the list, so a shuffle that
+     * limps only on the first half of the beat - or resolves once a bar
+     * rather than once a beat - is writable.
+     *
+     * Empty by default, and an empty groove costs nothing: the sequencer
+     * checks active() before it does any arithmetic. When one IS set it
+     * takes over from swing, because applying both would swing an already
+     * swung row and neither control would mean what it says.
+     */
+    GroovePattern groove;   // Famicom voicing rather than NES
 
     // Swing/groove settings
     float swing = 0.0f;             // Swing amount: 0.0 = no swing, 1.0 = max swing (triplet feel)

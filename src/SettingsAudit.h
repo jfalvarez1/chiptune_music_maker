@@ -156,6 +156,20 @@ inline std::vector<AuditFinding> auditProject(const Project& project) {
         }
     }
 
+    // ---- A groove and a swing, which cannot both mean what they say --------
+    if (project.groove.active() && project.swing > 0.001f) {
+        findings.push_back({
+            AuditSeverity::Warning, -1,
+            "A groove and a swing amount are both set",
+            "A groove already decides where every row falls, so the swing "
+            "slider is ignored while one is active. It is still saved, and "
+            "it will come back the moment the groove is cleared - which "
+            "looks like the timing changing on its own.",
+            "Clear the swing, or clear the groove. The groove can express "
+            "anything the swing slider can: \"7 5\" is the same feel."
+        });
+    }
+
     // ---- Content that cannot be heard --------------------------------------
     if (project.chipAuthentic) {
         int stranded = 0;
