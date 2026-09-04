@@ -23,6 +23,7 @@
 #include "VoiceMode.h"
 #include "Showcase.h"
 #include "ChipInstruments.h"
+#include "MIDIImport.h"
 #include "Mastering.h"
 #include "LoopRange.h"
 #include "Snap.h"
@@ -7639,6 +7640,45 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
         }
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export to MIDI file for use in other DAWs");
+
+    /*
+     * And back the other way.
+     *
+     * Beside the export button rather than in a menu, because the pair is
+     * the point: a part written somewhere else, brought in, given a chip
+     * voice. Everything it needs has been in the build all along - the MIDI
+     * library was already vendored and linked - which is why the browser
+     * lists .mid files it could not open.
+     */
+    ImGui::SameLine();
+    if (ImGui::Button("Import MIDI", ImVec2(90, 25))) {
+        const std::string path = openFileDialog(
+            "MIDI Files\0*.mid;*.midi\0All files\0*.*\0", "mid");
+        if (!path.empty()) {
+            g_UndoHistory.saveState(project, "Import MIDI");
+            const MidiImportReport report = importMidiFile(path, project);
+            exportStatus = report.summary();
+            if (report.ok) {
+                // The notes changed, so everything downstream of them has to
+                // be told - and an imported project is untrusted input in
+                // exactly the way a loaded file is.
+                clampProjectToValidRanges(project);
+                seq.updateChannelConfigs();
+                seq.setPosition(0.0f);
+            }
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Read a MIDI file in as patterns - one per track, one track per\n"
+            "channel.\n\n"
+            "Notes, timing, length and velocity come across. Instruments do\n"
+            "not: a MIDI file has no sound in it, only a program number that\n"
+            "means something to a General MIDI synth and nothing here. So\n"
+            "your channels keep the voices you gave them.\n\n"
+            "Replaces the patterns and the arrangement. Undo brings them\n"
+            "back.");
+    }
 
     ImGui::SameLine();
     if (ImGui::Button("Stems", ImVec2(58, 25))) {

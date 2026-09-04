@@ -34,6 +34,7 @@
 #include "Templates.h"
 #include "Showcase.h"
 #include "ChipInstruments.h"
+#include "MIDIImport.h"
 #include "GenreKits.h"
 #include "NextStep.h"
 #include "GroovePresets.h"
@@ -22365,6 +22366,360 @@ static void testClickingHeadless() {
 }
 
 // ============================================================================
+// MIDI import
+//
+// Round-tripped through the exporter that already ships, rather than against
+// a MIDI file written by hand for the test. Two reasons: a hand-written
+// fixture only proves the importer agrees with whoever wrote the fixture,
+// and a round trip catches a disagreement between the two halves - which is
+// the failure that actually happens, and the one nobody notices until a file
+// comes back wrong.
+// ============================================================================
+static void testMidiImport() {
+    beginTest("MIDI import");
+
+    /*
+     * ---- The exported tempo is the project's tempo -----------------------
+     *
+     * This is the check that found a bug MIDI export had shipped with from
+     * the start. addTempo takes BEATS PER MINUTE; it was being handed
+     * 60000000/bpm, the microsecond value, which the library then converted
+     * again - so a 132 BPM project wrote 132 microseconds per quarter note
+     * and every file this program exported opened elsewhere at about
+     * 454,000 BPM.
+     *
+     * Nothing caught it because nothing read one back. Asserted separately
+     * from the round trip below so a regression names the tempo rather than
+     * showing up as some other symptom.
+     */
+    {
+        const float TEMPOS[] = {90.0f, 132.0f, 174.0f};
+        for (float bpm : TEMPOS) {
+            auto p = std::make_unique<Project>();
+            p->bpm = bpm;
+            p->patterns.clear();
+            p->arrangement.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 60;
+            note.duration = 1.0f;
+            pattern.notes.push_back(note);
+            p->patterns.push_back(pattern);
+            p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            const std::string path = testPath("tempo.mid");
+            check(MIDIExporter::exportToMIDI(*p, path),
+                  "a " + std::to_string(int(bpm)) + " BPM project exports");
+
+            smf::MidiFile midi;
+            check(midi.read(path), "and the file reads back");
+
+            float found = 0.0f;
+            for (int track = 0; track < midi.getTrackCount() && found <= 0.0f;
+                 ++track) {
+                for (int event = 0; event < midi[track].size(); ++event) {
+                    if (midi[track][event].isTempo()) {
+                        found = float(midi[track][event].getTempoBPM());
+                        break;
+                    }
+                }
+            }
+            check(std::fabs(found - bpm) < 1.0f,
+                  "and says " + std::to_string(int(bpm)) + " BPM, not " +
+                      std::to_string(int(found)) +
+                      " - the units of the tempo field are beats per minute, "
+                      "not microseconds per quarter note");
+
+            std::remove(path.c_str());
+        }
+    }
+
+    // ---- A project, out and back --------------------------------------------
+    {
+        auto originalPtr = std::make_unique<Project>();
+        Project& original = *originalPtr;
+        original.bpm = 132.0f;
+        original.patterns.clear();
+        original.arrangement.clear();
+
+        // Three parts, so the track-to-channel mapping has something to get
+        // wrong, with distinct pitches and lengths so a swap is visible.
+        const int PITCHES[3][4] = {
+            {60, 62, 64, 65},
+            {48, 48, 50, 48},
+            {72, 71, 72, 74},
+        };
+        for (int part = 0; part < 3; ++part) {
+            Pattern pattern;
+            for (int i = 0; i < 4; ++i) {
+                Note note;
+                note.pitch = PITCHES[part][i];
+                note.startTime = float(i) * 0.5f;
+                note.duration = 0.25f + float(part) * 0.25f;
+                note.velocity = 0.5f + float(i) * 0.1f;
+                pattern.notes.push_back(note);
+            }
+            original.patterns.push_back(pattern);
+            original.arrangement.push_back(
+                Clip{int(original.patterns.size()) - 1, part, 0.0f, 4.0f, 0});
+        }
+
+        const std::string path = testPath("roundtrip.mid");
+        check(MIDIExporter::exportToMIDI(original, path),
+              "the project exports to MIDI");
+
+        auto importedPtr = std::make_unique<Project>();
+        Project& imported = *importedPtr;
+        const MidiImportReport report = importMidiFile(path, imported);
+
+        check(report.ok, "and imports back: " + report.summary());
+        check(report.tracksRead == 3,
+              "with three tracks, got " + std::to_string(report.tracksRead));
+        check(report.notesImported == 12,
+              "and twelve notes, got " + std::to_string(report.notesImported));
+
+        check(std::fabs(imported.bpm - 132.0f) < 1.0f,
+              "the tempo survives, got " + std::to_string(imported.bpm));
+
+        // The pitches, in order, per track. This is what catches a track
+        // mapping that is off by one or reversed - both of which produce a
+        // project with exactly the right number of notes in it.
+        if (imported.patterns.size() == 3) {
+            bool allMatch = true;
+            std::string mismatch;
+            for (int part = 0; part < 3; ++part) {
+                const Pattern& pattern = imported.patterns[size_t(part)];
+                if (pattern.notes.size() != 4) {
+                    allMatch = false;
+                    mismatch = "track " + std::to_string(part) + " has " +
+                               std::to_string(pattern.notes.size()) + " notes";
+                    break;
+                }
+                for (int i = 0; i < 4; ++i) {
+                    if (pattern.notes[size_t(i)].pitch != PITCHES[part][i]) {
+                        allMatch = false;
+                        mismatch = "track " + std::to_string(part) + " note " +
+                                   std::to_string(i) + " came back as " +
+                                   std::to_string(pattern.notes[size_t(i)].pitch) +
+                                   " rather than " +
+                                   std::to_string(PITCHES[part][i]);
+                        break;
+                    }
+                }
+                if (!allMatch) break;
+            }
+            check(allMatch,
+                  "every note comes back on the track it left on, at the "
+                  "pitch it left at" +
+                      (allMatch ? std::string() : " (" + mismatch + ")"));
+
+            // Timing, which is the half that a wrong timebase silently
+            // halves or doubles without changing a single pitch.
+            const Pattern& first = imported.patterns[0];
+            bool timed = true;
+            for (int i = 0; i < 4; ++i) {
+                const float expected = float(i) * 0.5f;
+                if (std::fabs(first.notes[size_t(i)].startTime - expected) > 0.02f) {
+                    timed = false;
+                }
+            }
+            check(timed,
+                  "and at the beat it left on - a wrong timebase halves or "
+                  "doubles everything without changing a pitch");
+
+            check(std::fabs(first.notes[0].duration - 0.25f) < 0.03f,
+                  "note length survives too, got " +
+                      std::to_string(first.notes[0].duration));
+
+            // Velocity is 7-bit on the way out, so it comes back quantised
+            // rather than identical. Within a step is the most that can be
+            // asked of it.
+            check(std::fabs(first.notes[1].velocity - 0.6f) < 0.02f,
+                  "and velocity, within the 7-bit step MIDI stores it in - "
+                  "got " + std::to_string(first.notes[1].velocity));
+        }
+
+        std::remove(path.c_str());
+    }
+
+    // ---- It leaves the sound alone -------------------------------------------
+    //
+    // A MIDI file has no instrument in it - only a program number that means
+    // something to a General MIDI synthesiser and nothing here. So importing
+    // into a project somebody has already voiced has to keep the voicing and
+    // swap the notes.
+    {
+        auto sourcePtr = std::make_unique<Project>();
+        sourcePtr->patterns.clear();
+        sourcePtr->arrangement.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = 64;
+        note.duration = 1.0f;
+        pattern.notes.push_back(note);
+        sourcePtr->patterns.push_back(pattern);
+        sourcePtr->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("voiced.mid");
+        check(MIDIExporter::exportToMIDI(*sourcePtr, path), "a one-note file exports");
+
+        auto targetPtr = std::make_unique<Project>();
+        targetPtr->channels[0].oscillator.type = OscillatorType::FMSynth;
+        targetPtr->channels[0].volume = 0.42f;
+        targetPtr->channels[0].name = "My Bass";
+        targetPtr->masterSaturationEnabled = true;
+
+        const MidiImportReport report = importMidiFile(path, *targetPtr);
+        check(report.ok, "and imports into a voiced project");
+        check(targetPtr->channels[0].oscillator.type == OscillatorType::FMSynth &&
+              std::fabs(targetPtr->channels[0].volume - 0.42f) < 1e-4f &&
+              targetPtr->channels[0].name == "My Bass",
+              "which keeps its instrument, its level and its name");
+        check(targetPtr->masterSaturationEnabled,
+              "and its master chain");
+        check(!targetPtr->patterns.empty() &&
+              targetPtr->patterns[0].notes.size() == 1,
+              "while the notes are replaced");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- What it refuses, and what it says -----------------------------------
+    {
+        auto p = std::make_unique<Project>();
+
+        const MidiImportReport missing =
+            importMidiFile(testPath("no-such-file.mid"), *p);
+        check(!missing.ok, "a missing file does not import");
+        check(missing.summary().find("Could not") != std::string::npos,
+              "and says so: " + missing.summary());
+
+        // Something of the right extension that is not a MIDI file - the
+        // realistic accident, and the one where a silent partial import
+        // would be worst.
+        const std::string junkPath = testPath("not-really.mid");
+        {
+            std::ofstream junk(junkPath, std::ios::binary);
+            junk << "This is a text file that somebody renamed.";
+        }
+        auto q = std::make_unique<Project>();
+        const size_t patternsBefore = q->patterns.size();
+        const MidiImportReport junkReport = importMidiFile(junkPath, *q);
+        check(!junkReport.ok, "and neither does a renamed text file");
+        check(q->patterns.size() == patternsBefore,
+              "and the project it was imported into is untouched - a refused "
+              "import must not half-empty the thing it failed to fill");
+
+        std::remove(junkPath.c_str());
+    }
+
+    // ---- More tracks than there are channels --------------------------------
+    //
+    // The case where a quiet partial import would be worst: a large
+    // orchestral file arrives, most of it does not fit, and without a report
+    // the only evidence is that it sounds thin.
+    {
+        auto sourcePtr = std::make_unique<Project>();
+        sourcePtr->patterns.clear();
+        sourcePtr->arrangement.clear();
+
+        // One part per channel the project has, plus more than will fit.
+        for (int i = 0; i < Project::MAX_CHANNELS; ++i) {
+            Pattern pattern;
+            Note note;
+            note.pitch = 40 + i;
+            note.duration = 1.0f;
+            pattern.notes.push_back(note);
+            sourcePtr->patterns.push_back(pattern);
+            sourcePtr->arrangement.push_back(
+                Clip{i, i % Project::MAX_CHANNELS, 0.0f, 4.0f, 0});
+        }
+
+        const std::string path = testPath("many-tracks.mid");
+        check(MIDIExporter::exportToMIDI(*sourcePtr, path),
+              "a project on every channel exports");
+
+        auto importedPtr = std::make_unique<Project>();
+        const MidiImportReport report = importMidiFile(path, *importedPtr);
+
+        check(report.ok, "and imports");
+        check(report.tracksRead <= Project::MAX_CHANNELS,
+              "filling at most the channels that exist, got " +
+                  std::to_string(report.tracksRead));
+        check(importedPtr->arrangement.size() == size_t(report.tracksRead),
+              "with a clip for each one");
+
+        // If anything was dropped, the report has to say so rather than
+        // leaving the user to count.
+        if (report.tracksDropped > 0) {
+            check(report.summary().find("skipped") != std::string::npos,
+                  "and says what was skipped: " + report.summary());
+        } else {
+            check(true, "and nothing needed dropping");
+        }
+
+        std::remove(path.c_str());
+    }
+
+    // ---- What comes in is playable -------------------------------------------
+    //
+    // The structural guard. An importer that fills a Project the sequencer
+    // then refuses is a parser.
+    {
+        auto sourcePtr = std::make_unique<Project>();
+        sourcePtr->bpm = 120.0f;
+        sourcePtr->patterns.clear();
+        sourcePtr->arrangement.clear();
+        Pattern pattern;
+        for (int i = 0; i < 8; ++i) {
+            Note note;
+            note.pitch = 55 + i;
+            note.startTime = float(i) * 0.25f;
+            note.duration = 0.2f;
+            pattern.notes.push_back(note);
+        }
+        sourcePtr->patterns.push_back(pattern);
+        sourcePtr->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        const std::string path = testPath("playable.mid");
+        check(MIDIExporter::exportToMIDI(*sourcePtr, path), "the file exports");
+
+        auto p = std::make_unique<Project>();
+        const MidiImportReport report = importMidiFile(path, *p);
+        check(report.ok, "and imports");
+
+        // Straight through the validator, because an imported project is
+        // untrusted input in exactly the way a loaded file is.
+        clampProjectToValidRanges(*p);
+        check(!p->patterns.empty() && !p->patterns[0].notes.empty(),
+              "and survives validation with its notes");
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(p.get());
+        seqPtr->updateChannelConfigs();
+        seqPtr->updateMasterEffects();
+        seqPtr->play();
+
+        std::vector<float> l(512), r(512);
+        float peak = 0.0f;
+        bool finite = true;
+        for (int b = 0; b < 40; ++b) {
+            seqPtr->process(l.data(), r.data(), 512);
+            for (int i = 0; i < 512; ++i) {
+                if (!std::isfinite(l[size_t(i)])) finite = false;
+                peak = std::max(peak, std::fabs(l[size_t(i)]));
+            }
+        }
+        check(finite, "and plays without producing anything NaN");
+        check(peak > 0.01f,
+              "and actually makes a sound, peak " + std::to_string(peak));
+
+        std::remove(path.c_str());
+    }
+}
+
+// ============================================================================
 // Groove
 //
 // The property that matters more than any feel is that a groove must not
@@ -26554,6 +26909,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testMidiImport();
     testGrooveTiming();
     testChipModel();
     testLegato();

@@ -93,10 +93,19 @@ private:
                                                 static_cast<double>(tpq)));
         };
 
-        // The opening tempo and meter, which is all a project without a map
-        // has - and exactly what was written before.
-        midi.addTempo(0, 0, static_cast<int>(60000000.0f /
-                                             std::max(1.0f, project.bpm)));
+        /*
+         * addTempo takes BEATS PER MINUTE, not microseconds per quarter note.
+         *
+         * It was being handed 60000000/bpm - the microsecond value - which
+         * the library then converted AGAIN, so a 132 BPM project wrote a
+         * tempo of 132 microseconds per quarter note and came out as about
+         * 454,545 BPM. Every MIDI file this program has ever exported opened
+         * in another program at an absurd tempo.
+         *
+         * Nothing caught it because nothing read one back. Writing the
+         * importer did, on the first round trip.
+         */
+        midi.addTempo(0, 0, static_cast<double>(std::max(1.0f, project.bpm)));
 
         const MeterChange opening = project.meterAt(0.0f);
         midi.addTimeSignature(0, 0, opening.numerator, opening.denominator);
@@ -104,8 +113,9 @@ private:
         for (int i = 0; i < project.tempoMap.tempoCount(); ++i) {
             const TempoChange& change = project.tempoMap.tempoAt(i);
             if (change.beat <= 0.0f) continue;   // already written at tick 0
+            // BPM here too - see the opening tempo above.
             midi.addTempo(0, tickOf(change.beat),
-                          static_cast<int>(60000000.0f / std::max(1.0f, change.bpm)));
+                          static_cast<double>(std::max(1.0f, change.bpm)));
         }
 
         for (int i = 0; i < project.tempoMap.meterCount(); ++i) {
