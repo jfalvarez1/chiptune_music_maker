@@ -27,13 +27,13 @@
 // existed, the effects knew their own latency, and nothing summed or applied
 // any of it.
 //
-// WHAT THIS DOES NOT COVER, stated plainly rather than left to be
-// discovered. Compensation is applied per channel, after that channel's
-// effects and plugins. A latency-bearing effect on a BUS is not compensated:
-// every channel feeding that bus is late together, so they stay in time with
-// each other, but they are late against channels routed elsewhere. Buses
-// carry the same effects chain, so this is a real gap and not a theoretical
-// one - it is simply the next piece of work rather than this one.
+// BUSES TOO. A send is a copy of a channel into a bus, processed there and
+// returned to the mix - and if that bus carries a vocoder, the returned copy
+// is a window later than the original it is being blended with. Two copies
+// of the same sound a few milliseconds apart is a comb filter, which is the
+// audible failure people describe as "the parallel bus sounds hollow". So
+// the graph is levelled as a whole: every path from a channel to the master,
+// direct or through any depth of bus, is made the same length.
 //
 // AUDIO THREAD RULES. The delay line is a fixed-capacity buffer allocated
 // once. process() does no allocation, takes no locks, and touches no
@@ -149,6 +149,135 @@ inline void computeCompensation(const std::vector<int>& latencies,
         const int own = std::max(0, latencies[i]);
         delaysOut[i] = std::clamp(worst - own, 0,
                                   CompensationDelay::MAX_SAMPLES - 1);
+    }
+}
+
+// ============================================================================
+// The routing graph
+// ============================================================================
+/*
+ * What a bus looks like from here.
+ *
+ * `order` is the topological walk the mixer already computes - a bus always
+ * appears after everything that feeds it - which is what makes this a single
+ * forward pass rather than a graph traversal.
+ *
+ * `channelLatency` is what the channels have already been levelled to by
+ * computeCompensation above: every channel's signal is that many samples old
+ * by the time it reaches a send.
+ */
+struct BusGraph {
+    std::vector<int> latency;          // each bus's own effects-chain latency
+    std::vector<int> output;           // -1 for master, otherwise a bus index
+    std::vector<char> receivesSend;    // does any channel send into it
+    std::vector<int> order;            // topological, sources first
+    int channelLatency = 0;
+};
+
+/*
+ * Where the delays go.
+ *
+ * Three places, and it has to be three. A bus input cannot simply be delayed
+ * as a whole, because the signals arriving there are not all equally late:
+ * a channel send arrives at the channel latency, while another bus feeding
+ * the same input arrives at whatever that bus cost. Delaying the input
+ * delays both, and the one that was already correct becomes wrong.
+ *
+ * So the channel sends into a bus are delayed together (they are all equally
+ * old), each bus's OUTPUT is delayed to match wherever it is going, and the
+ * channels' direct path to the master is delayed to match the buses coming
+ * back. That is the general rule, and it happens to reduce to nothing at all
+ * when no bus has any latency, which is nearly every project.
+ */
+struct BusCompensation {
+    std::vector<int> sendInput;   // on the channel-send sum entering each bus
+    std::vector<int> busOutput;   // on each bus's output, before it goes on
+    int direct = 0;               // on every channel's direct path to master
+    int total = 0;                // how late the whole mix ends up
+};
+
+inline void computeBusCompensation(const BusGraph& graph, BusCompensation& out) {
+    const size_t count = graph.latency.size();
+    out.sendInput.assign(count, 0);
+    out.busOutput.assign(count, 0);
+    out.direct = 0;
+    out.total = std::max(0, graph.channelLatency);
+
+    if (count == 0) return;
+
+    const int channelLatency = std::max(0, graph.channelLatency);
+
+    // How late a signal is when it ARRIVES at each bus, and when it LEAVES.
+    std::vector<int> arriving(count, 0);
+    std::vector<int> leaving(count, 0);
+    std::vector<char> used(count, 0);
+
+    for (size_t i = 0; i < count; ++i) {
+        if (i < graph.receivesSend.size() && graph.receivesSend[i] != 0) {
+            arriving[i] = channelLatency;
+            used[i] = 1;
+        }
+    }
+
+    /*
+     * One forward pass in topological order.
+     *
+     * A bus's arrival time is final by the time we reach it, because
+     * everything that feeds it came earlier in the order. That is the whole
+     * reason the mixer computes that order, and it is why this needs no
+     * recursion and no visited set.
+     */
+    int masterArrival = channelLatency;   // the channels' own direct path
+
+    for (size_t slot = 0; slot < graph.order.size(); ++slot) {
+        const int bus = graph.order[slot];
+        if (bus < 0 || static_cast<size_t>(bus) >= count) continue;
+        const size_t b = static_cast<size_t>(bus);
+
+        leaving[b] = arriving[b] + std::max(0, graph.latency[b]);
+        if (used[b] == 0) continue;   // nothing reaches it, so it costs nothing
+
+        const int destination =
+            (b < graph.output.size()) ? graph.output[b] : -1;
+
+        if (destination >= 0 && static_cast<size_t>(destination) < count &&
+            static_cast<size_t>(destination) != b) {
+            const size_t d = static_cast<size_t>(destination);
+            arriving[d] = std::max(arriving[d], leaving[b]);
+            used[d] = 1;
+        } else {
+            masterArrival = std::max(masterArrival, leaving[b]);
+        }
+    }
+
+    out.total = masterArrival;
+    out.direct = masterArrival - channelLatency;
+
+    for (size_t b = 0; b < count; ++b) {
+        if (used[b] == 0) continue;
+
+        // The channel sends wait for whatever else is arriving here.
+        out.sendInput[b] = arriving[b] - channelLatency;
+
+        const int destination =
+            (b < graph.output.size()) ? graph.output[b] : -1;
+        const int target =
+            (destination >= 0 && static_cast<size_t>(destination) < count &&
+             static_cast<size_t>(destination) != b)
+                ? arriving[static_cast<size_t>(destination)]
+                : masterArrival;
+
+        out.busOutput[b] = target - leaving[b];
+    }
+
+    // Nothing here can legitimately be negative - every delay is a target
+    // minus something that reached it earlier - but a malformed graph must
+    // clamp rather than index off the end of a delay line.
+    const int ceiling = CompensationDelay::MAX_SAMPLES - 1;
+    out.direct = std::clamp(out.direct, 0, ceiling);
+    for (size_t b = 0; b < count; ++b) {
+        out.sendInput[b] = std::clamp(out.sendInput[b], 0, ceiling);
+        out.busOutput[b] = std::clamp(out.busOutput[b], 0, ceiling);
     }
 }
 

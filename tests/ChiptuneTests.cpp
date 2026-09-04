@@ -22400,6 +22400,265 @@ static void testDelayCompensation() {
                     plain1, otherChannel, PitchShifter::WINDOW);
     }
 
+    // ---- The send graph ------------------------------------------------------
+    //
+    // A bus input cannot just be delayed as a whole. The signals arriving
+    // there are not equally old: a channel send is fresh, another bus
+    // feeding the same input is already late by whatever it cost. Delay the
+    // input and the one that was right becomes wrong. So the arithmetic
+    // below is checked by adding up every path and asserting they match,
+    // which is the only property that actually matters.
+    {
+        auto pathsAgree = [](const BusGraph& graph, const BusCompensation& c) {
+            // Direct: channel -> master.
+            const int direct = graph.channelLatency + c.direct;
+            bool ok = (direct == c.total);
+
+            // Every bus, walked out to the master.
+            for (size_t b = 0; b < graph.latency.size(); ++b) {
+                if (graph.receivesSend[b] == 0) continue;
+
+                int at = graph.channelLatency + c.sendInput[b];
+                size_t here = b;
+                for (int guard = 0; guard < 8; ++guard) {
+                    at += graph.latency[here] + c.busOutput[here];
+                    const int next = graph.output[here];
+                    if (next < 0 || static_cast<size_t>(next) >= graph.latency.size() ||
+                        static_cast<size_t>(next) == here) {
+                        break;
+                    }
+                    here = static_cast<size_t>(next);
+                }
+                if (at != c.total) ok = false;
+            }
+            return ok;
+        };
+
+        // One bus, one vocoder on it, a parallel send. The classic case.
+        {
+            BusGraph graph;
+            graph.channelLatency = 0;
+            graph.latency = {1024, 0, 0, 0};
+            graph.output = {-1, -1, -1, -1};
+            graph.receivesSend = {1, 0, 0, 0};
+            graph.order = {0, 1, 2, 3};
+
+            BusCompensation c;
+            computeBusCompensation(graph, c);
+
+            check(c.total == 1024, "the mix is as late as its latest bus");
+            check(c.direct == 1024,
+                  "and the dry path waits for the wet copy to come back, "
+                  "which is what stops a parallel send comb-filtering, got " +
+                      std::to_string(c.direct));
+            check(c.sendInput[0] == 0 && c.busOutput[0] == 0,
+                  "the bus itself waits for nothing");
+            check(pathsAgree(graph, c), "every path is the same length");
+        }
+
+        // A bus feeding a bus, with sends landing on both.
+        {
+            BusGraph graph;
+            graph.channelLatency = 0;
+            graph.latency = {1024, 512, 0, 0};
+            graph.output = {1, -1, -1, -1};      // bus 0 -> bus 1 -> master
+            graph.receivesSend = {1, 1, 0, 0};
+            graph.order = {0, 1, 2, 3};
+
+            BusCompensation c;
+            computeBusCompensation(graph, c);
+
+            check(c.total == 1536, "a chained bus adds up, got " +
+                                       std::to_string(c.total));
+            check(c.sendInput[1] == 1024,
+                  "a channel sending straight into the second bus waits for "
+                  "the first one, got " + std::to_string(c.sendInput[1]));
+            check(c.sendInput[0] == 0,
+                  "and one sending into the first waits for nothing");
+            check(pathsAgree(graph, c),
+                  "every path through the chain is the same length");
+        }
+
+        // A bus nobody uses must not cost the song anything.
+        {
+            BusGraph graph;
+            graph.channelLatency = 0;
+            graph.latency = {0, 0, 4096, 0};
+            graph.output = {-1, -1, -1, -1};
+            graph.receivesSend = {0, 0, 0, 0};
+            graph.order = {0, 1, 2, 3};
+
+            BusCompensation c;
+            computeBusCompensation(graph, c);
+            check(c.total == 0 && c.direct == 0,
+                  "an unused bus with an effect on it costs the mix nothing");
+        }
+
+        // The channels' own latency carries through.
+        {
+            BusGraph graph;
+            graph.channelLatency = 512;
+            graph.latency = {1024, 0, 0, 0};
+            graph.output = {-1, -1, -1, -1};
+            graph.receivesSend = {1, 0, 0, 0};
+            graph.order = {0, 1, 2, 3};
+
+            BusCompensation c;
+            computeBusCompensation(graph, c);
+            check(c.total == 1536,
+                  "channel latency and bus latency stack, got " +
+                      std::to_string(c.total));
+            check(pathsAgree(graph, c), "and the paths still agree");
+        }
+    }
+
+    // ---- A parallel send, measured -------------------------------------------
+    //
+    // The test that would fail loudest if any of this were wrong.
+    //
+    // A channel goes to the master and also sends a copy of itself into a
+    // bus. The same mix is rendered twice: once with an empty bus, and once
+    // with a vocoder on the bus set fully dry - which, now that the dry path
+    // is held back to meet the wet one, is a bit-exact 1024-sample delay and
+    // nothing else.
+    //
+    // A pure delay on a bus must not change the mix. It only makes the whole
+    // thing 1024 samples later, so the two renders have to be identical once
+    // that offset is taken out. If the compensation were missing, wrong, or
+    // applied in the wrong direction, the returning copy would land beside
+    // the direct one instead of on it - two copies of the same sound a few
+    // milliseconds apart, which is a comb filter and looks nothing like the
+    // reference.
+    //
+    // Comparing against a reference render rather than against "twice the
+    // dry signal" on purpose: it assumes nothing about send levels, pan law
+    // or bus gain, so what it measures is only the timing.
+    {
+        auto render = [](int busMode) {   // 0 no send, 1 empty bus, 2 vocoder
+            Project p;
+            p.bpm = 120.0f;
+            p.masterLimiterEnabled = false;
+            p.masterCompressorEnabled = false;
+            p.masterEQEnabled = false;
+            p.masterWidthEnabled = false;
+            p.masterSaturationEnabled = false;
+            p.masterVolume = 0.5f;
+            p.chipMixEnabled = false;
+
+            p.channels[0].oscillator.type = OscillatorType::Sawtooth;
+            p.channels[0].volume = 0.35f;
+            p.channels[0].pan = 0.0f;
+
+            if (busMode > 0) {
+                p.channels[0].sends[0].destination = 0;
+                p.channels[0].sends[0].level = 1.0f;
+                p.channels[0].sends[0].preFader = false;
+                p.auxBuses[0].volume = 1.0f;
+                p.auxBuses[0].pan = 0.0f;
+                p.auxBuses[0].output = -1;
+            }
+            if (busMode == 2) {
+                p.auxBuses[0].strip.pitchShiftEnabled = true;
+                p.auxBuses[0].strip.pitchShiftSemitones = 0.0f;
+                p.auxBuses[0].strip.pitchShiftMix = 0.0f;  // pure dry: an
+                                                           // exact 1024-sample
+                                                           // delay and nothing
+                                                           // else
+            }
+
+            p.patterns.clear();
+            Pattern pattern;
+            Note note;
+            note.pitch = 55;
+            note.startTime = 0.0f;
+            note.duration = 8.0f;
+            note.oscillatorType = OscillatorType::Sawtooth;
+            pattern.notes.push_back(note);
+            p.patterns.push_back(pattern);
+            p.arrangement.clear();
+            p.arrangement.push_back(Clip{0, 0, 0.0f, 16.0f, 0});
+
+            auto seqPtr = std::make_unique<Sequencer>();
+            seqPtr->setSampleRate(44100.0f);
+            seqPtr->setProject(&p);
+            seqPtr->updateChannelConfigs();
+            seqPtr->updateMasterEffects();
+            seqPtr->play();
+
+            std::vector<float> l(512), r(512), collected;
+            for (int b = 0; b < 40; ++b) {
+                seqPtr->process(l.data(), r.data(), 512);
+                collected.insert(collected.end(), l.begin(), l.end());
+            }
+            return collected;
+        };
+
+        const std::vector<float> reference = render(1);
+        const std::vector<float> delayed = render(2);
+
+        // The steady middle, past the note's attack and past the delay.
+        const int offset = PitchShifter::WINDOW;
+        double worst = 0.0;
+        double peak = 0.0;
+        for (size_t i = 6000; i < 16000; ++i) {
+            const size_t j = i + static_cast<size_t>(offset);
+            if (i >= reference.size() || j >= delayed.size()) break;
+            peak = std::max(peak, std::fabs(double(reference[i])));
+            worst = std::max(worst,
+                             std::fabs(double(delayed[j]) - double(reference[i])));
+        }
+
+        check(peak > 0.01, "the parallel mix is audible to begin with");
+        check(worst < peak * 0.02,
+              "a pure delay on a bus changes nothing but when the mix starts "
+              "- worst deviation " + std::to_string(worst) +
+                  " against a peak of " + std::to_string(peak));
+
+        std::printf("        parallel send: peak %.3f, worst deviation "
+                    "%.5f after removing %d samples of mix latency\n",
+                    peak, worst, offset);
+    }
+
+    // ---- And the installed delays level the graph ----------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->channels[0].sends[0].destination = 0;
+        p->channels[0].sends[0].level = 0.5f;
+        p->auxBuses[0].output = -1;
+        p->auxBuses[0].strip.pitchShiftEnabled = true;
+        p->auxBuses[0].strip.pitchShiftMix = 1.0f;
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(p.get());
+        seqPtr->updateChannelConfigs();
+
+        check(seqPtr->busLatencySamples(0) == PitchShifter::WINDOW,
+              "the bus reports its vocoder's latency");
+
+        const int channelLevel = seqPtr->channelLatencySamples(0) +
+                                 0;   // no channel effects here
+        const int directPath = channelLevel + seqPtr->directDelaySamples();
+        const int sendPath = channelLevel + seqPtr->busSendDelaySamples(0) +
+                             seqPtr->busLatencySamples(0) +
+                             seqPtr->busOutputDelaySamples(0);
+
+        check(directPath == sendPath,
+              "the direct path and the send path are the same length: " +
+                  std::to_string(directPath) + " against " +
+                  std::to_string(sendPath));
+        check(seqPtr->compensatedLatencySamples() == directPath,
+              "and that is what the mixer says its latency is");
+
+        // Removing the send gives it all back.
+        p->channels[0].sends[0].level = 0.0f;
+        seqPtr->updateChannelConfigs();
+        check(seqPtr->compensatedLatencySamples() == 0 &&
+              seqPtr->directDelaySamples() == 0,
+              "a bus nobody sends to costs the mix nothing, even with an "
+              "effect sitting on it");
+    }
+
     // ---- Switching the effect off gives the time back ------------------------
     //
     // A compensation that is applied and never withdrawn leaves the whole

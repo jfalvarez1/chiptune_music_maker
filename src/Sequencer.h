@@ -410,6 +410,21 @@ public:
                         tap * send.level;
                 }
 
+                /*
+                 * The direct path waits for the buses.
+                 *
+                 * After the send tap and not before it, which is the whole
+                 * subtlety: the copy going to a bus still has the bus's own
+                 * processing ahead of it, so it must leave here early. What
+                 * goes straight to the master has nothing left to do and has
+                 * to wait for the copy to come back, or the two blend a few
+                 * milliseconds apart and comb-filter each other.
+                 *
+                 * Zero, and therefore free, unless some bus actually has
+                 * latency on it.
+                 */
+                sample = m_directDelay[ch].process(sample);
+
                 auto& fx = m_synths[ch].effects();
                 if (fx.stereoWidenerEnabled) {
                     auto [wideL, wideR] = fx.stereoWidener.process(sample);
@@ -432,15 +447,32 @@ public:
                 const AuxBusConfig& config =
                     m_project->auxBuses[static_cast<size_t>(bus)];
 
-                float busSample = m_auxAccum[static_cast<size_t>(bus)];
-                busSample = m_auxChains[static_cast<size_t>(bus)].process(busSample,
-                                                                          m_state.currentTime);
+                /*
+                 * Two arrivals, held apart on purpose.
+                 *
+                 * m_auxAccum carries the copies sent here by channels, all
+                 * equally old. m_auxBusAccum carries what other buses have
+                 * already finished with, which is older still. Delaying the
+                 * bus input as a whole would push both back and leave the
+                 * one that was already right too late; only the channel
+                 * sends wait.
+                 */
+                const size_t b = static_cast<size_t>(bus);
+                float busSample = m_busSendDelay[b].process(m_auxAccum[b]) +
+                                  m_auxBusAccum[b];
+                m_auxCombined[b] = busSample;
+
+                busSample = m_auxChains[b].process(busSample, m_state.currentTime);
                 if (config.muted) busSample = 0.0f;
                 busSample *= config.volume;
 
+                // And the bus's output waits for whatever it is about to be
+                // mixed with, wherever that is.
+                busSample = m_busOutDelay[b].process(busSample);
+
                 if (config.output >= 0 && config.output < Project::MAX_AUX_BUSES &&
                     config.output != bus) {
-                    m_auxAccum[static_cast<size_t>(config.output)] += busSample;
+                    m_auxBusAccum[static_cast<size_t>(config.output)] += busSample;
                 } else {
                     const float busPan = config.pan;
                     left += busSample * std::cos((busPan + 1.0f) * 0.25f * PI);
@@ -448,9 +480,14 @@ public:
                 }
             }
 
-            // Kept for next sample's bus sidechaining, then cleared.
-            m_auxPrevious = m_auxAccum;
+            // Kept for next sample's bus sidechaining, then cleared. The
+            // COMBINED input, so ducking off a bus follows what the bus
+            // actually heard rather than only the part of it that arrived
+            // by send.
+            m_auxPrevious = m_auxCombined;
             m_auxAccum.fill(0.0f);
+            m_auxBusAccum.fill(0.0f);
+            m_auxCombined.fill(0.0f);
 
             // The console's own output filters, applied before the master
             // bus: on hardware these are the last thing between the APU and
@@ -616,21 +653,96 @@ public:
         std::vector<int> delays;
         computeCompensation(latencies, delays);
 
+        int channelLevel = 0;
         for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
             m_compensation[ch].setDelay(delays[static_cast<size_t>(ch)]);
+            channelLevel = std::max(channelLevel,
+                                    delays[static_cast<size_t>(ch)] +
+                                        m_channelLatency[static_cast<size_t>(ch)]);
         }
+
+        updateBusCompensation(channelLevel);
     }
 
-    // What the whole mix is delayed by, for anything that needs to know -
-    // it is the latency of the latest channel, since every other one is
-    // brought out to meet it.
-    int compensatedLatencySamples() const {
-        int worst = 0;
-        for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
-            worst = std::max(worst, m_compensation[ch].delay() +
-                                        m_channelLatency[ch]);
+    /*
+     * Level the send graph on top of the levelled channels.
+     *
+     * Separate from the channel pass because it depends on its result: every
+     * channel is `channelLevel` samples old by the time a send is taken from
+     * it, and that is the number the bus arithmetic starts from.
+     */
+    void updateBusCompensation(int channelLevel) {
+        BusGraph graph;
+        graph.channelLatency = channelLevel;
+        graph.latency.assign(Project::MAX_AUX_BUSES, 0);
+        graph.output.assign(Project::MAX_AUX_BUSES, -1);
+        graph.receivesSend.assign(Project::MAX_AUX_BUSES, 0);
+
+        if (m_project != nullptr) {
+            for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
+                const size_t b = static_cast<size_t>(bus);
+                graph.latency[b] = m_auxChains[b].latencySamples();
+                graph.output[b] = m_project->auxBuses[b].output;
+            }
+
+            for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+                const ChannelConfig& config =
+                    m_project->channels[static_cast<size_t>(ch)];
+                for (int slot = 0; slot < MAX_SENDS_PER_CHANNEL; ++slot) {
+                    const SendConfig& send =
+                        config.sends[static_cast<size_t>(slot)];
+                    if (send.destination < 0 ||
+                        send.destination >= Project::MAX_AUX_BUSES) {
+                        continue;
+                    }
+                    if (send.level <= 0.0f) continue;
+                    graph.receivesSend[static_cast<size_t>(send.destination)] = 1;
+                }
+            }
         }
-        return worst;
+
+        // The mixer's own walk, which is already topological.
+        graph.order.assign(m_busOrder.begin(),
+                           m_busOrder.begin() + std::clamp(m_busOrderCount, 0,
+                                                           Project::MAX_AUX_BUSES));
+
+        BusCompensation compensation;
+        computeBusCompensation(graph, compensation);
+
+        for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
+            const size_t b = static_cast<size_t>(bus);
+            m_busSendDelay[b].setDelay(compensation.sendInput[b]);
+            m_busOutDelay[b].setDelay(compensation.busOutput[b]);
+        }
+        for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+            m_directDelay[ch].setDelay(compensation.direct);
+        }
+        m_mixLatency = compensation.total;
+    }
+
+    // What the whole mix is delayed by, for anything that needs to know: the
+    // length of the longest path from any channel to the master, which every
+    // other path has been brought out to meet.
+    int compensatedLatencySamples() const { return m_mixLatency; }
+
+    // The delays that were actually installed, so a test can add up a path
+    // through the graph and assert every path is the same length. Reporting
+    // the intent is not the same as reporting what got written.
+    int directDelaySamples() const { return m_directDelay[0].delay(); }
+
+    int busSendDelaySamples(int bus) const {
+        const int index = std::clamp(bus, 0, Project::MAX_AUX_BUSES - 1);
+        return m_busSendDelay[static_cast<size_t>(index)].delay();
+    }
+
+    int busOutputDelaySamples(int bus) const {
+        const int index = std::clamp(bus, 0, Project::MAX_AUX_BUSES - 1);
+        return m_busOutDelay[static_cast<size_t>(index)].delay();
+    }
+
+    int busLatencySamples(int bus) {
+        const int index = std::clamp(bus, 0, Project::MAX_AUX_BUSES - 1);
+        return m_auxChains[static_cast<size_t>(index)].latencySamples();
     }
 
     // Needed to turn a sample count into milliseconds anywhere the number is
@@ -732,16 +844,6 @@ public:
             m_synths[ch].setChannelConfig(config);
         }
 
-        /*
-         * Latency changed, so the compensation has to be recomputed.
-         *
-         * Here rather than at every call site: switching on a convolution
-         * reverb or a pitch shifter goes through this function, and a
-         * compensation that is only updated when somebody remembers is one
-         * that is wrong exactly when it matters.
-         */
-        updateDelayCompensation();
-
         // Aux buses. Their strips are ChannelConfigs, so the same rack sync
         // the channels use configures them - one code path, not two.
         for (int bus = 0; bus < Project::MAX_AUX_BUSES; ++bus) {
@@ -760,6 +862,20 @@ public:
             breakRoutingCycles(m_project->auxBuses);
             computeBusOrder(m_project->auxBuses, m_busOrder.data(), m_busOrderCount);
         }
+
+        /*
+         * Latency changed, so the compensation has to be recomputed.
+         *
+         * Here rather than at every call site: switching on a convolution
+         * reverb or a pitch shifter goes through this function, and a
+         * compensation that is only updated when somebody remembers is one
+         * that is wrong exactly when it matters.
+         *
+         * Last, because the bus half of it reads the routing order that was
+         * only just resolved. Running it before that walked whatever order
+         * the previous project left behind.
+         */
+        updateDelayCompensation();
     }
 
     void updateMasterEffects() {
@@ -1358,6 +1474,20 @@ private:
      */
     std::array<CompensationDelay, MAX_CHANNELS> m_compensation;
     std::array<int, MAX_CHANNELS> m_channelLatency{};
+
+    /*
+     * The rest of the graph.
+     *
+     * m_directDelay holds a channel's straight-to-master path back until the
+     * copy that went out through a bus has come back. The bus lines level
+     * the sends arriving at each bus and each bus's own output.
+     */
+    std::array<CompensationDelay, MAX_CHANNELS> m_directDelay;
+    std::array<CompensationDelay, Project::MAX_AUX_BUSES> m_busSendDelay;
+    std::array<CompensationDelay, Project::MAX_AUX_BUSES> m_busOutDelay;
+    std::array<float, Project::MAX_AUX_BUSES> m_auxBusAccum{};
+    std::array<float, Project::MAX_AUX_BUSES> m_auxCombined{};
+    int m_mixLatency = 0;
 
     // Decaying peak level per channel, for the mixer meters
     std::array<float, MAX_CHANNELS> m_channelPeaks = {};
