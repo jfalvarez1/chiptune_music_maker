@@ -7,6 +7,114 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.10.0] - 2026-09-03 - "Voice"
+
+Sing a song into it and get a song out. And a mixer that keeps everything in
+time with everything else, which turned out to be a bigger job than it looked.
+
+### Added
+
+- **Voice Mode.** Build a song a part at a time by singing it. Beatbox a
+  groove and keep it; hum a bass line against what you just kept; hum a lead
+  over both. Each take becomes a real pattern on its own channel with an
+  instrument chosen for the part it is playing, so what comes out is an
+  ordinary project you can edit like any other.
+
+  It works out the tempo you played at, so there is no click to hum along
+  to, and it puts each part in the register that part belongs in rather than
+  wherever your voice happened to be.
+
+- **Drum kits for beatboxing.** Voice percussion no longer has to be
+  classified four ways. Pick a kit — kick and snare only, snare and hat
+  only, 808s, or the full set — and the classifier chooses among only those,
+  which is both what you meant and measurably more accurate: the same
+  breathy snares that were 62% right against four choices are 100% right
+  against two.
+
+  The classification itself is MFCCs and k-nearest-neighbour rather than a
+  hand-tuned threshold on brightness, and it can be taught from your own
+  sounds.
+
+- **Optional tidying, all off by default.** Quantise with a strength and a
+  range, so a part tightens without flattening. Swing measured from what you
+  played rather than imposed. Snap a hummed line to a key, only where the
+  key is confident and the note is long enough to have meant it. Put back a
+  drum hit you dropped, only in a pattern steady enough for the gap to be
+  obvious, and never more than a quarter of the part.
+
+- **Four finished demo songs**, mastered, one per engine — FM, wavetable,
+  granular and physical modelling — so there is something to listen to that
+  shows what each of them sounds like when somebody has finished with it.
+
+- **Mastering you can hear.** Per-genre profiles now include stereo width
+  and saturation alongside the EQ, compression and limiting, and the
+  difference between an unmastered and a mastered render is a peak of 0.59
+  against 0.75 and an RMS of 0.174 against 0.334.
+
+- **An application icon** — a synthwave sunset with a pepper in it.
+
+### Changed
+
+- **Delay compensation, across the whole mixer.** An effect that cannot
+  answer instantly makes its channel come out late; every effect knew its
+  own latency, and nothing had ever added it up or acted on it. So a pitch
+  shifter on the lead did not merely process the lead — it pulled the lead
+  46 ms out of time with the drums, by an amount nothing in the interface
+  mentioned.
+
+  Every path from a channel to the master is now the same length, direct or
+  through any depth of aux bus. That last part matters more than it sounds:
+  a send is a copy of a channel processed elsewhere and returned, and a copy
+  that comes back a few milliseconds late is a comb filter against the
+  original — the hollow sound people describe when a parallel bus "doesn't
+  work". It lands exactly on top now.
+
+  A project with no latency anywhere pays nothing for this: the delay lines
+  return their input directly at zero.
+
+- **The phase vocoder is half as late.** Writing the alignment test meant
+  measuring the delay rather than trusting the number the effect reported,
+  and the measurement said 2048 samples against a reported 1024. The
+  overlap-add read head advanced from the first sample, so it ran ahead of
+  the writes and picked up frames from the ring's previous lap. Pitch shift,
+  formant shift and autotune are now 23 ms rather than 46, and say so
+  truthfully.
+
+- **Studio effects no longer emit the same sound twice.** The vocoder and
+  convolution adapters mixed a late wet signal against the raw, on-time
+  input, so at any mix between 0 and 1 the effect produced a flam on
+  transients and a comb filter on everything else. The dry path is held back
+  to meet the wet one, which is also what gives each effect a single honest
+  latency to compensate for.
+
+### Fixed
+
+- **The melody detector, for an actual voice.** Notes came out jumpy and
+  some never came out at all. Stability was being decided on the exact MIDI
+  semitone over nine frames, and any vibrato at all crosses a semitone
+  boundary. The contour is now smoothed over roughly half a vibrato cycle
+  before it is cut into notes, and whether the pitch is *moving* is judged
+  from the raw contour, because smoothing flattens a glide.
+
+- **Tempo detection read 140 BPM as 70.** The harmonic reinforcement
+  credited a lag from its own half rather than from its multiples.
+
+- **The application icon never reached the window.** It was embedded in the
+  exe correctly and the window class left `hIcon` null, so Windows drew its
+  default icon in the title bar and the taskbar no matter what the resource
+  contained.
+
+- **A console window opened alongside the app for everybody.** Now only in
+  Debug builds, or with `--console`.
+
+- **A saturator set to "clean" quietly boosted by 21%.** At drive 1 it now
+  returns its input.
+
+- **The "Add to Pattern" button could sit off-screen** in a narrow dock, and
+  the drum kit picker could not be reached at all.
+
+---
+
 ## [3.9.0] - 2026-08-31 - "Comp"
 
 Building a keeper out of several takes, finding things by name instead of by

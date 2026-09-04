@@ -271,6 +271,13 @@ target_include_directories(ChiptuneTests PRIVATE
     ${CMAKE_SOURCE_DIR}/vendor/libremidi/include
 )
 
+# Where the repository is, so a test can read the files that ship beside the
+# code - the changelog, in particular. A version that nobody wrote an entry
+# for is a release nobody can read the notes of.
+target_compile_definitions(ChiptuneTests PRIVATE
+    CHIPTUNE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
 # Links imgui so the theme tests can call ApplyTheme() and inspect the
 # resulting style. No window and no GL context is needed - ApplyTheme only
 # writes to ImGuiStyle, and a context can exist without a backend.

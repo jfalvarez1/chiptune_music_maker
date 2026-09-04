@@ -93,6 +93,13 @@ Lay patterns out along a timeline to build the full song structure.
 Eight channels with live level metering, pan knobs, mute and solo, and a full
 effects chain behind each one.
 
+Effects that cannot answer instantly — a convolution reverb, a pitch shifter,
+a hosted plugin — make their channel come out late. Everything else is
+delayed to meet it, including the copies going out to and coming back from
+the aux buses, so a part never drifts out of time with the rest because of
+what you put on it. A send used for parallel processing lands exactly on top
+of the dry signal instead of comb-filtering against it.
+
 ![Mixer](docs/images/mixer.png)
 
 ### Pad controller

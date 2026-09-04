@@ -6377,6 +6377,38 @@ static void testVersionCoherence() {
           "the window title carries the real version");
     check(aboutText().find(expected) != std::string::npos,
           "and so does the About dialog");
+
+    /*
+     * The changelog has an entry for this version, and it is the newest one.
+     *
+     * Bumping Version.h and forgetting the changelog produces a release
+     * whose notes describe the release before it, which is worse than having
+     * no notes: it is confidently wrong about what changed. The version
+     * literal already lived in two places once and drifted; this is the
+     * third place, and it drifts the same way unless something checks.
+     */
+#ifdef CHIPTUNE_SOURCE_DIR
+    {
+        const std::string path = std::string(CHIPTUNE_SOURCE_DIR) + "/CHANGELOG.md";
+        std::ifstream changelog(path);
+        check(changelog.is_open(), "the changelog is where it is expected");
+
+        std::string line;
+        std::string firstEntry;
+        while (std::getline(changelog, line)) {
+            if (line.rfind("## [", 0) == 0) { firstEntry = line; break; }
+        }
+
+        check(!firstEntry.empty(), "the changelog has at least one entry");
+        check(firstEntry.find("[" + expected + "]") != std::string::npos,
+              "the newest changelog entry is this version - newest entry is '" +
+                  firstEntry + "', version is " + expected);
+        check(firstEntry.find(std::string("\"") + VERSION_NAME + "\"") !=
+                  std::string::npos,
+              "and carries the same codename as the build, which calls itself \"" +
+                  std::string(VERSION_NAME) + "\"");
+    }
+#endif
 }
 
 // ============================================================================

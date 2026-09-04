@@ -237,10 +237,9 @@ Honest list of what nothing currently covers.
    coverage. A reverb with the wrong decay curve would still pass.
 7. **Performance.** No assertion on CPU cost per block. A change that made
    the audio thread 10× slower would pass everything here.
-8. **Latency compensation.** The phase-vocoder effects report their latency
-   through `IEffect::latencySamples()` and nothing reads it yet, so a channel
-   using one runs about 23 ms behind the others. The reporting is tested; the
-   compensation does not exist.
+8. **Linear-phase EQ.** Left out because it costs 50–100 ms of latency and
+   the mixer had no compensation. That reason is gone — the graph is levelled
+   now — so this is a gap in the effect list rather than in the engine.
 
 ---
 

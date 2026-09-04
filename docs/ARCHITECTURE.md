@@ -152,9 +152,21 @@ Two things shape the design and should survive any change to it:
   parameter values and the plugin's opaque state, and says so. Silently
   dropping it would throw away work the user cannot get back — the same
   rule as a moved sample.
-- **A plugin insert delays its channel by one block, and that is reported,
-  not hidden.** Nothing compensates for it yet; a channel that is quietly
-  late is a phase problem the user cannot see or fix.
+- **A plugin insert delays its channel by one block, and that is both
+  reported and compensated.** `DelayCompensation.h` levels the whole graph:
+  every channel is delayed to meet the latest one, the channel sends into a
+  bus are levelled against whatever else arrives there, each bus's output is
+  delayed to match where it is going, and the direct path waits for the
+  buses to come back. Every path from a channel to the master is the same
+  length, so a channel that is quietly late is no longer a phase problem the
+  user cannot see or fix — what is left is monitoring delay, which the
+  plugins panel states in milliseconds.
+
+  Writing that meant measuring the phase vocoder's delay rather than
+  trusting its own report, which found it was late by twice what it claimed:
+  the overlap-add read head ran ahead of the writes and picked up frames
+  from the ring's previous lap. A latency an effect reports about itself is
+  worth nothing until something measures it.
 
 ## Testing
 
