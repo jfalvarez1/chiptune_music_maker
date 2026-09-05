@@ -509,26 +509,47 @@ Consequence still open: **[M] the drive curve.** The first decibel of
 saturation buys 1.7 LU and the next eleven buy four. A "loudness" control
 that does not say this encourages exactly the wrong move.
 
-### H1. Chip modes, as an authoring constraint
+### H1. Chip modes, as an authoring constraint — NES and Game Boy done in 3.13.x
 
-**The single highest-value chiptune item, and the prerequisite for several
-others.** `chipAuthentic` today is only a channel cap **[A]** — a project
-with it on can still put a granular engine and a convolution reverb on
-channel 3.
+`ChannelConfig::chipVoice`, per channel and opt-in. Pitch goes through the
+period register and volume through the volume register, in the audio thread,
+so the constraint arrives in the sound while there is still a decision to
+make. Deliberately **not** an extension of `chipAuthentic`: that flag is
+already on in saved projects and quantising their pitch would change how
+finished work sounds.
 
-A real mode fixes channel roles, restricts each channel to what it
-physically is, and quantises pitch and volume to the actual registers *while
-you compose*, so what you hear is what the hardware can do. The research
-produced exact tables for five chips; the ones that matter most:
+Two things that only turned up once it was measured:
 
-- **[S] NES**: 11-bit period, pulse silenced below t=8, floor at A1 (pulse) /
-  A0 (triangle) NTSC. Pitch resolution collapses above E5 — >50¢ per step
-  above G7, and **above G#8 no chromatic scale exists**. Triangle has no
-  volume at all. Duty 3 (75%) is spectrally identical to duty 1 — only the
-  phase differs.
-- **[S] Game Boy**: pulse physically cannot go below **C2** (64.0 Hz); only
-  the wave channel reaches under it. CH3 has 4 volume codes and no envelope.
-  Envelopes are one-shot, one-direction, ≤1.64 s and **cannot loop**.
+- **The NES mute gate sits above the keyboard.** Below period 8 the sweep
+  unit silences a pulse channel outright, and period 8 rounds in from
+  anything under 13.2 kHz — above MIDI 127. So no *written* note can reach
+  it and only modulation can. Worth knowing before quoting 12429 Hz as a
+  ceiling, which is the truncated answer rather than the rounded one.
+- **"Highest usable note" has to be scanned upward.** Coming down from the
+  top finds the highest note that happens to land near a period — MIDI 125
+  is 1.7 cents out on a NES pulse by coincidence, with everything for two
+  octaves below it a quarter-tone off. Scanned upward the honest ceiling is
+  **MIDI 110**, which is lower than the usually-quoted G#8 because that
+  number is where steps exceed a *semitone* and this one is a quarter-tone.
+
+Still open on this item: **[M]** fixed channel roles are preset buttons
+rather than an enforced layout, and the three chips below are modelled in
+the tables but have no `ChipVoice` yet.
+
+The research produced exact tables for five chips; the ones that matter
+most:
+
+- **NES — shipped.** 11-bit period, pulse silenced below t=8, floor at A1
+  (pulse) / A0 (triangle) NTSC. Pitch resolution collapses above E5 — >50¢
+  per step above G7, and **above G#8 no chromatic scale exists**. Triangle
+  has no volume at all. Duty 3 (75%) is spectrally identical to duty 1 —
+  only the phase differs.
+- **Game Boy — shipped.** Pulse physically cannot go below **C2** (64.0 Hz);
+  only the wave channel reaches under it. CH3 has 4 volume codes and no
+  envelope. **[M]** the envelope shape is not enforced yet: they are
+  one-shot, one-direction, ≤1.64 s and **cannot loop**, which is a
+  constraint on the ADSR rather than on pitch and volume and wants its own
+  pass.
 - **[S] SID**: one *shared* filter and one *global* 4-bit volume — a
   per-voice volume column has to map to sustain and say so. Ring mod and
   sync cost a voice each.
@@ -539,7 +560,9 @@ produced exact tables for five chips; the ones that matter most:
   timbre when you change volume.
 
 Size: the tonal half (widening `ChipFilterChain::Mode` past NES/Famicom) is
-~40 lines. The authoring-constraint half is 8–12 days and is the real work.
+~40 lines and is still open. The authoring-constraint half was estimated at
+8–12 days; the NES and Game Boy half of it came in at about 1100 lines
+including tests, largely because `ChipModel.h` had already done the reading.
 
 ### H2. PAL
 

@@ -24453,6 +24453,42 @@ static void testChipMode() {
               "a clip transpose is part of what sounds, so it is part of what "
               "is checked");
     }
+
+    // ---- The guide's range table is the one the program enforces ------------
+    //
+    // Five ranges written out by hand in a document, against five computed
+    // from the period registers. A table of numbers in a guide is exactly the
+    // kind of thing that is right on the day it is written and wrong three
+    // releases later, silently, because nothing reads it.
+    //
+    // Derived and then looked for, rather than parsed: the assertion is "the
+    // number the code produces appears in the document", which fails loudly if
+    // either side moves.
+#ifdef CHIPTUNE_SOURCE_DIR
+    {
+        const std::string path =
+            std::string(CHIPTUNE_SOURCE_DIR) + "/docs/ChiptuneTracker_Guide.html";
+        std::ifstream file(path);
+        check(file.is_open(), "the guide is where it is expected");
+        if (file.is_open()) {
+            std::string body((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+
+            const ChipVoice VOICES[] = {
+                ChipVoice::NESPulse, ChipVoice::NESTriangle,
+                ChipVoice::GameBoyPulse, ChipVoice::GameBoyWave
+            };
+            for (ChipVoice voice : VOICES) {
+                const std::string range =
+                    "MIDI " + std::to_string(chipLowestNote(voice)) + "&ndash;" +
+                    std::to_string(chipHighestUsableNote(voice));
+                check(body.find(range) != std::string::npos,
+                      std::string("the guide quotes ") + chipVoiceName(voice) +
+                          " as " + range + ", which is what the registers give");
+            }
+        }
+    }
+#endif
 }
 
 // ============================================================================
@@ -24906,7 +24942,8 @@ static void testUserGuide() {
      * have to exist for the guide to describe the program that ships.
      */
     const char* REQUIRED[] = {"voice-mode", "note-rack", "wave-tools",
-                              "scopes", "mastering", "walkthroughs"};
+                              "scopes", "chip-mode", "mastering",
+                              "walkthroughs"};
     for (const char* id : REQUIRED) {
         bool present = false;
         for (const std::string& section : sections) {

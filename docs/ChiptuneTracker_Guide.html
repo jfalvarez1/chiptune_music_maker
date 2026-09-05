@@ -767,6 +767,7 @@
             <li><a href="#note-rack" data-section="The Note Rack"></a></li>
             <li><a href="#wave-tools" data-section="Wave Tools and Shapes"></a></li>
             <li><a href="#scopes" data-section="Scopes"></a></li>
+            <li><a href="#chip-mode" data-section="Chip Mode"></a></li>
             <li><a href="#mastering" data-section="Mastering"></a></li>
             <li><a href="#walkthroughs" data-section="Three Walkthroughs"></a></li>
         </ul>
@@ -808,8 +809,9 @@
                 <a href="#note-rack"><span class="toc-number">24</span> The Note Rack</a>
                 <a href="#wave-tools"><span class="toc-number">25</span> Wave Tools and Shapes</a>
                 <a href="#scopes"><span class="toc-number">26</span> Scopes</a>
-                <a href="#mastering"><span class="toc-number">27</span> Mastering</a>
-                <a href="#walkthroughs"><span class="toc-number">28</span> Three Walkthroughs</a>
+                <a href="#chip-mode"><span class="toc-number">27</span> Chip Mode</a>
+                <a href="#mastering"><span class="toc-number">28</span> Mastering</a>
+                <a href="#walkthroughs"><span class="toc-number">29</span> Three Walkthroughs</a>
             </div>
         </div>
 
@@ -4905,6 +4907,120 @@ Phrase 2 (Answer):   G - E - D - C  (returns to the root - "resolved")</code></p
                 something no other display in the program does: whether your
                 mix has quietly collapsed to mono, or gone out of phase and
                 will disappear on a phone speaker.
+            </p>
+        </section>
+
+        <!-- ================================================================ -->
+        <!-- Chip Mode                                                        -->
+        <!-- ================================================================ -->
+        <section id="chip-mode">
+            <h2>Chip Mode</h2>
+
+            <p>
+                This program synthesises in float and can put any pitch on any
+                channel. Real chips cannot. Chip mode holds a channel to what
+                the hardware could actually do &mdash; and does it
+                <em>while you write</em>, so the limit arrives as a sound you
+                can react to rather than as a note in a report you read
+                afterwards.
+            </p>
+            <p>
+                <strong>Master Bus &rarr; Chip Accuracy &rarr; Hold channels to
+                a chip.</strong> Set a voice per channel, or use the
+                <strong>NES layout</strong> button, which assigns two pulses, a
+                triangle and a noise channel &mdash; literally what the machine
+                had.
+            </p>
+
+            <div class="callout">
+                <strong>It is off everywhere by default, and it is not the
+                same thing as "8 channels only".</strong> That checkbox is a
+                channel cap and nothing else. Chip mode changes how a channel
+                <em>sounds</em>, so it is a separate, per-channel setting: a
+                project you saved last year opens and plays exactly as it did.
+            </div>
+
+            <h3>The voices, and what each one takes away</h3>
+            <table>
+                <tr><th>Voice</th><th>Range (in tune)</th><th>Volume</th></tr>
+                <tr>
+                    <td>NES pulse</td>
+                    <td>MIDI 33&ndash;110</td>
+                    <td>16 levels</td>
+                </tr>
+                <tr>
+                    <td>NES triangle</td>
+                    <td>MIDI 21&ndash;98</td>
+                    <td><strong>None at all</strong></td>
+                </tr>
+                <tr>
+                    <td>NES noise</td>
+                    <td>no pitch to constrain</td>
+                    <td>16 levels</td>
+                </tr>
+                <tr>
+                    <td>Game Boy pulse</td>
+                    <td>MIDI 36&ndash;108</td>
+                    <td>16 levels</td>
+                </tr>
+                <tr>
+                    <td>Game Boy wave</td>
+                    <td>MIDI 24&ndash;96</td>
+                    <td><strong>4 codes</strong></td>
+                </tr>
+            </table>
+
+            <h3>Three things that will surprise you</h3>
+
+            <p>
+                <strong>The Game Boy has no bass on its pulse channels.</strong>
+                They physically stop at 64 Hz &mdash; C2 &mdash; and the
+                register saturates rather than going quiet, so a bass line
+                written below that plays <em>in the wrong octave</em>, loudly.
+                The wave channel reaches an octave lower, which is why it was
+                the only bass instrument on the machine. That is a
+                compositional fact about every Game Boy soundtrack ever
+                written, and now it is one about yours.
+            </p>
+
+            <p>
+                <strong>The NES triangle has no volume control.</strong> Not
+                sixteen coarse steps &mdash; none. The channel is gated on or
+                off, so an ADSR on it becomes a gate and it clicks on the way
+                out. The hardware clicked too. If you want the click gone,
+                take the triangle voice off; smoothing it would be removing
+                the sound.
+            </p>
+
+            <p>
+                <strong>Your vibrato gets steppy at the top and stays smooth
+                at the bottom.</strong> Pitch is quantised <em>after</em>
+                vibrato, slides, arpeggios, sweeps and macros, because on the
+                machine all of those were one number written to the same
+                eleven bits. Low down the period steps are a couple of cents
+                apart and you hear nothing; up high they are further apart
+                than the notes are, and a vibrato turns into a trill. That is
+                what a chiptune lead in its top octave actually is.
+            </p>
+
+            <h3>Where the notes run out</h3>
+            <p>
+                The range shown next to each channel is where a
+                <em>chromatic scale</em> still exists, which is lower than
+                where the channel stops making a sound. A NES pulse holds a
+                period well past the top of the keyboard; what it stops being
+                able to do, around MIDI 110, is play every semitone. Above
+                that some notes land close to a register step and some land a
+                quarter-tone off, and which is which is arithmetic rather than
+                music.
+            </p>
+            <p>
+                <strong>Tools &rarr; Project Check</strong> reports this per
+                channel, in the present tense: it will tell you four notes are
+                playing an octave above what you wrote, not that they might on
+                some other machine. It includes the clip's transpose, so a
+                pattern that fits on its own and a clip that drops it an
+                octave is caught.
             </p>
         </section>
 
