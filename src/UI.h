@@ -7622,6 +7622,36 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
 
     ImGui::SameLine();
 
+    /*
+     * FLAC.
+     *
+     * Lossless, so there is nothing to choose and nothing to get wrong - the
+     * file is the mix. It is what an archive or a hand-off to somebody else
+     * wants, and a chiptune compresses extremely well: square waves are
+     * about as predictable as audio gets, so the file is often a third the
+     * size of the WAV.
+     */
+    if (ImGui::Button("FLAC", ImVec2(50, 25))) {
+        std::string path = saveFileDialog("FLAC Files (*.flac)\0*.flac\0", "flac");
+        if (!path.empty()) {
+            if (path.find(".flac") == std::string::npos) path += ".flac";
+            std::string message;
+            exportFlac(project, seq, path, exportDuration, &message);
+            exportStatus = message;
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Lossless, and about a third the size of the WAV - square waves\n"
+            "compress extremely well.\n\n"
+            "Rendered at 24 bits, because a lossless format that threw away\n"
+            "eight bits on the way in would be lossless about the wrong\n"
+            "thing.\n\n"
+            "Needs ffmpeg on the PATH, and nothing else.");
+    }
+
+    ImGui::SameLine();
+
     if (ImGui::Button("MIDI", ImVec2(50, 25))) {
         std::string path = saveFileDialog(
             "MIDI Files (*.mid)\0*.mid\0",
@@ -7728,6 +7758,27 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
         float durationSec = exportDuration * 60.0f / project.bpm;
         ImGui::Text("Duration: %.1f seconds at %.0f BPM", durationSec, project.bpm);
 
+        /*
+         * How much resolution to keep.
+         *
+         * 16 for anything going out to be listened to - it is the CD format
+         * and every player reads it. 24 for anything going somewhere else to
+         * be worked on, because it leaves 48 dB more room under the noise
+         * floor, and because the dither that makes 16 bits behave is the
+         * wrong thing to add to a file that has more processing ahead of it.
+         */
+        static int wavDepth = 0;
+        ImGui::SetNextItemWidth(150);
+        ImGui::Combo("Bit depth", &wavDepth, "16-bit (CD)\0" "24-bit (studio)\0");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "16-bit is what a player expects, and is dithered on the way\n"
+                "down so a long fade does not break into steps.\n\n"
+                "24-bit is undithered and keeps 48 dB more room below the\n"
+                "noise floor - use it if the file is going anywhere else to\n"
+                "be processed.");
+        }
+
         ImGui::Separator();
 
         if (ImGui::Button("Export", ImVec2(100, 0))) {
@@ -7735,8 +7786,11 @@ inline void DrawFileMenu(Project& project, UIState& ui, Sequencer& seq) {
                 "WAV Audio (*.wav)\0*.wav\0",
                 "wav");
             if (!path.empty()) {
-                if (exportWav(project, seq, path, exportDuration)) {
-                    exportStatus = "Export successful!";
+                const WavBitDepth depth = (wavDepth == 1)
+                    ? WavBitDepth::TwentyFour : WavBitDepth::Sixteen;
+                if (exportWav(project, seq, path, exportDuration, depth)) {
+                    exportStatus = (wavDepth == 1) ? "Exported 24-bit WAV."
+                                                   : "Exported 16-bit WAV.";
                 } else {
                     exportStatus = "Export failed!";
                 }

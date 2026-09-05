@@ -161,38 +161,136 @@ inline bool ensureDirectoryExists(const std::string& path) {
 #endif
 }
 
-// Writes a stereo float buffer as 16-bit PCM. Shared by the mixdown export
-// and the per-channel stem export, so both produce identical files.
+/*
+ * How much resolution a WAV keeps.
+ *
+ * 16 is the CD format and what every player reads. 24 is what you want if
+ * the file is going anywhere else to be worked on - it has 48 dB more room
+ * below the noise floor, which is the difference between a fade that ends
+ * cleanly and one that ends in a staircase.
+ */
+enum class WavBitDepth : int { Sixteen = 16, TwentyFour = 24 };
+
+/*
+ * Writes a stereo float buffer as PCM.
+ *
+ * TWO THINGS CHANGED FROM WHAT THIS USED TO DO, and both were audible only
+ * in quiet passages, which is where they matter most.
+ *
+ * It truncated toward zero rather than rounding. That is a half-LSB DC-ish
+ * bias on every sample and it doubles the quantisation error, for nothing -
+ * rounding costs one addition.
+ *
+ * And there was no dither. Quantisation error on a signal that is not
+ * changing much is not noise; it is correlated with the signal, which is
+ * what makes a long fade break up into audible steps instead of
+ * disappearing smoothly. A triangular dither - two independent rectangular
+ * values summed - decorrelates it, at the cost of a noise floor about 1.8 dB
+ * higher and inaudible at 16 bits.
+ *
+ * Dither is applied at 16 bits and not at 24, deliberately: at 24 the
+ * quantisation step is already 48 dB below anything a converter will
+ * resolve, so dithering there only adds noise to a file that is on its way
+ * somewhere else to be processed further.
+ */
 inline bool writeWavFile(const std::string& filepath,
                          const std::vector<float>& leftBuffer,
-                         const std::vector<float>& rightBuffer) {
+                         const std::vector<float>& rightBuffer,
+                         WavBitDepth depth = WavBitDepth::Sixteen) {
     std::ofstream file(filepath, std::ios::binary);
     if (!file.is_open()) return false;
 
-    size_t numSamples = std::min(leftBuffer.size(), rightBuffer.size());
+    const size_t numSamples = std::min(leftBuffer.size(), rightBuffer.size());
+    const int bits = static_cast<int>(depth);
+    const int bytesPerSample = bits / 8;
 
     WavHeader header;
     header.numChannels = 2;
     header.sampleRate = 44100;
-    header.bitsPerSample = 16;
-    header.blockAlign = header.numChannels * header.bitsPerSample / 8;
+    header.bitsPerSample = static_cast<uint16_t>(bits);
+    header.blockAlign = static_cast<uint16_t>(header.numChannels * bytesPerSample);
     header.byteRate = header.sampleRate * header.blockAlign;
     header.dataSize = static_cast<uint32_t>(numSamples * header.blockAlign);
     header.fileSize = 36 + header.dataSize;
 
     file.write(reinterpret_cast<char*>(&header), sizeof(header));
 
-    // Write interleaved 16-bit samples
+    /*
+     * A deterministic dither.
+     *
+     * Hashed from the sample index rather than drawn from a generator, so
+     * exporting the same project twice produces the same file. A dither
+     * that changed every run would make two exports of an unedited project
+     * differ, which turns "did my change do anything" into a question
+     * nobody can answer by comparing files.
+     */
+    auto ditherAt = [](size_t index, int channel) {
+        auto hash = [](uint32_t x) {
+            x ^= x >> 16; x *= 0x7FEB352Du;
+            x ^= x >> 15; x *= 0x846CA68Bu;
+            x ^= x >> 16;
+            return x;
+        };
+        const uint32_t a = hash(static_cast<uint32_t>(index) * 2u +
+                                static_cast<uint32_t>(channel));
+        const uint32_t b = hash(a ^ 0x9E3779B9u);
+        // Two rectangular values summed is a triangular distribution, which
+        // is the one that decorrelates the error rather than merely masking
+        // it.
+        const float ra = static_cast<float>(a & 0xFFFFu) / 65535.0f - 0.5f;
+        const float rb = static_cast<float>(b & 0xFFFFu) / 65535.0f - 0.5f;
+        return ra + rb;
+    };
+
+    const bool dithering = (depth == WavBitDepth::Sixteen);
+    const float fullScale = (depth == WavBitDepth::Sixteen) ? 32767.0f : 8388607.0f;
+
     for (size_t i = 0; i < numSamples; ++i) {
-        // Clamp and convert to 16-bit
-        float l = std::max(-1.0f, std::min(1.0f, leftBuffer[i]));
-        float r = std::max(-1.0f, std::min(1.0f, rightBuffer[i]));
+        for (int channel = 0; channel < 2; ++channel) {
+            const std::vector<float>& source = (channel == 0) ? leftBuffer
+                                                              : rightBuffer;
+            const float input = std::max(-1.0f, std::min(1.0f, source[i]));
+            float value = input * fullScale;
 
-        int16_t left16 = static_cast<int16_t>(l * 32767.0f);
-        int16_t right16 = static_cast<int16_t>(r * 32767.0f);
+            /*
+             * Digital silence stays silent.
+             *
+             * A purist dither runs continuously, including over silence -
+             * that is what linearises the quantiser. But a music export is
+             * mostly bookended by exact zeros, and dithering those puts a
+             * bed of noise under the lead-in and the tail of every file,
+             * where there was none. It also means a file of silence is no
+             * longer a file of silence, which anything downstream that trims
+             * or detects silence would then get wrong.
+             *
+             * So the dither applies to signal and not to nothing. The
+             * discontinuity that introduces is at the level of one LSB, four
+             * places below anything the material has, and is the better
+             * trade.
+             */
+            if (dithering && input != 0.0f) value += ditherAt(i, channel);
 
-        file.write(reinterpret_cast<char*>(&left16), sizeof(int16_t));
-        file.write(reinterpret_cast<char*>(&right16), sizeof(int16_t));
+            // Rounded, not truncated. Truncation biases every sample toward
+            // zero by up to a full step.
+            long quantised = std::lround(value);
+            const long limit = (depth == WavBitDepth::Sixteen) ? 32767L : 8388607L;
+            quantised = std::max(-limit - 1, std::min(limit, quantised));
+
+            if (depth == WavBitDepth::Sixteen) {
+                const int16_t out = static_cast<int16_t>(quantised);
+                file.write(reinterpret_cast<const char*>(&out), sizeof(int16_t));
+            } else {
+                // 24-bit is three bytes, little-endian, signed. There is no
+                // int24_t, so it is written a byte at a time.
+                const int32_t out = static_cast<int32_t>(quantised);
+                const uint8_t bytes[3] = {
+                    static_cast<uint8_t>(out & 0xFF),
+                    static_cast<uint8_t>((out >> 8) & 0xFF),
+                    static_cast<uint8_t>((out >> 16) & 0xFF),
+                };
+                file.write(reinterpret_cast<const char*>(bytes), 3);
+            }
+        }
     }
 
     const bool ok = file.good();
@@ -202,12 +300,13 @@ inline bool writeWavFile(const std::string& filepath,
 
 // Export the full mix to a WAV file.
 inline bool exportWav(Project& project, Sequencer& seq,
-                      const std::string& filepath, float durationBeats) {
+                      const std::string& filepath, float durationBeats,
+                      WavBitDepth depth = WavBitDepth::Sixteen) {
     std::vector<float> leftBuffer, rightBuffer;
     if (!renderToBuffer(project, seq, leftBuffer, rightBuffer, durationBeats)) {
         return false;
     }
-    return writeWavFile(filepath, leftBuffer, rightBuffer);
+    return writeWavFile(filepath, leftBuffer, rightBuffer, depth);
 }
 
 // ============================================================================
@@ -239,6 +338,64 @@ inline bool isFFmpegAvailable() {
 }
 
 // Export to MP3 file (requires LAME or FFmpeg)
+/*
+ * FLAC, via whatever encoder is on the machine.
+ *
+ * Lossless, so unlike the MP3 path there is no quality setting to get wrong
+ * and nothing to argue about - the file is the mix. It matters because it is
+ * what an archive or a mastering hand-off wants, and because a chiptune
+ * compresses extremely well: square waves are about as predictable as audio
+ * gets, so a FLAC of one is often a third the size of the WAV.
+ *
+ * The temporary WAV is written at 24 bits. A lossless format that threw away
+ * eight bits on the way in would be lossless about the wrong thing.
+ *
+ * No bundled encoder, for the same reason there is no bundled MP3 one:
+ * miniaudio decodes FLAC and does not encode it, and vendoring libFLAC to
+ * write a file most people will never export is a large dependency for a
+ * small feature. If neither encoder is present this says so, plainly, rather
+ * than failing silently.
+ */
+inline bool exportFlac(Project& project, Sequencer& seq,
+                       const std::string& filepath, float durationBeats,
+                       std::string* messageOut = nullptr) {
+    const std::string tempWavPath = filepath + ".temp.wav";
+
+    if (!exportWav(project, seq, tempWavPath, durationBeats,
+                   WavBitDepth::TwentyFour)) {
+        if (messageOut) *messageOut = "Could not render the mix.";
+        return false;
+    }
+
+    bool success = false;
+
+    if (isFFmpegAvailable()) {
+        // -c:a flac is explicit rather than relying on the extension, and
+        // -compression_level 8 is the highest that is still fast enough not
+        // to be noticed on a song-length file.
+        const std::string command =
+            "ffmpeg -y -i \"" + tempWavPath + "\" -c:a flac "
+            "-compression_level 8 \"" + filepath + "\" -loglevel quiet";
+        success = (system(command.c_str()) == 0);
+        if (messageOut) {
+            *messageOut = success ? "Exported FLAC."
+                                  : "ffmpeg was found but the encode failed.";
+        }
+    } else if (messageOut) {
+        *messageOut =
+            "FLAC export needs ffmpeg on the PATH. Nothing else is required - "
+            "install it and this works, with no settings to choose.";
+    }
+
+#ifdef _WIN32
+    DeleteFileA(tempWavPath.c_str());
+#else
+    std::remove(tempWavPath.c_str());
+#endif
+
+    return success;
+}
+
 inline bool exportMp3(Project& project, Sequencer& seq, const std::string& filepath,
                       float durationBeats, int bitrate = 192) {
     // First, export to a temporary WAV file

@@ -22366,6 +22366,280 @@ static void testClickingHeadless() {
 }
 
 // ============================================================================
+// The WAV writer
+//
+// Both of the things fixed here are audible only in quiet passages, which is
+// where they matter most and where nobody looks. Asserted on the bytes in
+// the file rather than on anything the program says about them.
+// ============================================================================
+static void testWavWriter() {
+    beginTest("WAV export: depth, rounding and dither");
+
+    // Read a written file back into samples, so every check below is against
+    // what is actually on disk.
+    struct WavContents {
+        int bitsPerSample = 0;
+        int channels = 0;
+        int sampleRate = 0;
+        std::vector<int> left;
+    };
+
+    auto readWav = [](const std::string& path) {
+        WavContents out;
+        std::ifstream file(path, std::ios::binary);
+        if (!file.is_open()) return out;
+
+        std::vector<char> bytes((std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+        if (bytes.size() < 44) return out;
+
+        auto u16 = [&](size_t at) {
+            return int(uint8_t(bytes[at])) | (int(uint8_t(bytes[at + 1])) << 8);
+        };
+        auto u32 = [&](size_t at) {
+            return int(uint8_t(bytes[at])) | (int(uint8_t(bytes[at + 1])) << 8) |
+                   (int(uint8_t(bytes[at + 2])) << 16) |
+                   (int(uint8_t(bytes[at + 3])) << 24);
+        };
+
+        out.channels = u16(22);
+        out.sampleRate = u32(24);
+        out.bitsPerSample = u16(34);
+
+        const int bytesPer = out.bitsPerSample / 8;
+        const int frame = bytesPer * out.channels;
+        if (frame <= 0) return out;
+
+        for (size_t at = 44; at + size_t(frame) <= bytes.size(); at += size_t(frame)) {
+            if (out.bitsPerSample == 16) {
+                int value = int(uint8_t(bytes[at])) |
+                            (int(uint8_t(bytes[at + 1])) << 8);
+                if (value >= 32768) value -= 65536;
+                out.left.push_back(value);
+            } else {
+                int value = int(uint8_t(bytes[at])) |
+                            (int(uint8_t(bytes[at + 1])) << 8) |
+                            (int(uint8_t(bytes[at + 2])) << 16);
+                if (value >= 8388608) value -= 16777216;
+                out.left.push_back(value);
+            }
+        }
+        return out;
+    };
+
+    // ---- 24-bit is 24-bit ----------------------------------------------------
+    {
+        std::vector<float> left(64, 0.5f), right(64, -0.5f);
+
+        const std::string path16 = testPath("depth16.wav");
+        const std::string path24 = testPath("depth24.wav");
+        check(writeWavFile(path16, left, right, WavBitDepth::Sixteen),
+              "a 16-bit file writes");
+        check(writeWavFile(path24, left, right, WavBitDepth::TwentyFour),
+              "and a 24-bit one");
+
+        const WavContents a = readWav(path16);
+        const WavContents b = readWav(path24);
+
+        check(a.bitsPerSample == 16 && b.bitsPerSample == 24,
+              "and the headers say so (" + std::to_string(a.bitsPerSample) +
+                  " and " + std::to_string(b.bitsPerSample) + ")");
+        check(a.channels == 2 && b.channels == 2 &&
+              a.sampleRate == 44100 && b.sampleRate == 44100,
+              "with the right channel count and rate");
+
+        check(!a.left.empty() && !b.left.empty(), "both have samples in them");
+        if (!a.left.empty() && !b.left.empty()) {
+            // Half scale at each depth, within a step of dither.
+            check(std::abs(a.left[10] - 16384) < 4,
+                  "0.5 lands near half scale at 16 bits, got " +
+                      std::to_string(a.left[10]));
+            check(std::abs(b.left[10] - 4194304) < 4,
+                  "and at 24 bits, got " + std::to_string(b.left[10]) +
+                      " - which is 256 times the resolution, and the point");
+        }
+
+        std::remove(path16.c_str());
+        std::remove(path24.c_str());
+    }
+
+    // ---- It rounds rather than truncating ------------------------------------
+    //
+    // Truncation toward zero biases every sample by up to a full step, which
+    // is a half-LSB error on average across a signal, for nothing. Measured
+    // at 24 bits so dither is not in the way.
+    {
+        // A value that lands three quarters of the way to the next step.
+        const float target = 0.75f / 8388607.0f * 8388607.0f;
+        std::vector<float> left(32), right(32, 0.0f);
+        for (size_t i = 0; i < left.size(); ++i) {
+            left[i] = 100.75f / 8388607.0f;    // 100.75 steps
+        }
+
+        const std::string path = testPath("rounding.wav");
+        check(writeWavFile(path, left, right, WavBitDepth::TwentyFour),
+              "a file of a fractional value writes");
+
+        const WavContents contents = readWav(path);
+        check(!contents.left.empty(), "and reads back");
+        if (!contents.left.empty()) {
+            check(contents.left[5] == 101,
+                  "100.75 steps rounds to 101, not 100 - got " +
+                      std::to_string(contents.left[5]) +
+                      ". Truncation is a bias on every sample in the file.");
+        }
+        (void)target;
+
+        std::remove(path.c_str());
+    }
+
+    // ---- Dither, and where it does not go ------------------------------------
+    {
+        /*
+         * A steady value just off a quantisation step.
+         *
+         * Undithered this comes out as the same integer every time, so the
+         * error is a constant offset rather than noise - which on a fade is
+         * what makes the steps audible. Dithered, it lands on both
+         * neighbouring integers, and their average is nearer the true value
+         * than either.
+         */
+        std::vector<float> left(4096), right(4096, 0.0f);
+        const float value = 1000.5f / 32767.0f;
+        for (size_t i = 0; i < left.size(); ++i) left[i] = value;
+
+        const std::string path = testPath("dither.wav");
+        check(writeWavFile(path, left, right, WavBitDepth::Sixteen),
+              "a steady off-step value writes");
+
+        const WavContents contents = readWav(path);
+        check(contents.left.size() > 1000, "and reads back");
+
+        if (contents.left.size() > 1000) {
+            std::vector<int> distinct;
+            double sum = 0.0;
+            for (int sample : contents.left) {
+                sum += sample;
+                bool seen = false;
+                for (int v : distinct) if (v == sample) seen = true;
+                if (!seen && distinct.size() < 8) distinct.push_back(sample);
+            }
+
+            check(distinct.size() >= 2,
+                  "and lands on more than one integer - " +
+                      std::to_string(distinct.size()) +
+                      " - which is dither doing its job. Without it every "
+                      "sample is the same value and the error is a constant "
+                      "offset rather than noise.");
+
+            const double mean = sum / double(contents.left.size());
+            check(std::fabs(mean - 1000.5) < 0.2,
+                  "and their average is nearer the true value than either "
+                  "neighbour: " + std::to_string(mean) + " against 1000.5");
+        }
+
+        std::remove(path.c_str());
+    }
+
+    // ---- Silence stays silent ------------------------------------------------
+    //
+    // A continuous dither would put a bed of noise under the lead-in and the
+    // tail of every file, and make a file of silence no longer a file of
+    // silence - which anything downstream that trims or detects silence
+    // would then get wrong.
+    {
+        std::vector<float> left(512, 0.0f), right(512, 0.0f);
+        const std::string path = testPath("silence.wav");
+        check(writeWavFile(path, left, right, WavBitDepth::Sixteen),
+              "a file of silence writes");
+
+        const WavContents contents = readWav(path);
+        bool allZero = !contents.left.empty();
+        for (int sample : contents.left) if (sample != 0) allZero = false;
+        check(allZero,
+              "and every sample in it is exactly zero - digital silence is "
+              "not dithered");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- Full scale does not wrap --------------------------------------------
+    //
+    // The classic off-by-one: rounding 1.0 x 32768 gives 32768, which does
+    // not fit in an int16 and comes out as the most negative value there is.
+    // A single sample of that is a click at full volume.
+    {
+        std::vector<float> left(64, 1.0f), right(64, -1.0f);
+        const std::string path = testPath("fullscale.wav");
+        check(writeWavFile(path, left, right, WavBitDepth::Sixteen),
+              "a full-scale file writes");
+
+        const WavContents contents = readWav(path);
+        bool positive = !contents.left.empty();
+        for (int sample : contents.left) if (sample < 30000) positive = false;
+        check(positive,
+              "and full scale stays positive rather than wrapping to the "
+              "most negative value - which would be a click at full volume");
+
+        std::remove(path.c_str());
+    }
+
+    // ---- A whole song, at both depths ----------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->bpm = 120.0f;
+        p->patterns.clear();
+        p->arrangement.clear();
+        Pattern pattern;
+        for (int i = 0; i < 4; ++i) {
+            Note note;
+            note.pitch = 60 + i;
+            note.startTime = float(i) * 0.5f;
+            note.duration = 0.4f;
+            pattern.notes.push_back(note);
+        }
+        p->patterns.push_back(pattern);
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        auto seqPtr = std::make_unique<Sequencer>();
+        seqPtr->setSampleRate(44100.0f);
+        seqPtr->setProject(p.get());
+        seqPtr->updateChannelConfigs();
+        seqPtr->updateMasterEffects();
+
+        const std::string path16 = testPath("song16.wav");
+        const std::string path24 = testPath("song24.wav");
+        check(exportWav(*p, *seqPtr, path16, 2.0f, WavBitDepth::Sixteen),
+              "a song exports at 16 bits");
+        check(exportWav(*p, *seqPtr, path24, 2.0f, WavBitDepth::TwentyFour),
+              "and at 24");
+
+        const WavContents a = readWav(path16);
+        const WavContents b = readWav(path24);
+        check(a.bitsPerSample == 16 && b.bitsPerSample == 24,
+              "at the depths asked for");
+        check(a.left.size() == b.left.size() && !a.left.empty(),
+              "with the same number of samples in each");
+
+        // The same music, so the 24-bit file scaled down has to match the
+        // 16-bit one within a step or two of dither.
+        if (a.left.size() == b.left.size() && a.left.size() > 1000) {
+            int worst = 0;
+            for (size_t i = 100; i < 1000; ++i) {
+                const int scaled = b.left[i] / 256;
+                worst = std::max(worst, std::abs(scaled - a.left[i]));
+            }
+            check(worst <= 4,
+                  "and the same music in both, within dither - worst "
+                  "difference " + std::to_string(worst) + " steps");
+        }
+
+        std::remove(path16.c_str());
+        std::remove(path24.c_str());
+    }
+}
+
+// ============================================================================
 // MIDI import
 //
 // Round-tripped through the exporter that already ships, rather than against
@@ -26909,6 +27183,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testWavWriter();
     testMidiImport();
     testGrooveTiming();
     testChipModel();
