@@ -95,11 +95,11 @@ inline constexpr const char* ALL_DRUM_SETS[] = {
 inline constexpr int ALL_DRUM_SET_COUNT = 7;
 
 inline constexpr const char* ALL_TOOL_SECTIONS[] = {
-    "Euclidean Rhythms", "Drum Pattern Generator", "Arpeggiator",
-    "Bass Generator", "Scale Lock", "Velocity Curve", "Fill Generator",
-    "Pattern Variation", "Quick Layer", "Humanize"
+    "Euclidean Rhythms", "Chord Progression", "Drum Pattern Generator",
+    "Arpeggiator", "Bass Generator", "Scale Lock", "Velocity Curve",
+    "Fill Generator", "Pattern Variation", "Quick Layer", "Humanize"
 };
-inline constexpr int ALL_TOOL_SECTION_COUNT = 10;
+inline constexpr int ALL_TOOL_SECTION_COUNT = 11;
 
 // The configurable engines, by the names the palette shows. A profile naming
 // something not in this list is a typo that would silently hide an engine
@@ -126,7 +126,7 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Chiptune", "Pop", "Rock", nullptr},
             {"Kicks", "Snares & Claps", "Hi-Hats", nullptr},
             {"Arpeggiator", "Euclidean Rhythms", "Drum Pattern Generator",
-             "Bass Generator", "Scale Lock", "Pattern Variation", nullptr},
+             "Bass Generator", "Scale Lock", "Chord Progression", "Pattern Variation", nullptr},
             // Wavetable and FM are what the chips of the era actually did -
             // the Game Boy's wave channel and the Mega Drive's YM2612. A
             // multisample sampler is the one thing that era could not do.
@@ -139,7 +139,7 @@ inline const GenreProfile& genreProfile(Genre genre) {
             110.0f, 0.0f, 9, 1,          // A minor
             {"Synthwave", "Pop", "EDM", nullptr},
             {"Kicks", "Snares & Claps", "Hi-Hats", "Toms", "Cymbals", nullptr},
-            {"Arpeggiator", "Bass Generator", "Scale Lock", "Quick Layer",
+            {"Arpeggiator", "Bass Generator", "Scale Lock", "Chord Progression", "Quick Layer",
              "Velocity Curve", "Drum Pattern Generator", nullptr},
             // The DX7 defined this sound, and the drum model covers the
             // gated-reverb kit it is always paired with.
@@ -153,7 +153,7 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"HipHop", "Jazz", "Pop", nullptr},
             {"Kicks", "Snares & Claps", "Hi-Hats", "Percussion", nullptr},
             {"Humanize", "Drum Pattern Generator", "Velocity Curve",
-             "Fill Generator", "Scale Lock", nullptr},
+             "Fill Generator", "Scale Lock", "Chord Progression", nullptr},
             // Chopping samples is the genre. Granular is here because a
             // vocal chop is a granular operation whether or not it is
             // called one.
@@ -168,7 +168,7 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Kicks", "Snares & Claps", "Hi-Hats", "Reggaeton Drums",
              "Percussion", nullptr},
             {"Drum Pattern Generator", "Euclidean Rhythms", "Fill Generator",
-             "Velocity Curve", "Scale Lock", nullptr},
+             "Velocity Curve", "Scale Lock", "Chord Progression", nullptr},
             // The percussion is the genre, so the editable kit and the
             // sampler for one-shots.
             {"Drum Model", "Sampler", nullptr},
@@ -194,7 +194,7 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Rock", "Pop", nullptr},
             {"Kicks", "Snares & Claps", "Hi-Hats", "Toms", "Cymbals", nullptr},
             {"Drum Pattern Generator", "Fill Generator", "Humanize",
-             "Bass Generator", "Scale Lock", nullptr},
+             "Bass Generator", "Scale Lock", "Chord Progression", nullptr},
             // Recorded instruments, so the sampler and a real kit.
             {"Sampler", "Drum Model", nullptr},
             false, false, false, false
@@ -206,7 +206,7 @@ inline const GenreProfile& genreProfile(Genre genre) {
             {"Jazz", "HipHop", "Pop", nullptr},
             {"Kicks", "Snares & Claps", "Hi-Hats", "Percussion", nullptr},
             {"Humanize", "Velocity Curve", "Drum Pattern Generator",
-             "Pattern Variation", "Scale Lock", nullptr},
+             "Pattern Variation", "Scale Lock", "Chord Progression", nullptr},
             // Chopped samples and granular smear, which is most of what
             // gives the genre its texture.
             {"Sampler", "Granular", "Drum Model", nullptr},

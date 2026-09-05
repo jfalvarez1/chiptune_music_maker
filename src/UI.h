@@ -19447,6 +19447,145 @@ inline void DrawToolsPanel(Project& project, UIState& ui, Sequencer& seq) {
     }
 
     // ========================================================================
+    // Chord progressions
+    //
+    // Beside the Euclidean generator because they are the same kind of tool:
+    // a short description of a musical idea, turned into notes you then own
+    // and can edit. The chords come from the SCALE rather than from a fixed
+    // interval table, which is what makes "1 5 6 4" in a minor key a
+    // different set of chords from the same digits in a major one.
+    // ========================================================================
+    if (GenreToolSection(ui, "Chord Progression")) {
+        static char progressionText[64] = "1 5 6 4";
+        static int progressionRoot = 0;
+        static int progressionScale = 0;
+        static int progressionOctave = 4;
+        static int progressionVoices = 3;
+        static bool progressionSpread = false;
+        static float progressionBars = 4.0f;
+
+        ImGui::SetNextItemWidth(150);
+        ImGui::InputText("Degrees", progressionText, sizeof(progressionText));
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Which degrees of the scale, one chord per bar.\n\n"
+                "  1 5 6 4      the one in most songs\n"
+                "  I V vi IV    the same thing, written the published way\n"
+                "  2 5 1        a jazz turnaround\n\n"
+                "Upper and lower case are both accepted and neither changes\n"
+                "anything: the scale decides whether a chord is major or\n"
+                "minor, so the chord on the sixth degree of a major key is\n"
+                "minor whether you write VI or vi.");
+        }
+
+        ImGui::SetNextItemWidth(110);
+        ImGui::SliderInt("Key", &progressionRoot, 0, 11, noteName(progressionRoot));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(150);
+        ImGui::SliderInt("Scale", &progressionScale, 0, SCALE_COUNT - 1,
+                         scaleName(progressionScale));
+
+        ImGui::SetNextItemWidth(110);
+        ImGui::SliderInt("Octave", &progressionOctave, 1, 7);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        ImGui::SliderInt("Notes", &progressionVoices, 2, 4);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Three is a triad, four adds the seventh.");
+        }
+
+        ImGui::Checkbox("Spread voicing", &progressionSpread);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Drops the root an octave, which is what stops a\n"
+                              "stack of close triads sounding like an organ.");
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110);
+        ImGui::SliderFloat("Bar", &progressionBars, 1.0f, 8.0f, "%.0f beats");
+
+        // What it will produce, before it produces it - the same idea as the
+        // note rack's preview. A progression is four numbers, and four
+        // numbers do not tell you what they sound like.
+        {
+            std::vector<int> degrees;
+            generators::progressionFromText(progressionText, degrees);
+
+            std::string preview;
+            for (int degree : degrees) {
+                generators::ProgressionVoice one;
+                one.degrees = {degree};
+                one.root = progressionRoot;
+                one.scaleType = progressionScale;
+                one.octave = progressionOctave;
+                one.voices = progressionVoices;
+
+                const std::vector<Note> chord =
+                    generators::generateProgression(one, 4.0f);
+                if (chord.empty()) continue;
+
+                int lowest = 127;
+                for (const Note& note : chord) lowest = std::min(lowest, note.pitch);
+
+                // Major, minor or diminished, from the intervals rather than
+                // from the numeral - which is the point of the whole thing.
+                bool minorThird = false;
+                bool flatFifth = false;
+                for (const Note& note : chord) {
+                    const int interval = note.pitch - lowest;
+                    if (interval == 3) minorThird = true;
+                    if (interval == 6) flatFifth = true;
+                }
+
+                if (!preview.empty()) preview += "  ";
+                preview += noteName(lowest % 12);
+                if (flatFifth) preview += "dim";
+                else if (minorThird) preview += "m";
+            }
+
+            if (preview.empty()) preview = "(nothing to play - check the degrees)";
+            ImGui::TextDisabled("%s", preview.c_str());
+        }
+
+        if (ImGui::Button("Write to pattern", ImVec2(-1, 0))) {
+            std::vector<int> degrees;
+            if (generators::progressionFromText(progressionText, degrees)) {
+                g_UndoHistory.saveState(project, "Chord Progression");
+
+                generators::ProgressionVoice voice;
+                voice.degrees = degrees;
+                voice.root = progressionRoot;
+                voice.scaleType = progressionScale;
+                voice.octave = progressionOctave;
+                voice.voices = progressionVoices;
+                voice.spread = progressionSpread;
+
+                const std::vector<Note> notes =
+                    generators::generateProgression(voice, progressionBars);
+                for (const Note& note : notes) {
+                    if (pattern.notes.size() >= size_t(Pattern::MAX_NOTES)) break;
+                    pattern.notes.push_back(note);
+                }
+                seq.updateChannelConfigs();
+            }
+        }
+
+        if (ImGui::BeginCombo("Preset##progression", "Common progressions...")) {
+            for (const generators::ProgressionPreset& preset :
+                 generators::progressionPresets()) {
+                if (ImGui::Selectable(preset.name)) {
+                    std::snprintf(progressionText, sizeof(progressionText), "%s",
+                                  preset.degrees);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s\n\n%s", preset.degrees,
+                                      preset.description);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    // ========================================================================
     // 1. Drum Pattern Generator
     // ========================================================================
     if (GenreToolSection(ui, "Drum Pattern Generator", ImGuiTreeNodeFlags_DefaultOpen)) {

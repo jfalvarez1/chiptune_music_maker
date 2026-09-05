@@ -22366,6 +22366,227 @@ static void testClickingHeadless() {
 }
 
 // ============================================================================
+// Chord progressions
+//
+// The bug this replaces was not that progressions were missing - they
+// existed in two places - but that every chord in them was a fixed minor
+// triad, so a recipe naming "i - VI - III - VII" produced a minor chord on
+// every degree including the major ones. So the tests are about chord
+// QUALITY: whether the thing built on each degree is the chord that degree
+// actually has in the key.
+// ============================================================================
+static void testProgressions() {
+    beginTest("Chord progressions");
+
+    using namespace generators;
+
+    // The intervals of a chord, from its lowest note up. This is what says
+    // major or minor, and it is what the old code got wrong.
+    auto intervalsOf = [](const std::vector<Note>& notes, float atBeat) {
+        std::vector<int> pitches;
+        for (const Note& note : notes) {
+            if (std::fabs(note.startTime - atBeat) < 1e-3f) {
+                pitches.push_back(note.pitch);
+            }
+        }
+        std::sort(pitches.begin(), pitches.end());
+        std::vector<int> intervals;
+        for (size_t i = 1; i < pitches.size(); ++i) {
+            intervals.push_back(pitches[i] - pitches[0]);
+        }
+        return intervals;
+    };
+
+    // ---- The chords are the ones the key has --------------------------------
+    {
+        ProgressionVoice voice;
+        voice.degrees = {1, 2, 5, 6};
+        voice.root = 0;          // C
+        voice.scaleType = 0;     // major
+        voice.octave = 4;
+        voice.voices = 3;
+
+        const std::vector<Note> notes = generateProgression(voice, 4.0f);
+        check(notes.size() == 12,
+              "four bars of triads is twelve notes, got " +
+                  std::to_string(notes.size()));
+
+        /*
+         * In C major: I is C major, ii is D MINOR, V is G major, vi is A
+         * MINOR. A generator that stacks a fixed minor triad gets two of
+         * those wrong and a generator that stacks a fixed major triad gets
+         * the other two wrong. Only deriving from the scale gets all four.
+         */
+        const std::vector<int> one = intervalsOf(notes, 0.0f);
+        const std::vector<int> two = intervalsOf(notes, 4.0f);
+        const std::vector<int> five = intervalsOf(notes, 8.0f);
+        const std::vector<int> six = intervalsOf(notes, 12.0f);
+
+        check(one == std::vector<int>({4, 7}),
+              "the chord on I in C major is major (4, 7)");
+        check(two == std::vector<int>({3, 7}),
+              "the chord on ii is MINOR (3, 7) - which a fixed interval "
+              "table cannot produce alongside the one above");
+        check(five == std::vector<int>({4, 7}),
+              "V is major");
+        check(six == std::vector<int>({3, 7}),
+              "and vi is minor");
+
+        // The seventh degree of a major scale is diminished, which is the
+        // one that catches an implementation stacking thirds by semitone.
+        ProgressionVoice seventh = voice;
+        seventh.degrees = {7};
+        const std::vector<Note> dim = generateProgression(seventh, 4.0f);
+        check(intervalsOf(dim, 0.0f) == std::vector<int>({3, 6}),
+              "and the chord on vii is diminished (3, 6)");
+    }
+
+    // ---- A minor key gives different chords on the same degrees -------------
+    {
+        ProgressionVoice voice;
+        voice.degrees = {1};
+        voice.root = 0;
+        voice.scaleType = 1;     // natural minor
+        const std::vector<Note> notes = generateProgression(voice, 4.0f);
+        check(intervalsOf(notes, 0.0f) == std::vector<int>({3, 7}),
+              "the tonic chord in a minor key is minor - the degree did not "
+              "change, the scale did");
+    }
+
+    // ---- Sevenths, and voicing ----------------------------------------------
+    {
+        ProgressionVoice voice;
+        voice.degrees = {5};
+        voice.root = 0;
+        voice.scaleType = 0;
+        voice.voices = 4;
+
+        const std::vector<Note> notes = generateProgression(voice, 4.0f);
+        check(notes.size() == 4, "a seventh chord is four notes");
+        check(intervalsOf(notes, 0.0f) == std::vector<int>({4, 7, 10}),
+              "and V7 in a major key is dominant (4, 7, 10) - which is the "
+              "chord that makes a turnaround sound like one");
+
+        // A spread voicing drops the root, so the chord covers more than an
+        // octave.
+        ProgressionVoice spread = voice;
+        spread.spread = true;
+        const std::vector<Note> wide = generateProgression(spread, 4.0f);
+        int lowest = 128, highest = 0;
+        for (const Note& note : wide) {
+            lowest = std::min(lowest, note.pitch);
+            highest = std::max(highest, note.pitch);
+        }
+        check(highest - lowest > 12,
+              "a spread voicing covers more than an octave, got " +
+                  std::to_string(highest - lowest) + " semitones");
+    }
+
+    // ---- Reading a progression the way people write one ---------------------
+    {
+        std::vector<int> degrees;
+
+        check(progressionFromText("1 5 6 4", degrees) &&
+              degrees == std::vector<int>({1, 5, 6, 4}),
+              "numbers parse");
+
+        check(progressionFromText("I V vi IV", degrees) &&
+              degrees == std::vector<int>({1, 5, 6, 4}),
+              "and so do roman numerals, which is how progressions are "
+              "published");
+
+        check(progressionFromText("i-VII-VI-VII", degrees) &&
+              degrees == std::vector<int>({1, 7, 6, 7}),
+              "including with dashes and mixed case");
+
+        /*
+         * Case is deliberately ignored.
+         *
+         * Upper and lower case in roman numerals mean major and minor, and
+         * here the scale decides that. Honouring the case would let somebody
+         * write a major chord on a degree where the key has a minor one, and
+         * get a chord that is not in the key at all - which is the bug this
+         * whole generator exists to stop.
+         */
+        std::vector<int> upper, lower;
+        progressionFromText("VI", upper);
+        progressionFromText("vi", lower);
+        check(upper == lower,
+              "and case does not change the degree - the scale decides the "
+              "quality, not the way it was typed");
+
+        check(progressionFromText("ii7 V7 Imaj7", degrees) &&
+              degrees == std::vector<int>({2, 5, 1}),
+              "and a quality mark is dropped rather than the chord");
+
+        check(!progressionFromText("", degrees),
+              "empty text is no progression");
+        check(!progressionFromText("hello", degrees),
+              "and neither is something with no degrees in it");
+
+        check(progressionToText({1, 5, 6, 4}) == "1 5 6 4",
+              "and it writes back out, got '" +
+                  progressionToText({1, 5, 6, 4}) + "'");
+    }
+
+    // ---- Every preset is playable -------------------------------------------
+    {
+        bool allGood = true;
+        std::string bad;
+        for (const ProgressionPreset& preset : progressionPresets()) {
+            std::vector<int> degrees;
+            if (!progressionFromText(preset.degrees, degrees)) {
+                allGood = false;
+                bad = preset.name;
+                break;
+            }
+
+            ProgressionVoice voice;
+            voice.degrees = degrees;
+            const std::vector<Note> notes = generateProgression(voice, 4.0f);
+            if (notes.size() != degrees.size() * 3) {
+                allGood = false;
+                bad = preset.name;
+                break;
+            }
+            for (const Note& note : notes) {
+                if (note.pitch < 0 || note.pitch > 127) {
+                    allGood = false;
+                    bad = preset.name;
+                    break;
+                }
+            }
+            if (!allGood) break;
+        }
+        check(allGood,
+              "every shipped progression parses and generates playable "
+              "notes" + (allGood ? std::string() : " (" + bad + " does not)"));
+    }
+
+    // ---- Nonsense in, something sensible out --------------------------------
+    {
+        ProgressionVoice voice;
+        voice.degrees = {0, -3, 99};
+        voice.root = 50;
+        voice.scaleType = 99;
+        voice.octave = 12;       // far above anything playable
+        voice.voices = 17;
+
+        const std::vector<Note> notes = generateProgression(voice, 4.0f);
+        bool playable = true;
+        for (const Note& note : notes) {
+            if (note.pitch < 0 || note.pitch > 127) playable = false;
+        }
+        check(playable,
+              "a degree of zero, a root out of range and an octave off the "
+              "top of the keyboard still produce only playable notes");
+
+        const std::vector<Note> none = generateProgression(ProgressionVoice{}, 0.0f);
+        check(none.empty(), "and a bar of no length produces nothing");
+    }
+}
+
+// ============================================================================
 // The WAV writer
 //
 // Both of the things fixed here are audible only in quiet passages, which is
@@ -27183,6 +27404,7 @@ int main(int argc, char** argv) {
     testBrowserModel();
     testCommandPaletteAndBrowser();
     testPluginHosting();
+    testProgressions();
     testWavWriter();
     testMidiImport();
     testGrooveTiming();
