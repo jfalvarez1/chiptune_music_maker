@@ -7,6 +7,136 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
+## [3.12.0] - 2026-09-04 - "Measured"
+
+Five things that had been quietly wrong for a long time, found by measuring
+rather than by looking. And the interop to go with them: MIDI in, FLAC and
+24-bit out, groove, legato, PAL.
+
+### Fixed
+
+- **The master limiter was a hard clipper.** Its envelope smoothing used
+  `1 - exp(-1/(t·sr))` where the retained fraction needed `exp(-1/(t·sr))` —
+  0.022 instead of 0.978 — so the gain reached its target in a single sample,
+  every sample. The `release` control, exposed in every profile, every
+  loudness preset and the UI, did nothing at any value. It now has a real
+  envelope and a 1.5 ms lookahead, and the test that pins it measures crest
+  factor: a limiter keeps a sine's 1.414, a clipper drives it toward 1.
+
+- **A `tanh` sat after the limiter on every project**, costing 2.2 dB and
+  making the ceiling fiction — a −0.3 dB setting actually delivered −2.5 dBFS.
+  It also made both of the suite's clipping tests vacuous, since `|tanh(x)|`
+  is always under 1. It is now the safety net it was meant to be: it runs
+  when the limiter is off and stays out of the way when it is on.
+
+- **Every MIDI file this program has exported had a nonsensical tempo.** The
+  library's `addTempo` takes beats per minute; it was being handed
+  `60000000/bpm`, which it converted again — so a 132 BPM project wrote 132
+  microseconds per quarter note and opened elsewhere at about 454,000 BPM.
+  Nothing caught it because nothing ever read one back; writing the importer
+  did, on the first round trip.
+
+- **Autosave never fired for most edits.** Its change detection was a
+  fingerprint of note *counts*, so changing a pitch, a velocity, a length or
+  any mixer setting left it identical. An hour spent voicing a patch and
+  balancing a mix would autosave exactly never. It now counts undo steps,
+  which every edit already passes through.
+
+- **The crash handler wrote a log and let go**, losing up to ninety seconds
+  of work while being the one piece of code still able to write the file. It
+  saves first now, and says in the log whether it managed to.
+
+- **The WAV writer truncated instead of rounding, and had no dither** — a
+  bias on every sample, and quantisation error left correlated with the
+  signal, which is what makes a long fade break into steps.
+
+- **The master EQ, compressor and limiter were one mono instance each**,
+  processed left then right: crosstalk in the filtered bands, and every
+  dynamics time constant half what it said.
+
+- **The LUFS meter measured neither LUFS nor anything else** — no
+  K-weighting despite the name, channels averaged before squaring, no gating,
+  and a 144,000-sample buffer summed once per output sample.
+
+### Added
+
+- **MIDI import.** One pattern per track, one track per channel. Notes,
+  timing, length and velocity come across; instruments do not, because a MIDI
+  file has none — so importing into a project you have already voiced keeps
+  the voicing and swaps the notes. It reports what it dropped and why.
+
+- **FLAC export and 24-bit WAV.** FLAC matters more here than in most
+  programs: square waves are about as predictable as audio gets, so the file
+  is often a third the size of the WAV.
+
+- **Groove — per-row timing.** The swing control is one number applied to
+  every off-beat and can express `7 5` and nothing else. A groove is the
+  list: `7 5 6 6` swings the first half of the beat and leaves the second
+  alone. A full cycle always covers exactly as many rows of straight time as
+  it has entries, whatever the numbers, so a groove can never change the
+  tempo — which is asserted before any question of feel, because a groove
+  running 2% fast would drift against every audio clip in the project and do
+  it silently.
+
+- **Legato and tone portamento.** Every note-on used to take a fresh voice
+  and restart the envelope, so pitch could not change without re-striking.
+  A tied note keeps the voice that is sounding; with a slide it glides from
+  wherever it is at that many semitones per second, which is the tracker's
+  `3xx` and the thing the old slide could never do — it targeted the note's
+  own pitch and never looked at any other note.
+
+- **PAL.** Not a scaled NTSC: the noise period tables *cross*. At index 2 the
+  PAL period is 14 CPU cycles where NTSC is 16, so PAL noise is brighter
+  there and darker everywhere above. Region also moves every pitch by 7.65%
+  and the envelope clock from 240 Hz to 200 — and neither of those is the
+  60 Hz people assume.
+
+- **`ChipModel.h`** — the register arithmetic of what these chips could
+  actually play, checked against the datasheets. A NES pulse channel's period
+  steps are a few cents at C3 and more than a semitone above G#8, where there
+  is no chromatic scale left to play. A Game Boy pulse channel cannot go
+  below C2 at all, which makes the wave channel the only bass instrument on
+  the machine. Project Check reports notes outside these limits, but only for
+  a project that has said it wants to be chip-legal.
+
+- **A chord progression generator**, deriving chords from the scale. The
+  progressions that already existed were hardcoded degree lists where every
+  chord was a fixed minor triad, so "i - VI - III - VII" came out minor on
+  every degree. In C major the chords on I, ii, V, vi and vii are major,
+  minor, major, minor and diminished, and no fixed interval produces all
+  five.
+
+### Changed
+
+- **Mastering measures rather than claims.** The profiles' LUFS targets were
+  comments; they are fields now, with a real BS.1770 meter and a 4× true-peak
+  meter behind them. The genre table is re-voiced from measured data, with
+  Darksynth, Drum & Bass, Lo-fi, Pop, Rock and Ambient added.
+
+- **Chiptune's mastering profile changed direction in three places**, from
+  measurement: its high shelf was +2 dB and is now −0.8 (chip percussion is
+  already all edge); its stereo width was 1.12 and is now exactly 1.00
+  (measured correlation on a centred chip mix is +1.000 at any width setting
+  — there is no side signal to widen); and its true-peak ceiling is −1.6 dB
+  rather than −1.0, because **a square wave at 0 dBFS reconstructs at
+  +2.1 dBTP and a noise channel at +5.4**.
+
+- **A DC blocker on the master, on by default.** A pulse wave's DC offset is
+  `2·duty − 1` by construction, so a 12.5% pulse sits at −0.75. Removing it
+  raises the usable peak by 4.86 dB.
+
+- **The four demo songs were never actually mastered** — `showcase::master()`
+  set nine fields and neither was width or saturation, both of which default
+  to off. They now measure between −11.6 and −7.9 LUFS with their ceilings
+  held.
+
+- **The user guide** gained six sections and three walkthroughs, and its
+  three lists of sections — which had all drifted, leaving two sections
+  reachable only by scrolling — are now derived from the document with a test
+  asserting they agree.
+
+---
+
 ## [3.11.0] - 2026-09-03 - "Rack"
 
 A second rack that changes which notes play, a wavetable editor you can edit

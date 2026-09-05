@@ -13,7 +13,7 @@
 namespace ChiptuneTracker {
 
 inline constexpr int VERSION_MAJOR = 3;
-inline constexpr int VERSION_MINOR = 11;
+inline constexpr int VERSION_MINOR = 12;
 inline constexpr int VERSION_PATCH = 0;
 
 // Composed, never written by hand. This was a second hand-written literal
@@ -23,7 +23,7 @@ inline const std::string VERSION_STRING =
     std::to_string(VERSION_MAJOR) + "." +
     std::to_string(VERSION_MINOR) + "." +
     std::to_string(VERSION_PATCH);
-inline constexpr const char* VERSION_NAME = "Rack";
+inline constexpr const char* VERSION_NAME = "Measured";
 inline constexpr const char* APP_NAME = "ChiptuneTracker";
 
 inline std::string windowTitle() {
