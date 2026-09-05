@@ -105,6 +105,17 @@ inline bool destinationApplies(const ChannelConfig& channel,
     }
 }
 
+// One decimal place, without pulling in a stream. std::to_string on a float
+// gives six digits, and "2.500000 s" reads like a measurement when it is a
+// slider position.
+// The sign is carried separately rather than left to integer division,
+// which loses it entirely between -1 and 0: -0.4 would print as "0.4".
+inline std::string oneDecimal(float value) {
+    const long scaled = std::lround(std::fabs(value) * 10.0f);
+    const std::string sign = (value < 0.0f && scaled != 0) ? "-" : "";
+    return sign + std::to_string(scaled / 10) + "." + std::to_string(scaled % 10);
+}
+
 } // namespace audit
 
 /*
@@ -770,6 +781,65 @@ inline std::vector<AuditFinding> auditProject(const Project& project) {
                     "there, so it may be exactly what you want. Move it down "
                     "an octave if it is not."
                 });
+            }
+
+            /*
+             * The Game Boy envelope, which is reported rather than enforced.
+             *
+             * A deliberate asymmetry with pitch and volume, and the line is
+             * this: the period and volume registers are what the channel
+             * PLAYS, so quantising them is playing it correctly. The
+             * envelope generator is what the channel IS, and reshaping it
+             * would silently rewrite a patch somebody voiced by ear. So the
+             * mode says what a Game Boy could not have done and leaves the
+             * decision where it belongs.
+             *
+             * Three separate limits, and the second is the one that catches
+             * people: the envelope steps at 64 Hz through at most 15 levels
+             * with a period of at most 7 steps, so 1.64 seconds is the
+             * longest automatic fade the machine had, in one direction,
+             * once. It cannot loop and there is no sustain stage - which is
+             * most of why Game Boy instruments have that one-shot character.
+             */
+            if (channel.chipVoice == ChipVoice::GameBoyPulse ||
+                channel.chipVoice == ChipVoice::GameBoyWave) {
+                const Envelope& env = channel.envelope;
+                const float longest = gameboy::LONGEST_ENVELOPE_SECONDS;
+
+                if (env.attack > longest || env.decay > longest ||
+                    env.release > longest) {
+                    const float worst =
+                        std::max(env.attack, std::max(env.decay, env.release));
+                    findings.push_back({
+                        AuditSeverity::Note, ch,
+                        "This channel's envelope is longer than a Game Boy's "
+                        "could be",
+                        "The envelope unit steps at 64 Hz through 15 levels "
+                        "with a period of at most 7 steps, so its longest "
+                        "automatic fade is 1.64 seconds. The longest stage "
+                        "here is " + audit::oneDecimal(worst) + " s.",
+                        "Shorten it, or leave it - the pitch and volume "
+                        "registers are enforced because they are what the "
+                        "channel plays; the envelope is left alone because it "
+                        "is a patch you voiced."
+                    });
+                }
+
+                // Attack and decay both present is two directions, and the
+                // hardware had one.
+                if (env.attack > 0.02f && env.decay > 0.02f &&
+                    env.sustain < 0.99f) {
+                    findings.push_back({
+                        AuditSeverity::Note, ch,
+                        "A Game Boy envelope runs in one direction only",
+                        "It has a single ramp - up or down, never both - and "
+                        "no sustain stage, which is much of why Game Boy "
+                        "instruments have their one-shot character. This "
+                        "channel has an attack and a decay.",
+                        "Set the attack to zero for the usual chip shape: "
+                        "straight to full, then a single fall."
+                    });
+                }
             }
         }
     }

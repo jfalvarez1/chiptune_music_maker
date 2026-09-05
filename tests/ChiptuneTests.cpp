@@ -24454,6 +24454,172 @@ static void testChipMode() {
               "is checked");
     }
 
+    // ---- The Game Boy envelope: reported, deliberately not enforced ---------
+    //
+    // The asymmetry is the point, so it is what gets asserted: the pitch and
+    // volume registers change the sound, and the envelope does not. Reshaping
+    // an ADSR somebody voiced by ear is a different kind of act from playing
+    // their note at the pitch the register holds, and a test that only checked
+    // for the warning text would pass just as well on a version that quietly
+    // rewrote the patch.
+    {
+        auto has = [](const std::vector<AuditFinding>& findings,
+                      const std::string& fragment) {
+            for (const AuditFinding& f : findings) {
+                if (f.what.find(fragment) != std::string::npos) return true;
+                if (f.why.find(fragment) != std::string::npos) return true;
+            }
+            return false;
+        };
+
+        auto p = std::make_unique<Project>();
+        p->channels[0].chipVoice = ChipVoice::GameBoyPulse;
+        p->channels[0].envelope.attack = 0.0f;
+        p->channels[0].envelope.decay = 3.0f;   // nearly twice the machine's limit
+        p->channels[0].envelope.sustain = 0.0f;
+        p->channels[0].envelope.release = 0.1f;
+        p->patterns.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = 60;
+        note.duration = 2.0f;
+        pattern.notes.push_back(note);
+        p->patterns.push_back(pattern);
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        const std::vector<AuditFinding> findings = auditProject(*p);
+        check(has(findings, "longer than a Game Boy's"),
+              "a three-second decay on a Game Boy channel is reported - the "
+              "machine's longest fade is 1.64 s");
+        check(has(findings, "3.0 s"),
+              "and the report says how long it actually is, to one decimal");
+
+        // A shape the hardware could produce says nothing.
+        auto legal = std::make_unique<Project>();
+        legal->channels[0].chipVoice = ChipVoice::GameBoyPulse;
+        legal->channels[0].envelope.attack = 0.0f;
+        legal->channels[0].envelope.decay = 0.4f;
+        legal->channels[0].envelope.sustain = 0.0f;
+        legal->channels[0].envelope.release = 0.1f;
+        legal->patterns = p->patterns;
+        legal->arrangement = p->arrangement;
+        check(!has(auditProject(*legal), "longer than a Game Boy's"),
+              "and an envelope inside the limit is not");
+
+        // One direction. Attack and decay together is two.
+        auto twoWay = std::make_unique<Project>();
+        twoWay->channels[0].chipVoice = ChipVoice::GameBoyPulse;
+        twoWay->channels[0].envelope.attack = 0.3f;
+        twoWay->channels[0].envelope.decay = 0.3f;
+        twoWay->channels[0].envelope.sustain = 0.5f;
+        twoWay->patterns = p->patterns;
+        twoWay->arrangement = p->arrangement;
+        check(has(auditProject(*twoWay), "one direction only"),
+              "an attack and a decay together is a shape the envelope unit "
+              "could not make");
+
+        /*
+         * And the sound is untouched. This is the assertion that makes the
+         * two above mean something: the finding is advice, and advice that
+         * quietly acted on its own would be a different feature.
+         */
+        auto render = [](bool gameBoy) {
+            auto proj = std::make_unique<Project>();
+            proj->bpm = 120.0f;
+            proj->channels[0].chipVoice =
+                gameBoy ? ChipVoice::GameBoyPulse : ChipVoice::None;
+            // The same illegal envelope either way.
+            proj->channels[0].envelope.attack = 0.0f;
+            proj->channels[0].envelope.decay = 3.0f;
+            proj->channels[0].envelope.sustain = 0.0f;
+            proj->channels[0].envelope.release = 0.1f;
+            // A pitch inside the Game Boy's range, so the only thing that
+            // could differ between these two renders is the envelope.
+            proj->patterns.clear();
+            Pattern pat;
+            Note n;
+            n.pitch = 60;
+            n.duration = 4.0f;
+            pat.notes.push_back(n);
+            proj->patterns.push_back(pat);
+            proj->arrangement.clear();
+            proj->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seq = std::make_unique<Sequencer>();
+            seq->setSampleRate(44100.0f);
+            seq->setProject(proj.get());
+            seq->updateChannelConfigs();
+            seq->updateMasterEffects();
+            seq->play();
+
+            // The envelope's SHAPE, not its level. The Game Boy voice
+            // quantises volume to sixteen steps, so the two renders differ by
+            // up to 1/30 everywhere by design - comparing levels would fail
+            // on the feature working correctly. Where the decay crosses half
+            // is a property of the envelope alone.
+            std::vector<float> l(512), r(512), peaks;
+            for (int b = 0; b < 180; ++b) {
+                seq->process(l.data(), r.data(), 512);
+                float peak = 0.0f;
+                for (float v : l) peak = std::max(peak, std::fabs(v));
+                peaks.push_back(peak);
+            }
+            return peaks;
+        };
+
+        auto halfLifeBlock = [](const std::vector<float>& peaks) {
+            float top = 0.0f;
+            for (float v : peaks) top = std::max(top, v);
+            for (size_t i = 0; i < peaks.size(); ++i) {
+                if (peaks[i] > top * 0.9f) {
+                    for (size_t j = i; j < peaks.size(); ++j) {
+                        if (peaks[j] < top * 0.5f) return int(j);
+                    }
+                    break;
+                }
+            }
+            return -1;
+        };
+
+        const int plainHalf = halfLifeBlock(render(false));
+        const int gbHalf = halfLifeBlock(render(true));
+
+        check(plainHalf > 10,
+              "the three-second decay is measurable, crossing half at block " +
+                  std::to_string(plainHalf));
+
+        /*
+         * Ten blocks, which is about 120 ms, and the tolerance is loose on
+         * purpose rather than by defeat.
+         *
+         * The two renders DO differ slightly - the volume register is
+         * sixteen steps, so both the peak and the threshold derived from it
+         * land on the staircase, and on a slow decay a 3% difference in
+         * threshold is a few tens of milliseconds in time. That is the
+         * volume quantiser working.
+         *
+         * What the test has to separate is that from the envelope being
+         * reshaped, and the two are nowhere near each other: clamping this
+         * decay to the machine's 1.64 s would move the crossing to about
+         * block 70, roughly sixty blocks away. So the assertion below is
+         * checked against that alternative explicitly, which is what makes
+         * the loose tolerance safe.
+         */
+        const int clampedHypothesis =
+            int(gameboy::LONGEST_ENVELOPE_SECONDS * 0.5f * 44100.0f / 512.0f);
+        check(std::abs(plainHalf - clampedHypothesis) > 30,
+              "a decay clamped to the Game Boy's 1.64 s would cross half "
+              "around block " + std::to_string(clampedHypothesis) +
+                  ", far from the " + std::to_string(plainHalf) +
+                  " an untouched one gives - so the two are distinguishable");
+        check(gbHalf > 0 && std::abs(gbHalf - plainHalf) <= 10,
+              "and a Game Boy voice on that same illegal ADSR decays at the "
+              "same rate - block " + std::to_string(gbHalf) + " against " +
+                  std::to_string(plainHalf) + ". The registers are enforced; "
+                  "the patch is not touched.");
+    }
+
     // ---- The guide's range table is the one the program enforces ------------
     //
     // Five ranges written out by hand in a document, against five computed
