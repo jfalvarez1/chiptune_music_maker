@@ -432,4 +432,212 @@ inline float noteToHz(int midiNote) {
  */
 inline constexpr float CHIP_TUNING_TOLERANCE_CENTS = 25.0f;
 
+// ============================================================================
+// Playing it the way the hardware would
+// ============================================================================
+/*
+ * The two functions above answer questions. These two ANSWER WITH THE SOUND:
+ * given what the composer asked for, they return what the register would
+ * actually produce, and the synthesiser plays that instead.
+ *
+ * The difference matters more than it looks. An audit that reports a note is
+ * 40 cents sharp on real hardware is a footnote nobody reads; a lead that is
+ * audibly 40 cents sharp as you write it is a thing you either fix or decide
+ * you like. The whole value of a chip mode is that the constraint arrives
+ * while there is still a decision to make.
+ *
+ * These are called per sample, per voice, from the audio thread. No
+ * allocation, no branch on anything but the voice enum, and the arithmetic is
+ * two divides and a round - which is what the hardware did too.
+ */
+
+/*
+ * The pitch a register would produce.
+ *
+ * Returns 0 for silence, which is a real outcome rather than an error: below
+ * period 8 the NES sweep unit mutes the pulse channel outright, so a note up
+ * there does not play sharp - it does not play. That only bites at the very
+ * top of the keyboard (12.4 kHz on NTSC, so MIDI 127 and nothing else), but
+ * it is the hardware's answer and a mode that quietly substituted a pitch
+ * would be lying about exactly the thing it exists to show.
+ *
+ * Everything else CLAMPS rather than silencing, because that is also what the
+ * hardware does: the register saturates, so a bass note written below what a
+ * Game Boy pulse can reach comes out at 64 Hz in the wrong octave. Loudly
+ * wrong is the point - it is how you learn that the wave channel is the only
+ * bass instrument on the machine.
+ */
+inline float quantiseChipFrequency(ChipVoice voice, float hz,
+                                   ChipRegion region = ChipRegion::NTSC) {
+    if (voice == ChipVoice::None || !(hz > 0.0f)) return hz;
+
+    switch (voice) {
+        case ChipVoice::NESPulse: {
+            int period = nes::periodForFrequency(region, hz, false);
+            // The mute gate, not a clamp. See above.
+            if (period < nes::PULSE_PERIOD_MIN) return 0.0f;
+            return nes::pulseFrequency(region, period);
+        }
+
+        case ChipVoice::NESTriangle: {
+            const int period = nes::periodForFrequency(region, hz, true);
+            // The triangle has no such gate - its own silencer is the linear
+            // counter, which is a length rather than a pitch.
+            return nes::triangleFrequency(region, period);
+        }
+
+        case ChipVoice::NESNoise:
+            // Sixteen periods and nothing between them; the noise generator
+            // already picks from the table, and imposing a pitch grid on a
+            // channel that has no pitch would be arithmetic for its own sake.
+            return hz;
+
+        case ChipVoice::GameBoyPulse: {
+            const int x = gameboy::periodForFrequency(hz, false);
+            return gameboy::pulseFrequency(x);
+        }
+
+        case ChipVoice::GameBoyWave: {
+            const int x = gameboy::periodForFrequency(hz, true);
+            return gameboy::waveFrequency(x);
+        }
+
+        default:
+            return hz;
+    }
+}
+
+/*
+ * The level a volume register would produce, from a 0..1 gain.
+ *
+ * Three different shapes, and the differences are the character:
+ *
+ * - Four bits, sixteen steps, on the NES pulse and noise and the Game Boy
+ *   pulse. The staircase is audible on a slow fade and is a large part of
+ *   why chiptune sounds like chiptune.
+ *
+ * - NOTHING AT ALL on the NES triangle. It has no volume register; the
+ *   channel is gated on or off by the linear counter and that is the entire
+ *   dynamic range. So an ADSR on a triangle is fiction, and in this mode it
+ *   becomes a gate - which does click on the way out, exactly as the hardware
+ *   clicks. A tracker that smoothed that has removed the sound.
+ *
+ * - Four codes on the Game Boy wave channel, and they are SHIFTS rather than
+ *   levels: 0%, 100%, 50%, 25%. Turning it down costs sample resolution,
+ *   which is not true of any other volume control in this program.
+ */
+inline float quantiseChipLevel(ChipVoice voice, float level) {
+    const float clamped = std::clamp(level, 0.0f, 1.0f);
+    switch (voice) {
+        case ChipVoice::NESPulse:
+        case ChipVoice::NESNoise:
+        case ChipVoice::GameBoyPulse:
+            return nes::quantiseVolume(clamped);
+
+        case ChipVoice::NESTriangle:
+            // On or off. The threshold is half of one 4-bit step, so a
+            // release that has faded below anything the chip could have
+            // represented reads as off rather than as a held note.
+            return (clamped >= 0.5f / float(nes::VOLUME_LEVELS - 1)) ? 1.0f : 0.0f;
+
+        case ChipVoice::GameBoyWave: {
+            float best = gameboy::WAVE_VOLUMES[0];
+            float bestDistance = std::fabs(clamped - best);
+            for (int i = 1; i < 4; ++i) {
+                const float d = std::fabs(clamped - gameboy::WAVE_VOLUMES[i]);
+                if (d < bestDistance) {
+                    bestDistance = d;
+                    best = gameboy::WAVE_VOLUMES[i];
+                }
+            }
+            return best;
+        }
+
+        default:
+            return clamped;
+    }
+}
+
+// Whether a voice constrains pitch at all. The noise channel does not, and
+// the audio thread should not pay for a quantiser that returns its argument.
+inline bool chipVoiceConstrainsPitch(ChipVoice voice) {
+    return voice != ChipVoice::None && voice != ChipVoice::NESNoise;
+}
+
+/*
+ * The lowest and highest note a voice can play, as MIDI numbers.
+ *
+ * Rounded INWARD - ceil at the bottom, floor at the top - so both ends name
+ * a note that actually plays. Rounding the usual way would offer a bottom
+ * note half a semitone below the register's floor, which is precisely the
+ * note that comes out in the wrong place.
+ */
+inline int chipLowestNote(ChipVoice voice, ChipRegion region = ChipRegion::NTSC) {
+    float hz = 0.0f;
+    switch (voice) {
+        case ChipVoice::NESPulse:     hz = nes::lowestFrequency(region, false); break;
+        case ChipVoice::NESTriangle:  hz = nes::lowestFrequency(region, true); break;
+        case ChipVoice::GameBoyPulse: hz = gameboy::PULSE_LOWEST_HZ; break;
+        case ChipVoice::GameBoyWave:  hz = gameboy::WAVE_LOWEST_HZ; break;
+        default: return 0;
+    }
+    const float note = 69.0f + 12.0f * std::log2(hz / 440.0f);
+    return std::clamp(static_cast<int>(std::ceil(note - 0.001f)), 0, 127);
+}
+
+inline int chipHighestNote(ChipVoice voice, ChipRegion region = ChipRegion::NTSC) {
+    float hz = 0.0f;
+    switch (voice) {
+        case ChipVoice::NESPulse:     hz = nes::highestFrequency(region, false); break;
+        case ChipVoice::NESTriangle:  hz = nes::highestFrequency(region, true); break;
+        // The Game Boy's ceiling is not where the register runs out - a step
+        // from x=2046 to 2047 is a whole octave, so the top is wherever the
+        // steps stop being usable long before that.
+        case ChipVoice::GameBoyPulse: hz = gameboy::pulseFrequency(gameboy::PERIOD_MAX - 2); break;
+        case ChipVoice::GameBoyWave:  hz = gameboy::waveFrequency(gameboy::PERIOD_MAX - 2); break;
+        default: return 127;
+    }
+    const float note = 69.0f + 12.0f * std::log2(hz / 440.0f);
+    return std::clamp(static_cast<int>(std::floor(note + 0.001f)), 0, 127);
+}
+
+/*
+ * The highest note that is still IN TUNE - the one a strict mode should
+ * really be drawing a line at.
+ *
+ * A NES pulse channel can hold a period all the way up, so its "range" runs
+ * off the top of the keyboard; what it cannot do is hold a chromatic scale
+ * up there, because above about G#8 adjacent periods are further apart than
+ * adjacent notes. Range and usable range are different questions and the
+ * second is the one a composer cares about.
+ *
+ * SCANNED UPWARD, and it has to be. Coming down from the top finds the
+ * highest note that happens to land near a period, which up there is luck
+ * rather than a range - MIDI 125 is 1.7 cents out on a NES pulse purely
+ * because 11175 Hz falls close to a register step, while everything for two
+ * octaves below it is a quarter-tone off. Reporting that as the ceiling
+ * would be true of exactly one note and useless as a guide.
+ *
+ * So this returns the last note before the FIRST one that misses, which is
+ * the honest answer to "where does the chromatic scale stop".
+ */
+inline int chipHighestUsableNote(ChipVoice voice,
+                                 ChipRegion region = ChipRegion::NTSC,
+                                 float toleranceCents = CHIP_TUNING_TOLERANCE_CENTS) {
+    if (!chipVoiceConstrainsPitch(voice)) return 127;
+    const int floorNote = chipLowestNote(voice, region);
+    const int ceiling = chipHighestNote(voice, region);
+
+    int last = floorNote;
+    for (int note = floorNote; note <= ceiling; ++note) {
+        const float hz = noteToHz(note);
+        const float actual = quantiseChipFrequency(voice, hz, region);
+        if (!(actual > 0.0f)) break;  // muted from here up
+        const float cents = 1200.0f * std::log2(actual / hz);
+        if (std::fabs(cents) > toleranceCents) break;
+        last = note;
+    }
+    return last;
+}
+
 }  // namespace ChiptuneTracker

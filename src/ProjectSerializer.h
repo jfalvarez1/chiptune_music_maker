@@ -754,6 +754,24 @@ inline bool writeProject(std::ostream& file, const Project& project) {
             file << "\n";
         }
 
+        /*
+         * Which chip this channel is held to.
+         *
+         * Its own line rather than a CHANNEL_INTS entry because the field is
+         * an enum class, and widening that table to accept one would mean
+         * casting through int at both ends - which is exactly how an enum
+         * value drifts by one when somebody inserts a case.
+         *
+         * Omitted when unconstrained, which is every channel of every
+         * project written before this existed. A reader that has never heard
+         * of the key skips the line, so an older build opens a chip-mode
+         * project and simply plays it unconstrained.
+         */
+        if (c.chipVoice != ChipVoice::None) {
+            file << "CHIPVOICE " << ch << ' '
+                 << static_cast<int>(c.chipVoice) << "\n";
+        }
+
         // The note rack, one line per slot, in the order it runs.
         for (const NoteFXSlot& fx : c.noteFX) {
             file << "NOTEFX " << ch << ' '
@@ -1577,6 +1595,21 @@ inline bool readProject(std::istream& file, Project& project) {
                 if (!plugin.empty()) {
                     project.channels[static_cast<size_t>(ch)].plugins.push_back(plugin);
                 }
+            }
+        }
+        else if (cmd == "CHIPVOICE") {
+            int ch = -1;
+            int voice = 0;
+            iss >> ch >> voice;
+            // Range-checked against the enum rather than cast blindly. A
+            // file written by a later build that added a chip would
+            // otherwise land on whatever value happened to follow, and a
+            // channel that plays as the wrong chip is worse than one that
+            // plays unconstrained.
+            if (ch >= 0 && ch < Project::MAX_CHANNELS &&
+                voice > 0 && voice < CHIP_VOICE_COUNT) {
+                project.channels[static_cast<size_t>(ch)].chipVoice =
+                    static_cast<ChipVoice>(voice);
             }
         }
         else if (cmd == "NOTEFX") {

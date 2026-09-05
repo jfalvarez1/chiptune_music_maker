@@ -722,6 +722,26 @@ struct ChannelConfig {
      * the sequencer checks `active()` before it copies a single voice.
      */
     std::vector<NoteFXSlot> noteFX;
+
+    /*
+     * Which chip this channel is held to, if any.
+     *
+     * Deliberately NOT part of `chipAuthentic`. That flag is a channel cap
+     * and nothing else, and it is on in existing projects - so extending it
+     * to quantise pitch and volume would change how saved work sounds, which
+     * is the one thing a chip mode must never do to somebody who did not ask.
+     *
+     * Per channel rather than per project because that is how the machines
+     * actually were: a NES has two pulse channels, one triangle and one
+     * noise, and each has different limits. A project-wide setting could
+     * only enforce the loosest of them, which is to say none.
+     *
+     * `None` on every channel by default, and it costs one predicted branch
+     * per voice per sample when it is.
+     *
+     * Append, never insert - see the note above `plugins`.
+     */
+    ChipVoice chipVoice = ChipVoice::None;
 };
 
 // ============================================================================

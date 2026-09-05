@@ -540,7 +540,14 @@ public:
         m_envelope = config.envelope;
         m_macros = config.macros;
         m_quantizeVolume4Bit = config.quantizeVolume4Bit;
-        
+
+        // Which chip this channel is held to. The second flag is hoisted
+        // here rather than asked per sample: the noise channel has no pitch
+        // to quantise, so the audio thread should not call a quantiser that
+        // returns its argument forty-four thousand times a second.
+        m_chipVoice = config.chipVoice;
+        m_chipPitchConstrained = chipVoiceConstrainsPitch(m_chipVoice);
+
         // Filter Envelope
         m_filterEnvEnabled = config.filterEnvEnabled;
         m_filterEnvAmount = config.filterEnvAmount;
@@ -940,6 +947,10 @@ public:
             // Apply per-note effects to frequency (before oscillator generation)
             float effectFreq = voice.baseFrequency;
 
+            // Set below if a chip-constrained channel lands on a pitch the
+            // hardware answers with silence rather than with a note.
+            bool chipMuted = false;
+
             // 1. Apply portamento/slide effect
             if (voice.slideTarget > 0.0f && voice.slideSpeed > 0.0f) {
                 const float diff = voice.slideTarget - voice.frequency;
@@ -1096,7 +1107,37 @@ public:
                 if (!std::isfinite(effectFreq)) effectFreq = voice.baseFrequency;
                 const float nyquist = m_sampleRate * 0.5f;
                 effectFreq = std::max(0.0f, std::min(effectFreq, nyquist));
-                voice.phaseIncrement = effectFreq / m_sampleRate;
+
+                /*
+                 * The period register, if this channel has one.
+                 *
+                 * LAST, after vibrato, slide, arpeggio, sweep, the macros
+                 * and the bender - because on the real machine all of those
+                 * were the same thing: a number written to the same eleven
+                 * bits. Quantising the note and then modulating it smoothly
+                 * would give a channel finer pitch resolution than the
+                 * hardware had, and the steps are the sound. A chip vibrato
+                 * is steppy in the top octave and smooth at the bottom, and
+                 * that only falls out if the quantiser sits here.
+                 */
+                if (m_chipPitchConstrained) {
+                    effectFreq = quantiseChipFrequency(m_chipVoice, effectFreq,
+                                                       m_chipRegion);
+                    /*
+                     * 0 means the hardware muted the channel outright.
+                     *
+                     * Gated rather than skipped. `continue` here would leave
+                     * the envelope frozen, so a note muted for its whole
+                     * duration would never reach the release that
+                     * deactivates it - a stuck voice, permanently, on a
+                     * channel that sounds silent. The sweep unit gates the
+                     * OUTPUT and lets the envelope keep clocking, which is
+                     * both correct and the version that cannot leak.
+                     */
+                    chipMuted = !(effectFreq > 0.0f);
+                }
+
+                voice.phaseIncrement = chipMuted ? 0.0f : effectFreq / m_sampleRate;
             }
 
             // Generate oscillator sample
@@ -1189,7 +1230,29 @@ public:
                 envGain = float(level) / 15.0f;
             }
 
-            sample *= envGain * voice.velocity * fadeGain * tremoloGain;
+            /*
+             * The volume register, if this channel has one.
+             *
+             * On the GAIN rather than on the output sample, which is the
+             * difference between a volume control and a bit crusher. The
+             * hardware multiplied its waveform by a 4-bit level; quantising
+             * the finished sample instead would also quantise the waveform,
+             * which the chip did not do to a pulse and could not have done
+             * to a Game Boy wave table.
+             *
+             * Everything that feeds the level goes through it together -
+             * envelope, velocity, fades, tremolo - because on the chip they
+             * were one number written to one register. A tremolo that could
+             * move between the steps would have more resolution than the
+             * machine had.
+             */
+            float chipGain = envGain * voice.velocity * fadeGain * tremoloGain;
+            if (m_chipVoice != ChipVoice::None) {
+                chipGain = quantiseChipLevel(m_chipVoice, chipGain);
+            }
+            sample *= chipGain;
+
+            if (chipMuted) sample = 0.0f;
 
             // Optional 4-bit output quantisation. Real chips had a 16-level
             // volume DAC, and that staircase is a real part of the character.
@@ -3501,6 +3564,10 @@ private:
     // Instrument macros for this channel (see Macros.h)
     InstrumentMacros m_macros;
     bool m_quantizeVolume4Bit = false;
+
+    // The chip constraint, and whether it touches pitch at all.
+    ChipVoice m_chipVoice = ChipVoice::None;
+    bool m_chipPitchConstrained = false;
 };
 
 } // namespace ChiptuneTracker

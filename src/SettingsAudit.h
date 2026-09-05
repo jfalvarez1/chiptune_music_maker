@@ -631,6 +631,149 @@ inline std::vector<AuditFinding> auditProject(const Project& project) {
         }
     }
 
+    /*
+     * ---- Channels held to a chip, and the notes that do not fit ---------
+     *
+     * Different from the block above in the way that matters: that one asks
+     * a hypothetical - what a 2A03 WOULD do with these notes - and this one
+     * reports what the engine IS doing, because a channel with a chip voice
+     * set is already playing the quantised pitch.
+     *
+     * So the wording has to change with it. "would be out of tune on real
+     * hardware" is advice; "is playing an octave above what you wrote" is a
+     * description of the sound coming out of the speakers right now, and the
+     * two deserve different urgency.
+     *
+     * Per channel, via the arrangement, because the constraint is per
+     * channel: the same pattern under a triangle and under a Game Boy pulse
+     * has entirely different problems, and a pattern that is never placed
+     * has none.
+     */
+    {
+        struct ChipChannelReport {
+            int clamped = 0;      // played at the wrong pitch entirely
+            int silenced = 0;     // the hardware mutes the channel up there
+            int detuned = 0;      // playable, past the tolerance
+            float worstCents = 0.0f;
+            int worstPitch = 0;
+            int lowestWritten = 128;
+        };
+        std::vector<ChipChannelReport> reports(
+            static_cast<size_t>(Project::MAX_CHANNELS));
+
+        for (const Clip& clip : project.arrangement) {
+            if (clip.type != ClipType::Pattern) continue;
+            if (clip.channelIndex < 0 || clip.channelIndex >= activeChannels) continue;
+            if (clip.patternIndex < 0 ||
+                clip.patternIndex >= static_cast<int>(project.patterns.size())) continue;
+
+            const ChannelConfig& channel =
+                project.channels[static_cast<size_t>(clip.channelIndex)];
+            if (channel.chipVoice == ChipVoice::None) continue;
+            if (!chipVoiceConstrainsPitch(channel.chipVoice)) continue;
+
+            ChipChannelReport& report =
+                reports[static_cast<size_t>(clip.channelIndex)];
+            const Pattern& pattern =
+                project.patterns[static_cast<size_t>(clip.patternIndex)];
+
+            for (const Note& note : pattern.notes) {
+                // The clip's transpose is part of what actually sounds, so
+                // it is part of what is checked. A pattern that fits and a
+                // clip that drops it an octave is exactly the case a check
+                // reading patterns alone would miss.
+                const int pitch = std::clamp(note.pitch + clip.transpose, 0, 127);
+                const float hz = noteToHz(pitch);
+                const float actual =
+                    quantiseChipFrequency(channel.chipVoice, hz, project.chipRegion);
+
+                if (!(actual > 0.0f)) {
+                    ++report.silenced;
+                    continue;
+                }
+
+                const float cents = 1200.0f * std::log2(actual / hz);
+                // Half a semitone is the line between "out of tune" and
+                // "a different note", and the register saturating at the
+                // bottom of its range lands well past it.
+                if (std::fabs(cents) > 50.0f) {
+                    ++report.clamped;
+                    report.lowestWritten = std::min(report.lowestWritten, pitch);
+                } else if (std::fabs(cents) > CHIP_TUNING_TOLERANCE_CENTS) {
+                    ++report.detuned;
+                }
+
+                if (std::fabs(cents) > std::fabs(report.worstCents)) {
+                    report.worstCents = cents;
+                    report.worstPitch = pitch;
+                }
+            }
+        }
+
+        for (int ch = 0; ch < activeChannels; ++ch) {
+            const ChipChannelReport& report = reports[static_cast<size_t>(ch)];
+            const ChannelConfig& channel = project.channels[static_cast<size_t>(ch)];
+            const char* voiceName = chipVoiceName(channel.chipVoice);
+            const int floorNote = chipLowestNote(channel.chipVoice, project.chipRegion);
+
+            if (report.clamped > 0) {
+                findings.push_back({
+                    AuditSeverity::Problem, ch,
+                    std::to_string(report.clamped) + " note" +
+                        (report.clamped == 1 ? " is" : "s are") +
+                        " below what a " + voiceName + " can reach",
+                    std::string("The period register saturates, so they are "
+                                "sounding at the lowest note the channel has "
+                                "- MIDI ") + std::to_string(floorNote) +
+                        ", and the lowest written here is MIDI " +
+                        std::to_string(report.lowestWritten) + ". This is "
+                        "not a tuning error; they are playing in the wrong "
+                        "octave right now.",
+                    (channel.chipVoice == ChipVoice::GameBoyPulse)
+                        ? "Move the part up, or put it on a Game Boy wave "
+                          "channel - it reaches an octave lower, which is why "
+                          "it was the only bass instrument on the machine."
+                        : "Move the part up an octave, or use a NES triangle "
+                          "voice - it reaches an octave lower for the same "
+                          "register."
+                });
+            }
+
+            if (report.silenced > 0) {
+                findings.push_back({
+                    AuditSeverity::Problem, ch,
+                    std::to_string(report.silenced) + " note" +
+                        (report.silenced == 1 ? "" : "s") +
+                        " are silent on a " + voiceName,
+                    "Below period 8 the sweep unit mutes the channel outright "
+                    "rather than playing it sharp, so these produce nothing "
+                    "at all. It only happens at the very top of the keyboard.",
+                    "Move them down an octave."
+                });
+            }
+
+            if (report.detuned > 0) {
+                findings.push_back({
+                    AuditSeverity::Note, ch,
+                    std::to_string(report.detuned) + " note" +
+                        (report.detuned == 1 ? "" : "s") +
+                        " land more than a quarter-tone off on this " + voiceName,
+                    "The pitch register's steps get further apart the higher "
+                    "you go. The worst here is " +
+                        std::to_string(static_cast<int>(report.worstCents)) +
+                        " cents, on MIDI note " +
+                        std::to_string(report.worstPitch) + ". Above MIDI " +
+                        std::to_string(chipHighestUsableNote(channel.chipVoice,
+                                                             project.chipRegion)) +
+                        " there is no chromatic scale left at all.",
+                    "This is what a chiptune lead actually sounds like up "
+                    "there, so it may be exactly what you want. Move it down "
+                    "an octave if it is not."
+                });
+            }
+        }
+    }
+
     // Worst first, then by channel, so the panel reads top-down in the order
     // someone would actually act on it.
     std::stable_sort(findings.begin(), findings.end(),

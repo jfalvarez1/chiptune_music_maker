@@ -23952,6 +23952,510 @@ static void testChipModel() {
 }
 
 // ============================================================================
+// Chip mode as an authoring constraint
+//
+// The point of this feature is that the limits arrive in the SOUND while you
+// are still writing, so almost everything here is measured out of rendered
+// audio rather than read back off the quantiser. A test that called
+// quantiseChipFrequency and checked it against quantiseChipFrequency would
+// pass just as happily with the whole thing unplugged from the synthesiser,
+// which is exactly the failure this project has shipped before.
+//
+// The pitch measurement is a zero-crossing count. It is crude and it is
+// enough: the errors being asserted here are tens of cents to whole octaves,
+// and a count over half a second of a pulse wave resolves far finer than
+// that.
+// ============================================================================
+static void testChipMode() {
+    using namespace ChiptuneTracker;
+
+    // Frequency of a rendered buffer, from rising zero crossings. Hysteresis
+    // around zero rather than a bare sign test, so a little DC or ripple on
+    // a pulse wave does not read as extra cycles.
+    auto measureHz = [](const std::vector<float>& buf, float sampleRate) -> float {
+        int rises = 0;
+        int firstRise = -1, lastRise = -1;
+        bool above = false;
+        for (size_t i = 0; i < buf.size(); ++i) {
+            if (!above && buf[i] > 0.05f) {
+                above = true;
+                if (firstRise < 0) firstRise = int(i);
+                lastRise = int(i);
+                ++rises;
+            } else if (above && buf[i] < -0.05f) {
+                above = false;
+            }
+        }
+        if (rises < 3 || lastRise <= firstRise) return 0.0f;
+        const float span = float(lastRise - firstRise) / sampleRate;
+        return float(rises - 1) / span;
+    };
+
+    // One channel, one long note, rendered. Everything on the master that
+    // could reshape the waveform is off, because the measurement is a
+    // zero-crossing count and a limiter would move the crossings.
+    auto renderNote = [](ChipVoice voice, int pitch, float volume = 0.8f)
+        -> std::vector<float> {
+        auto p = std::make_unique<Project>();
+        p->bpm = 60.0f;
+        p->masterLimiterEnabled = false;
+        p->masterCompressorEnabled = false;
+        p->masterEQEnabled = false;
+        p->masterVolume = 1.0f;
+
+        for (auto& channel : p->channels) channel.volume = 0.0f;
+        p->channels[0].oscillator.type = OscillatorType::Pulse;
+        p->channels[0].volume = volume;
+        p->channels[0].chipVoice = voice;
+        // A flat envelope, so the level under test is the level under test
+        // and not a decay caught partway down.
+        p->channels[0].envelope.attack = 0.001f;
+        p->channels[0].envelope.decay = 0.001f;
+        p->channels[0].envelope.sustain = 1.0f;
+        p->channels[0].envelope.release = 0.01f;
+
+        p->patterns.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = pitch;
+        note.duration = 4.0f;
+        note.oscillatorType = OscillatorType::Pulse;
+        pattern.notes.push_back(note);
+        p->patterns.push_back(pattern);
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        auto seq = std::make_unique<Sequencer>();
+        seq->setSampleRate(44100.0f);
+        seq->setProject(p.get());
+        seq->updateChannelConfigs();
+        seq->updateMasterEffects();
+        seq->play();
+
+        std::vector<float> l(512), r(512), collected;
+        for (int b = 0; b < 60; ++b) {
+            seq->process(l.data(), r.data(), 512);
+            if (b >= 10) collected.insert(collected.end(), l.begin(), l.end());
+        }
+        return collected;
+    };
+
+    // ---- The quantiser, against the datasheet arithmetic --------------------
+    {
+        // A NES pulse at A4. The nearest period is 253, which is 440.13 Hz -
+        // half a cent out, which is why nobody notices down here.
+        const float a4 = quantiseChipFrequency(ChipVoice::NESPulse, 440.0f);
+        check(std::fabs(a4 - 440.0f) < 1.0f,
+              "a NES pulse plays A4 to within a hertz, got " +
+                  std::to_string(a4));
+
+        // Two octaves up it is a different story: the period is 63, and the
+        // steps either side of it are more than a quarter-tone apart.
+        const float a6 = quantiseChipFrequency(ChipVoice::NESPulse, 1760.0f);
+        const float centsA6 = 1200.0f * std::log2(a6 / 1760.0f);
+        check(std::fabs(centsA6) > 1.0f && std::fabs(centsA6) < 40.0f,
+              "and A6 lands audibly but not wildly off, " +
+                  std::to_string(centsA6) + " cents");
+
+        /*
+         * The mute gate - a gate, not a clamp: below period 8 the sweep unit
+         * silences the pulse channel rather than playing it sharp.
+         *
+         * And it sits ABOVE THE KEYBOARD. Period 8 rounds in from anything
+         * under 13160 Hz, and the top note of the keyboard is 12544, so no
+         * written note can reach it - only modulation can, by pushing a high
+         * note higher. Worth pinning both halves: the gate is real, and the
+         * assumption that MIDI 127 trips it (which is where this test
+         * started) is wrong by about a whole tone.
+         */
+        check(quantiseChipFrequency(ChipVoice::NESPulse, 14000.0f) == 0.0f,
+              "above 13.2 kHz a NES pulse is muted outright, not detuned");
+        check(quantiseChipFrequency(ChipVoice::NESPulse, noteToHz(127)) > 0.0f,
+              "but the top note of the keyboard still plays - MIDI 127 rounds "
+              "to period 8, which is exactly the lowest the gate allows");
+
+        // The Game Boy floor, which is the constraint with real compositional
+        // consequences: the pulse channels simply have no bass.
+        check(std::fabs(quantiseChipFrequency(ChipVoice::GameBoyPulse, 40.0f) -
+                        64.0f) < 0.01f,
+              "a Game Boy pulse asked for 40 Hz produces exactly 64 - the "
+              "register saturates, it does not silence");
+        check(std::fabs(quantiseChipFrequency(ChipVoice::GameBoyWave, 40.0f) -
+                        40.0f) < 1.0f,
+              "and the wave channel, an octave lower, plays it");
+
+        // The triangle is exactly an octave below the pulse for the same
+        // register, which is the whole reason it is the bass channel.
+        const float pulseLow = nes::lowestFrequency(ChipRegion::NTSC, false);
+        const float triLow = nes::lowestFrequency(ChipRegion::NTSC, true);
+        check(std::fabs(pulseLow / triLow - 2.0f) < 0.001f,
+              "the NES triangle reaches exactly an octave below the pulse");
+
+        // Unconstrained is a pass-through, byte for byte. Anything else and
+        // switching the feature off would not switch it off.
+        check(quantiseChipFrequency(ChipVoice::None, 437.913f) == 437.913f,
+              "an unconstrained voice returns the frequency untouched");
+    }
+
+    // ---- Volume: three different shapes -------------------------------------
+    {
+        check(std::fabs(quantiseChipLevel(ChipVoice::NESPulse, 0.5f) -
+                        (8.0f / 15.0f)) < 1e-5f,
+              "a NES pulse quantises half to 8/15");
+
+        // The triangle has no volume register at all. Not sixteen steps -
+        // none. It is a gate.
+        check(quantiseChipLevel(ChipVoice::NESTriangle, 0.5f) == 1.0f &&
+              quantiseChipLevel(ChipVoice::NESTriangle, 0.9f) == 1.0f &&
+              quantiseChipLevel(ChipVoice::NESTriangle, 0.0f) == 0.0f,
+              "the NES triangle has no volume register - anything audible is "
+              "full and the rest is off");
+
+        // The Game Boy wave's four codes are shifts: 0, 1, 1/2, 1/4. There is
+        // nothing between 1/4 and 1/2, and nothing at all below 1/4 but off.
+        check(quantiseChipLevel(ChipVoice::GameBoyWave, 0.9f) == 1.0f &&
+              quantiseChipLevel(ChipVoice::GameBoyWave, 0.48f) == 0.5f &&
+              quantiseChipLevel(ChipVoice::GameBoyWave, 0.26f) == 0.25f &&
+              quantiseChipLevel(ChipVoice::GameBoyWave, 0.05f) == 0.0f,
+              "the Game Boy wave channel has four volume codes and they are "
+              "shifts, not levels");
+
+        std::vector<float> levels;
+        for (int i = 0; i <= 200; ++i) {
+            const float q = quantiseChipLevel(ChipVoice::GameBoyWave, float(i) / 200.0f);
+            bool seen = false;
+            for (float v : levels) if (std::fabs(v - q) < 1e-6f) seen = true;
+            if (!seen) levels.push_back(q);
+        }
+        check(levels.size() == 4,
+              "exactly four of them, got " + std::to_string(levels.size()));
+    }
+
+    // ---- Ranges name notes that actually play -------------------------------
+    {
+        // Rounded inward. The failure this guards against is a floor that
+        // names the note half a semitone BELOW what the register can hold,
+        // which is precisely the note that comes out in the wrong place.
+        const int gbFloor = chipLowestNote(ChipVoice::GameBoyPulse);
+        check(gbFloor == 36,
+              "a Game Boy pulse bottoms out at MIDI 36, C2, got " +
+                  std::to_string(gbFloor));
+        const float atFloor =
+            quantiseChipFrequency(ChipVoice::GameBoyPulse, noteToHz(gbFloor));
+        check(std::fabs(1200.0f * std::log2(atFloor / noteToHz(gbFloor))) < 25.0f,
+              "and that note really does play in tune there");
+        const float belowFloor =
+            quantiseChipFrequency(ChipVoice::GameBoyPulse, noteToHz(gbFloor - 1));
+        check(std::fabs(1200.0f * std::log2(belowFloor / noteToHz(gbFloor - 1))) > 50.0f,
+              "while the semitone below it does not, which is what makes the "
+              "floor a floor");
+
+        // Range and USABLE range are different questions. A NES pulse holds a
+        // period well past the top of the keyboard; what it stops being able
+        // to do, much earlier, is hold a chromatic scale.
+        const int usable = chipHighestUsableNote(ChipVoice::NESPulse);
+        const int reach = chipHighestNote(ChipVoice::NESPulse);
+        check(usable < reach,
+              "a NES pulse stops being playable before it stops reaching - "
+              "usable to MIDI " + std::to_string(usable) + ", reaches " +
+                  std::to_string(reach));
+        /*
+         * MIDI 110, D8. The first note that misses is 111, where the nearest
+         * period is 21 against a wanted 21.47 and the result is 37 cents
+         * sharp.
+         *
+         * Below the G#8 that gets quoted for this, and it should be: that
+         * number is where the steps exceed a SEMITONE, and a quarter-tone
+         * tolerance gives out a fifth earlier. Both are true and they are
+         * answers to different questions.
+         */
+        check(usable >= 104 && usable <= 116,
+              "and that ceiling is up in the top octaves where the period "
+              "steps open out, MIDI " + std::to_string(usable));
+        const float missHz = noteToHz(usable + 1);
+        check(std::fabs(1200.0f * std::log2(
+                  quantiseChipFrequency(ChipVoice::NESPulse, missHz) / missHz)) >
+                  CHIP_TUNING_TOLERANCE_CENTS,
+              "and the very next note up really does miss, which is what makes "
+              "it the ceiling rather than a guess");
+
+        // Scanned upward, and this is why. Coming down from the top lands on
+        // MIDI 125, which is 1.7 cents out by pure luck while everything for
+        // two octaves under it is a quarter-tone off - true of one note and
+        // useless as a ceiling.
+        check(std::fabs(1200.0f * std::log2(
+                  quantiseChipFrequency(ChipVoice::NESPulse, noteToHz(125)) /
+                  noteToHz(125))) < 25.0f,
+              "MIDI 125 really is in tune on a NES pulse, by coincidence");
+        check(usable < 125,
+              "and the reported ceiling is nowhere near it, because a scale "
+              "needs every note in it and not one lucky one");
+    }
+
+    // ---- The constraint reaches the audio -----------------------------------
+    //
+    // The structural test, and the one that would have caught this feature
+    // being written and never wired in. Everything above is arithmetic; this
+    // is the speaker.
+    {
+        const float sr = 44100.0f;
+
+        // A Game Boy pulse asked for a bass note it does not have. The
+        // written note is MIDI 24 (32.7 Hz); the hardware floor is 64 Hz, an
+        // octave up. That is not subtle and it is the whole lesson.
+        const std::vector<float> constrained = renderNote(ChipVoice::GameBoyPulse, 24);
+        const std::vector<float> free = renderNote(ChipVoice::None, 24);
+
+        const float constrainedHz = measureHz(constrained, sr);
+        const float freeHz = measureHz(free, sr);
+
+        check(freeHz > 30.0f && freeHz < 36.0f,
+              "unconstrained, MIDI 24 renders at about 32.7 Hz, measured " +
+                  std::to_string(freeHz));
+        check(constrainedHz > 60.0f && constrainedHz < 69.0f,
+              "and on a Game Boy pulse the same note comes out at 64 Hz - an "
+              "octave up, because the register saturates. Measured " +
+                  std::to_string(constrainedHz));
+
+        // A NES pulse high enough for the quantiser to bite audibly. Not a
+        // dramatic number; the point is that it is not zero, because zero
+        // means the audio path never called the quantiser.
+        const float wanted = noteToHz(103);
+        const std::vector<float> chip = renderNote(ChipVoice::NESPulse, 103);
+        const float chipHz = measureHz(chip, sr);
+        const float expected = quantiseChipFrequency(ChipVoice::NESPulse, wanted);
+        check(chipHz > 0.0f &&
+              std::fabs(1200.0f * std::log2(chipHz / expected)) < 30.0f,
+              "a high NES pulse note renders at the register's pitch, not the "
+              "written one - wanted " + std::to_string(wanted) + ", register "
+              "gives " + std::to_string(expected) + ", measured " +
+                  std::to_string(chipHz));
+    }
+
+    // ---- Off by default, and off means bit-identical ------------------------
+    //
+    // The promise made to every project already saved. If this fails, turning
+    // the feature on changed how existing work sounds.
+    {
+        auto render = [](bool assignVoice) {
+            auto p = std::make_unique<Project>();
+            p->bpm = 120.0f;
+            p->channels[0].chipVoice =
+                assignVoice ? ChipVoice::NESPulse : ChipVoice::None;
+
+            p->patterns.clear();
+            Pattern pattern;
+            for (int i = 0; i < 4; ++i) {
+                Note note;
+                note.pitch = 60 + i * 5;
+                note.startTime = float(i);
+                note.duration = 0.9f;
+                pattern.notes.push_back(note);
+            }
+            p->patterns.push_back(pattern);
+            p->arrangement.clear();
+            p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+            auto seq = std::make_unique<Sequencer>();
+            seq->setSampleRate(44100.0f);
+            seq->setProject(p.get());
+            seq->updateChannelConfigs();
+            seq->updateMasterEffects();
+            seq->play();
+
+            std::vector<float> l(512), r(512), out;
+            for (int b = 0; b < 80; ++b) {
+                seq->process(l.data(), r.data(), 512);
+                out.insert(out.end(), l.begin(), l.end());
+            }
+            return out;
+        };
+
+        const std::vector<float> plain = render(false);
+        const std::vector<float> withVoice = render(true);
+
+        Project fresh;
+        check(fresh.channels[0].chipVoice == ChipVoice::None,
+              "no channel is chip-constrained by default");
+
+        double worst = 0.0;
+        const size_t n = std::min(plain.size(), withVoice.size());
+        for (size_t i = 0; i < n; ++i) {
+            worst = std::max(worst, std::fabs(double(plain[i]) - double(withVoice[i])));
+        }
+        check(n > 0 && worst > 1e-4,
+              "and assigning one audibly changes the render, by " +
+                  std::to_string(worst) + " - if this is zero the setting is "
+                  "decorative");
+    }
+
+    // ---- A muted note does not leak its voice -------------------------------
+    //
+    // The specific hazard in gating a voice on pitch: skipping the rest of
+    // the sample loop would freeze the envelope, so a note muted for its
+    // whole duration would never reach the release that deactivates it. One
+    // stuck voice per such note, forever, on a channel that sounds silent -
+    // and silence is exactly what makes it invisible.
+    //
+    // Reached through detune, because no written note can reach it: the gate
+    // is above the top of the keyboard, so modulation is the only way in -
+    // which is also the only way a real project would ever hit it.
+    {
+        auto p = std::make_unique<Project>();
+        p->bpm = 240.0f;
+        p->channels[0].chipVoice = ChipVoice::NESPulse;
+        p->channels[0].oscillator.modMatrix.polyphonyLimit = 2;
+        p->channels[0].oscillator.detune = 1200.0f;  // an octave up, into the gate
+
+        p->patterns.clear();
+        Pattern pattern;
+        for (int i = 0; i < 16; ++i) {
+            Note note;
+            note.pitch = 127;  // 12.5 kHz, and an octave of detune above that
+            note.startTime = float(i) * 0.25f;
+            note.duration = 0.2f;
+            pattern.notes.push_back(note);
+        }
+        // Then one note that should still be heard, after all of them.
+        Note audible;
+        audible.pitch = 60;
+        audible.startTime = 6.0f;
+        audible.duration = 1.0f;
+        pattern.notes.push_back(audible);
+        p->patterns.push_back(pattern);
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 8.0f, 0});
+
+        auto seq = std::make_unique<Sequencer>();
+        seq->setSampleRate(44100.0f);
+        seq->setProject(p.get());
+        seq->updateChannelConfigs();
+        seq->updateMasterEffects();
+        seq->play();
+
+        double earlyPeak = 0.0, latePeak = 0.0;
+        std::vector<float> l(512), r(512);
+        // 8 beats at 240 BPM is 2 s; the audible note starts at beat 6.
+        const int blocks = int(2.2f * 44100.0f / 512.0f);
+        const int audibleStarts = int(1.5f * 44100.0f / 512.0f);
+        for (int b = 0; b < blocks; ++b) {
+            seq->process(l.data(), r.data(), 512);
+            for (int i = 0; i < 512; ++i) {
+                if (b < audibleStarts - 2) earlyPeak = std::max(earlyPeak, std::fabs(double(l[i])));
+                else latePeak = std::max(latePeak, std::fabs(double(l[i])));
+            }
+        }
+
+        check(earlyPeak < 1e-4,
+              "sixteen notes the hardware silences produce silence, peak " +
+                  std::to_string(earlyPeak));
+        check(latePeak > 0.01,
+              "and a playable note after them is still heard - the muted "
+              "voices released rather than piling up against the polyphony "
+              "limit, peak " + std::to_string(latePeak));
+    }
+
+    // ---- It survives the file, and costs nothing when unused ----------------
+    {
+        auto original = std::make_unique<Project>();
+        original->channels[0].chipVoice = ChipVoice::NESTriangle;
+        original->channels[3].chipVoice = ChipVoice::GameBoyWave;
+
+        const std::string path = testPath("chipvoice.ctp");
+        check(saveProject(*original, path), "a project with chip voices saves");
+
+        auto loaded = std::make_unique<Project>();
+        check(loadProject(*loaded, path), "and loads");
+        check(loaded->channels[0].chipVoice == ChipVoice::NESTriangle &&
+              loaded->channels[3].chipVoice == ChipVoice::GameBoyWave,
+              "with both voices on the right channels");
+        check(loaded->channels[1].chipVoice == ChipVoice::None,
+              "and the channels between them still unconstrained");
+
+        auto plain = std::make_unique<Project>();
+        const std::string plainPath = testPath("chipvoice-none.ctp");
+        check(saveProject(*plain, plainPath), "a project with none saves");
+        std::ifstream file(plainPath);
+        std::string body((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+        check(body.find("CHIPVOICE") == std::string::npos,
+              "and writes no CHIPVOICE line at all - an older build opens it "
+              "unchanged, which is the point of omitting the default");
+
+        std::remove(path.c_str());
+        std::remove(plainPath.c_str());
+    }
+
+    // ---- Project Check describes what is happening, not what might ----------
+    {
+        auto has = [](const std::vector<AuditFinding>& findings,
+                      const std::string& fragment) {
+            for (const AuditFinding& f : findings) {
+                if (f.what.find(fragment) != std::string::npos) return true;
+                if (f.why.find(fragment) != std::string::npos) return true;
+                if (f.fix.find(fragment) != std::string::npos) return true;
+            }
+            return false;
+        };
+
+        auto p = std::make_unique<Project>();
+        p->channels[0].chipVoice = ChipVoice::GameBoyPulse;
+        p->patterns.clear();
+        Pattern bass;
+        for (int i = 0; i < 4; ++i) {
+            Note note;
+            note.pitch = 28;  // well under the Game Boy's 64 Hz floor
+            note.startTime = float(i);
+            note.duration = 0.9f;
+            bass.notes.push_back(note);
+        }
+        p->patterns.push_back(bass);
+        p->arrangement.clear();
+        p->arrangement.push_back(Clip{0, 0, 0.0f, 4.0f, 0});
+
+        const std::vector<AuditFinding> findings = auditProject(*p);
+        check(has(findings, "below what a Game Boy pulse can reach"),
+              "Project Check names the chip and the problem");
+        check(has(findings, "wrong octave right now"),
+              "and says it is happening, not that it would happen - the "
+              "channel is already playing the clamped pitch");
+        check(has(findings, "wave channel"),
+              "and points at the one channel on the machine that has the "
+              "bass note");
+
+        // The same notes with no chip voice are not a finding. A check that
+        // fires on an unconstrained project is a check nobody keeps on.
+        auto quiet = std::make_unique<Project>();
+        quiet->patterns = p->patterns;
+        quiet->arrangement = p->arrangement;
+        check(!has(auditProject(*quiet), "below what a Game Boy pulse can reach"),
+              "and says nothing at all about a channel that never asked");
+
+        // A pattern that fits, dropped an octave by the clip, does not fit.
+        // Reading patterns alone would miss this.
+        auto transposed = std::make_unique<Project>();
+        transposed->channels[0].chipVoice = ChipVoice::GameBoyPulse;
+        transposed->patterns.clear();
+        Pattern fine;
+        for (int i = 0; i < 4; ++i) {
+            Note note;
+            note.pitch = 48;  // comfortably inside the range on its own
+            note.startTime = float(i);
+            note.duration = 0.9f;
+            fine.notes.push_back(note);
+        }
+        transposed->patterns.push_back(fine);
+        transposed->arrangement.clear();
+        Clip dropped{0, 0, 0.0f, 4.0f, 0};
+        dropped.transpose = -24;
+        transposed->arrangement.push_back(dropped);
+        check(has(auditProject(*transposed), "below what a Game Boy pulse can reach"),
+              "a clip transpose is part of what sounds, so it is part of what "
+              "is checked");
+    }
+}
+
+// ============================================================================
 // Legato and tone portamento
 //
 // Both are about what happens BETWEEN two notes, so both are measured
@@ -27409,6 +27913,7 @@ int main(int argc, char** argv) {
     testMidiImport();
     testGrooveTiming();
     testChipModel();
+    testChipMode();
     testLegato();
     testUserGuide();
     testMasterChain();

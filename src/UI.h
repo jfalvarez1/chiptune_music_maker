@@ -5382,6 +5382,118 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
                     project.chipFilterFamicom = (voicing == 1);
                 }
             }
+
+            /*
+             * ---- Holding a channel to a chip -------------------------------
+             *
+             * Everything above this point is tone: how the finished mix is
+             * coloured. This is different in kind - it is a constraint on
+             * what you can write, applied while you write it, so a note the
+             * hardware could not play comes out the way the hardware would
+             * have played it.
+             *
+             * Per channel, and deliberately separate from the eight-channel
+             * cap, because that flag is already on in saved projects and
+             * quantising their pitch would change how they sound.
+             */
+            ImGui::Spacing();
+            ImGui::SeparatorText("Hold channels to a chip");
+
+            if (ImGui::SmallButton("NES layout")) {
+                // Two pulses, a triangle and a noise channel, which is
+                // literally what the machine had.
+                const ChipVoice layout[4] = {
+                    ChipVoice::NESPulse, ChipVoice::NESPulse,
+                    ChipVoice::NESTriangle, ChipVoice::NESNoise
+                };
+                for (int i = 0; i < 4 && i < Project::MAX_CHANNELS; ++i) {
+                    project.channels[static_cast<size_t>(i)].chipVoice = layout[i];
+                }
+                seq.updateChannelConfigs();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Game Boy layout")) {
+                const ChipVoice layout[4] = {
+                    ChipVoice::GameBoyPulse, ChipVoice::GameBoyPulse,
+                    ChipVoice::GameBoyWave, ChipVoice::NESNoise
+                };
+                for (int i = 0; i < 4 && i < Project::MAX_CHANNELS; ++i) {
+                    project.channels[static_cast<size_t>(i)].chipVoice = layout[i];
+                }
+                seq.updateChannelConfigs();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear##chipvoices")) {
+                for (auto& channel : project.channels) {
+                    channel.chipVoice = ChipVoice::None;
+                }
+                seq.updateChannelConfigs();
+            }
+
+            const char* VOICE_ITEMS =
+                "Unconstrained\0NES pulse\0NES triangle\0NES noise\0"
+                "Game Boy pulse\0Game Boy wave\0";
+
+            const int shown = std::min(project.activeChannelCount(),
+                                       Project::MAX_CHANNELS);
+            for (int ch = 0; ch < shown; ++ch) {
+                ChannelConfig& channel = project.channels[static_cast<size_t>(ch)];
+
+                // Only the constrained ones and the first eight, so a
+                // 32-channel project is not thirty-two combo boxes of
+                // "Unconstrained".
+                if (ch >= 8 && channel.chipVoice == ChipVoice::None) continue;
+
+                ImGui::PushID(ch);
+                ImGui::SetNextItemWidth(150);
+                int voice = static_cast<int>(channel.chipVoice);
+                const std::string label =
+                    std::to_string(ch + 1) + ": " + channel.name;
+                if (ImGui::Combo(label.c_str(), &voice, VOICE_ITEMS)) {
+                    if (voice >= 0 && voice < CHIP_VOICE_COUNT) {
+                        channel.chipVoice = static_cast<ChipVoice>(voice);
+                        seq.updateChannelConfigs();
+                    }
+                }
+
+                // The range, right there, because the whole reason to set
+                // this is to know where the edges are.
+                if (channel.chipVoice != ChipVoice::None &&
+                    chipVoiceConstrainsPitch(channel.chipVoice)) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled(
+                        "MIDI %d-%d",
+                        chipLowestNote(channel.chipVoice, project.chipRegion),
+                        chipHighestUsableNote(channel.chipVoice, project.chipRegion));
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "The notes this channel can actually play in tune.\n\n"
+                            "Below the bottom the period register saturates, so\n"
+                            "the note sounds in the wrong octave rather than not\n"
+                            "at all. Above the top the register's steps are\n"
+                            "further apart than the notes are, so there is no\n"
+                            "chromatic scale left - which is what a chiptune lead\n"
+                            "in its top octave actually is.");
+                    }
+                }
+                ImGui::PopID();
+            }
+
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Play this channel through the chip's real registers.\n\n"
+                    "Pitch is quantised to the period register AFTER vibrato,\n"
+                    "slides, arpeggios and macros - because on the machine all\n"
+                    "of those were the same eleven bits. So a vibrato is smooth\n"
+                    "low down and steps in the top octave, exactly as it did.\n\n"
+                    "Volume goes through the volume register too, and the three\n"
+                    "chips disagree: 16 levels on a NES pulse, FOUR CODES on a\n"
+                    "Game Boy wave channel, and NONE AT ALL on a NES triangle,\n"
+                    "which is on or off and clicks on the way out.\n\n"
+                    "Off everywhere by default. Turning it on changes how the\n"
+                    "channel sounds, which is the entire point.");
+            }
         }
 
         ImGui::Spacing();
