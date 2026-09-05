@@ -546,10 +546,11 @@ most:
   only the phase differs.
 - **Game Boy — shipped.** Pulse physically cannot go below **C2** (64.0 Hz);
   only the wave channel reaches under it. CH3 has 4 volume codes and no
-  envelope. **[M]** the envelope shape is not enforced yet: they are
-  one-shot, one-direction, ≤1.64 s and **cannot loop**, which is a
-  constraint on the ADSR rather than on pitch and volume and wants its own
-  pass.
+  envelope. Envelopes are one-shot, one-direction, ≤1.64 s and **cannot
+  loop** — **reported by Project Check, deliberately not enforced.** The
+  registers are what a channel plays, so quantising them is playing it
+  correctly; the envelope generator is what the channel *is*, and reshaping
+  it would silently rewrite a patch somebody voiced by ear.
 - **[S] SID**: one *shared* filter and one *global* 4-bit volume — a
   per-voice volume column has to map to sustain and say so. Ring mod and
   sync cost a voice each.
