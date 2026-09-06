@@ -106,6 +106,15 @@ foreach ($panel in $panels) {
     args = "--demo --view pianoroll --ghosts"
 })
 
+# The chord identifier, opened over a selection. A popup is the one kind of
+# window that renders correctly in isolation and then never appears, because
+# it has to be submitted from inside the window that owns it and on the frame
+# after it was asked for - which no unit test can see.
+[void]$cases.Add(@{
+    name = "pianoroll-chord-id"
+    args = "--demo --view pianoroll --chord"
+})
+
 # Audio clips draw their own waveform, which means walking screen pixels back
 # into sample frames - the one place in the arrangement view that can divide
 # by zero or index off the end of a sample. The case also places a clip whose

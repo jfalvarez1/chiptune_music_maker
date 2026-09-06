@@ -1968,6 +1968,19 @@ struct UIState {
     float lastWindowWidth = 0.0f;
     float lastWindowHeight = 0.0f;
     bool needsLayoutUpdate = true;  // True on first frame and after significant resize
+
+    /*
+     * Ask the piano roll to name the selected notes.
+     *
+     * A one-frame request rather than a direct OpenPopup call, because the
+     * popup can only be opened from inside the window that owns it. Routing
+     * it through here means anything can ask - the right click that raised
+     * it, a menu, a key binding, the screenshot harness - without any of
+     * them having to run inside the piano roll's draw.
+     *
+     * Cleared by whoever consumes it, on the same frame.
+     */
+    bool requestChordPopup = false;
 };
 
 } // namespace ChiptuneTracker

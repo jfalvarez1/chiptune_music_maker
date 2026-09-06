@@ -34,6 +34,7 @@
 #include "Templates.h"
 #include "Showcase.h"
 #include "ChipInstruments.h"
+#include "ChordID.h"
 #include "MIDIImport.h"
 #include "GenreKits.h"
 #include "NextStep.h"
@@ -23952,6 +23953,322 @@ static void testChipModel() {
 }
 
 // ============================================================================
+// Naming a chord from its notes
+//
+// The temptation with this kind of test is to assert the top answer and move
+// on. That passes on an identifier that is confidently wrong about everything
+// it has not been shown, so the cases below are chosen for where the
+// arithmetic gets uncomfortable: sets with two equally good readings, sets
+// that are the same notes as another chord, voicings with the fifth or the
+// root missing, and the diminished seventh, which genuinely has no answer.
+//
+// Where a case is ambiguous the assertion is that the tool SAYS SO, not that
+// it picks the reading I happen to prefer.
+// ============================================================================
+static void testChordID() {
+    using namespace ChiptuneTracker;
+    beginTest("Chord identification");
+
+    auto best = [](const std::vector<int>& notes) {
+        const ChordIdentification id = identifyChord(notes);
+        return id.matches.empty() ? std::string("<none>") : id.matches[0].name;
+    };
+    auto ranks = [](const std::vector<int>& notes, const std::string& name) {
+        const ChordIdentification id = identifyChord(notes, 8);
+        for (size_t i = 0; i < id.matches.size(); ++i) {
+            if (id.matches[i].name == name) return int(i);
+        }
+        return -1;
+    };
+
+    // ---- The unambiguous ones ----------------------------------------------
+    {
+        check(best({60, 64, 67}) == "C", "C E G is C major");
+        check(best({60, 63, 67}) == "Cm", "C Eb G is C minor");
+        check(best({60, 64, 67, 71}) == "Cmaj7", "with a B on top it is Cmaj7");
+        check(best({60, 64, 67, 70}) == "C7", "with a Bb it is C7");
+        check(best({60, 63, 67, 70}) == "Cm7", "C Eb G Bb is Cm7");
+        check(best({62, 66, 69}) == "D", "and the root moves with the notes");
+        check(best({60, 65, 67}) == "Csus4", "C F G is a suspended 4th");
+        check(best({60, 62, 67}) == "Csus2", "C D G is a suspended 2nd");
+
+        // Spelling. There is no key to ask, so the answer is the common
+        // isolated spelling and it has to be consistent.
+        check(best({61, 65, 68}) == "Db", "black notes are spelled flat");
+        check(best({66, 70, 73}) == "F#", "except F sharp, which is not Gb here");
+    }
+
+    // ---- Inversions: same notes, different bass -----------------------------
+    //
+    // The name has to change even though the pitch classes do not, because
+    // the bass is a fact about what was played.
+    {
+        const ChordIdentification root = identifyChord({60, 64, 67});
+        const ChordIdentification first = identifyChord({64, 67, 72});
+        const ChordIdentification second = identifyChord({67, 72, 76});
+
+        check(root.matches[0].name == "C" && root.matches[0].inversion == 0,
+              "C E G is C in root position");
+        check(first.matches[0].name == "C/E" && first.matches[0].inversion == 1,
+              "E G C is C/E, first inversion, got " + first.matches[0].name);
+        check(second.matches[0].name == "C/G" && second.matches[0].inversion == 2,
+              "G C E is C/G, second inversion, got " + second.matches[0].name);
+        check(first.matches[0].longName.find("first inversion") != std::string::npos,
+              "and the long name says which inversion it is");
+    }
+
+    // ---- The same notes, two honest names -----------------------------------
+    //
+    // C6 and Am7 are the identical four pitch classes. Neither reading is
+    // wrong; which one is meant depends on the bass and on music the tool
+    // cannot see. So the test is that BOTH are offered, and that the bass
+    // decides which leads.
+    {
+        const int notes[] = {60, 64, 67, 69};  // C E G A
+        const std::vector<int> cInBass = {notes[0], notes[1], notes[2], notes[3]};
+        const std::vector<int> aInBass = {57, 60, 64, 67};  // A C E G
+
+        check(best(cInBass) == "C6",
+              "C E G A with C at the bottom reads as C6, got " + best(cInBass));
+        check(best(aInBass) == "Am7",
+              "the same four pitch classes over an A read as Am7, got " +
+                  best(aInBass));
+        check(ranks(cInBass, "Am7/C") >= 0,
+              "and the other reading is still offered rather than hidden - a "
+              "single confident answer here would be a coin toss presented as "
+              "an analysis");
+    }
+
+    // ---- The diminished 7th, which has no answer ----------------------------
+    //
+    // Four notes three semitones apart. Rotating the shape gives the same
+    // set, so all four roots are equally correct and nothing in the notes can
+    // choose. This is the case that separates a tool that reasons from one
+    // that pattern-matches and hopes.
+    {
+        const ChordIdentification id = identifyChord({60, 63, 66, 69});
+        check(!id.matches.empty() && id.matches[0].symmetric,
+              "a diminished 7th is flagged as symmetric");
+        check(id.summary.find("symmetric") != std::string::npos,
+              "and the one-line summary says so, because that is the whole "
+              "truth about it: " + id.summary);
+        check(id.matches[0].exact, "while still being an exact match");
+
+        // Augmented is the other symmetric shape - three roots, same notes.
+        const ChordIdentification aug = identifyChord({60, 64, 68});
+        check(!aug.matches.empty() && aug.matches[0].symmetric,
+              "an augmented triad is symmetric too");
+
+        // And an ordinary chord is not, which is what makes the flag mean
+        // something.
+        const ChordIdentification plain = identifyChord({60, 64, 67});
+        check(!plain.matches[0].symmetric,
+              "a major triad is not symmetric");
+    }
+
+    // ---- Voicings that leave notes out --------------------------------------
+    //
+    // The fifth is the first note every real arrangement drops. If an absent
+    // fifth were charged like an absent third, most actual voicings would be
+    // unnameable - which is the failure mode of every naive identifier.
+    {
+        check(best({60, 64, 70}) == "C7",
+              "C E Bb with no fifth is still C7, got " + best({60, 64, 70}));
+        check(best({60, 64, 71}) == "Cmaj7",
+              "and C E B is Cmaj7, got " + best({60, 64, 71}));
+
+        const ChordIdentification id = identifyChord({60, 64, 70});
+        check(id.matches[0].missing == 1,
+              "the match admits it is a note short");
+        check(id.matches[0].longName.find("no perfect 5th") != std::string::npos,
+              "and names which note, got: " + id.matches[0].longName);
+        check(!id.matches[0].exact,
+              "and does not claim to be exact");
+    }
+
+    // ---- One note and two notes are not chords ------------------------------
+    //
+    // Naming {C, G} as "C major, no third" would be inventing the note that
+    // decides whether it is major or minor - which is the only thing anybody
+    // wants to know about it.
+    {
+        const ChordIdentification one = identifyChord({60});
+        check(one.matches.empty(), "a single note produces no chord match");
+        check(one.summary.find("C") != std::string::npos &&
+              one.summary.find("single note") != std::string::npos,
+              "but is described rather than ignored: " + one.summary);
+
+        const ChordIdentification two = identifyChord({60, 67});
+        check(two.matches.empty(), "two notes produce no chord match either");
+        check(two.summary.find("perfect 5th") != std::string::npos,
+              "they are named as an interval: " + two.summary);
+        check(two.summary.find("power chord") != std::string::npos,
+              "and a fifth is called what a musician would call it: " +
+                  two.summary);
+
+        const ChordIdentification third = identifyChord({60, 63});
+        check(third.summary.find("minor 3rd") != std::string::npos,
+              "a minor third is named as one: " + third.summary);
+
+        const ChordIdentification none = identifyChord({});
+        check(none.matches.empty() && none.noteCount == 0,
+              "and an empty selection is empty rather than a crash");
+    }
+
+    // ---- Octaves and duplicates collapse ------------------------------------
+    //
+    // A pad voicing is the same chord as the triad it is built from. If
+    // doubling changed the answer, the tool would be analysing the voicing
+    // rather than the harmony.
+    {
+        check(best({48, 60, 64, 67, 72, 76}) == "C",
+              "the same chord spread over three octaves is still C");
+        const ChordIdentification id = identifyChord({48, 60, 64, 67, 72, 76});
+        check(id.noteCount == 3,
+              "six notes, three pitch classes, got " +
+                  std::to_string(id.noteCount));
+        check(id.bassPitchClass == 0,
+              "and the bass is the lowest note actually played");
+    }
+
+    // ---- A note that fits nothing -------------------------------------------
+    //
+    // The answer here is an approximate one that says how much it ignored,
+    // not a confident name and not an empty list.
+    {
+        const ChordIdentification id = identifyChord({60, 61, 62, 63, 64, 65});
+        check(!id.matches.empty(),
+              "six chromatic notes still produce a best effort");
+        check(!id.matches[0].exact && id.matches[0].extra > 0,
+              "which is explicitly not exact and says how many notes it "
+              "ignored - " + std::to_string(id.matches[0].extra));
+        check(id.summary.find("approximate") != std::string::npos,
+              "and the summary carries the warning: " + id.summary);
+    }
+
+    // ---- The ranking is stable ----------------------------------------------
+    //
+    // Several readings tie on score exactly. Left to std::sort that makes the
+    // displayed name depend on the standard library's internals, and a chord
+    // that renames itself between builds is a bug nobody can reproduce.
+    {
+        const std::vector<int> notes = {60, 64, 67, 69};
+        const ChordIdentification a = identifyChord(notes, 8);
+        const ChordIdentification b = identifyChord(notes, 8);
+        bool identical = a.matches.size() == b.matches.size();
+        for (size_t i = 0; identical && i < a.matches.size(); ++i) {
+            if (a.matches[i].name != b.matches[i].name) identical = false;
+        }
+        check(identical, "the same notes always rank the same way");
+
+        /*
+         * And exact ties really do happen, which is what makes that worth
+         * pinning down.
+         *
+         * They arise between ROOTS OF THE SAME SHAPE rather than between
+         * different shapes - the commonness term separates those - so the
+         * case that produces them is the symmetric one. A diminished 7th
+         * scores identically on three of its four roots: same shape, same
+         * zero extras, same zero missing, and the bass bonus goes to only
+         * one of them. Those three are a genuine dead heat and something has
+         * to order them the same way every time.
+         */
+        const ChordIdentification dim = identifyChord({60, 63, 66, 69}, 8);
+        int tied = 0;
+        for (size_t i = 1; i < dim.matches.size(); ++i) {
+            if (dim.matches[i].score == dim.matches[i - 1].score) ++tied;
+        }
+        check(tied > 0,
+              "a diminished 7th ties exactly on its other roots, " +
+                  std::to_string(tied) + " of them");
+
+        const ChordIdentification dimAgain = identifyChord({60, 63, 66, 69}, 8);
+        bool sameOrder = dim.matches.size() == dimAgain.matches.size();
+        for (size_t i = 0; sameOrder && i < dim.matches.size(); ++i) {
+            if (dim.matches[i].name != dimAgain.matches[i].name) sameOrder = false;
+        }
+        check(sameOrder,
+              "and they come back in the same order regardless, which is the "
+              "whole reason root and shape break the tie rather than "
+              "whatever std::sort happens to do");
+    }
+
+    // ---- "Also reads as" has to mean something ------------------------------
+    //
+    // The ranked list contains readings reached by ignoring notes, and those
+    // are not alternatives - offering plain C major as another way to read
+    // C E G B is not a second opinion, it is a worse one dressed as a choice.
+    {
+        const ChordIdentification maj7 = identifyChord({60, 64, 67, 71}, 8);
+        const std::vector<ChordMatch> alts = alternativeReadings(maj7);
+        for (const ChordMatch& m : alts) {
+            check(m.exact,
+                  "no approximate reading is offered as an alternative to an "
+                  "exact one - " + m.name + " is not");
+        }
+        bool offersPlainC = false;
+        for (const ChordMatch& m : alts) if (m.name == "C") offersPlainC = true;
+        check(!offersPlainC,
+              "Cmaj7 is not also 'C', which is only reachable by throwing "
+              "away the note that makes it a maj7");
+
+        // But the genuine ambiguity survives the filter, which is the half
+        // that a blunt "hide everything after the first" would break.
+        const ChordIdentification six = identifyChord({60, 64, 67, 69}, 8);
+        const std::vector<ChordMatch> sixAlts = alternativeReadings(six);
+        bool offersAm7 = false;
+        for (const ChordMatch& m : sixAlts) if (m.name == "Am7/C") offersAm7 = true;
+        check(offersAm7,
+              "C6 still offers Am7/C, because that one really is the same "
+              "four notes and neither reading is wrong");
+
+        // And when nothing is exact, the runners-up are real alternatives.
+        const ChordIdentification messy = identifyChord({60, 61, 64, 67}, 8);
+        check(!messy.matches[0].exact,
+              "C Db E G has no exact reading");
+        check(!alternativeReadings(messy).empty(),
+              "so its approximate runners-up are still worth offering");
+    }
+
+    // ---- Every shape in the table names itself ------------------------------
+    //
+    // The structural guard. A typo in one interval of one row would otherwise
+    // sit there naming that chord as something else forever, and no
+    // hand-written case would catch it because I would have written the case
+    // from the same typo.
+    {
+        int wrong = 0;
+        std::string firstWrong;
+        for (int s = 0; s < CHORD_SHAPE_DEF_COUNT; ++s) {
+            const ChordShapeDef& shape = CHORD_SHAPES[s];
+            if (shape.count < 3) continue;   // intervals, handled above
+
+            std::vector<int> notes;
+            for (int i = 0; i < shape.count; ++i) {
+                notes.push_back(60 + shape.intervals[static_cast<size_t>(i)]);
+            }
+            const ChordIdentification id = identifyChord(notes, 8);
+
+            // Its own name must be an EXACT reading. It need not be first:
+            // a C6 built from the table is also an Am7, and insisting the
+            // table's own label wins would be asserting the tie-break rather
+            // than the arithmetic.
+            bool found = false;
+            for (const ChordMatch& m : id.matches) {
+                if (m.rootPitchClass == 0 && m.shape == s && m.exact) found = true;
+            }
+            if (!found) {
+                ++wrong;
+                if (firstWrong.empty()) firstWrong = shape.suffix;
+            }
+        }
+        check(wrong == 0,
+              "every shape in the table is an exact match for its own notes" +
+                  (wrong ? std::string(" - '") + firstWrong + "' is not" : ""));
+    }
+}
+
+// ============================================================================
 // Chip mode as an authoring constraint
 //
 // The point of this feature is that the limits arrive in the SOUND while you
@@ -28117,6 +28434,7 @@ int main(int argc, char** argv) {
     testGrooveTiming();
     testChipModel();
     testChipMode();
+    testChordID();
     testLegato();
     testUserGuide();
     testMasterChain();

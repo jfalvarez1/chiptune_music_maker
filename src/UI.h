@@ -28,6 +28,7 @@
 #include "LoopRange.h"
 #include "Snap.h"
 #include "Scales.h"
+#include "ChordID.h"
 #include "NoteTransforms.h"
 #include "WaveTools.h"
 #include "GhostNotes.h"
@@ -8200,9 +8201,40 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
     bool hasMultiSelection = !ui.selectedNoteIndices.empty();
     bool hasAnySelection = hasSelectedNote || hasMultiSelection;
 
-    // Show selection count
+    // Show selection count, and what it is
+    //
+    // The chord name is here as well as on the right-click because a feature
+    // that only exists on a right click is a feature nobody finds. This line
+    // already had the space and was already about the selection.
     if (hasMultiSelection) {
         ImGui::Text("Selected: %d notes", static_cast<int>(ui.selectedNoteIndices.size()));
+
+        if (ui.selectedNoteIndices.size() >= 2) {
+            std::vector<int> pitches;
+            for (int index : ui.selectedNoteIndices) {
+                if (index >= 0 && index < static_cast<int>(pattern.notes.size())) {
+                    pitches.push_back(pattern.notes[static_cast<size_t>(index)].pitch);
+                }
+            }
+            const ChordIdentification id = identifyChord(pitches, 3);
+
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.8f, 1.0f));
+            ImGui::TextUnformatted(id.matches.empty() ? id.summary.c_str()
+                                                      : id.matches[0].name.c_str());
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                if (id.matches.empty()) {
+                    ImGui::SetTooltip("%s", id.summary.c_str());
+                } else {
+                    ImGui::SetTooltip("%s\n\nRight-click the selection for the "
+                                      "other readings.",
+                                      id.matches[0].longName.c_str());
+                }
+            }
+            if (ImGui::IsItemClicked()) ui.requestChordPopup = true;
+        }
+
         ImGui::SameLine();
     }
 
@@ -10239,13 +10271,27 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             }
         }
 
-        // Right click always deletes
-        if (ImGui::IsMouseClicked(1) && noteUnderCursor >= 0) {
-            pattern.notes.erase(pattern.notes.begin() + noteUnderCursor);
-            if (ui.selectedNoteIndex == noteUnderCursor) {
-                ui.selectedNoteIndex = -1;
-            } else if (ui.selectedNoteIndex > noteUnderCursor) {
-                ui.selectedNoteIndex--;
+        /*
+         * Right click: name the chord if there is one, otherwise delete.
+         *
+         * The delete has been the right-click for the whole life of this
+         * program and it is muscle memory, so it is kept for the case it has
+         * always covered - a right click on a note with nothing selected.
+         * What changes is that a right click on a SELECTION now means "tell
+         * me about this" rather than "throw one of these away", which is the
+         * safer reading of the gesture anyway: deleting one note out of a
+         * selected chord was never a thing anybody wanted.
+         */
+        if (ImGui::IsMouseClicked(1)) {
+            if (ui.selectedNoteIndices.size() >= 2) {
+                ui.requestChordPopup = true;
+            } else if (noteUnderCursor >= 0) {
+                pattern.notes.erase(pattern.notes.begin() + noteUnderCursor);
+                if (ui.selectedNoteIndex == noteUnderCursor) {
+                    ui.selectedNoteIndex = -1;
+                } else if (ui.selectedNoteIndex > noteUnderCursor) {
+                    ui.selectedNoteIndex--;
+                }
             }
         }
 
@@ -10268,6 +10314,116 @@ inline void DrawPianoRoll(Project& project, UIState& ui, Sequencer& seq) {
             ui.multiDragOffsets.clear();
             ui.multiResizeStartDurations.clear();
         }
+    }
+
+    /*
+     * ---- What did I just play? -------------------------------------------
+     *
+     * OUTSIDE the hover branch, deliberately. A popup has to be submitted
+     * every frame it is open, and the moment it appears the mouse is over
+     * the popup rather than over the grid - so drawing it inside the
+     * "hovering the canvas" block would close it on the frame after it
+     * opened, which looks exactly like a right click that did nothing.
+     *
+     * Recomputed each frame rather than cached at open time. It is a dozen
+     * arithmetic operations over a handful of notes, and it means the answer
+     * follows the selection instead of going stale behind it.
+     */
+    if (ui.requestChordPopup) {
+        ui.requestChordPopup = false;
+        ImGui::OpenPopup("ChordIdentify");
+    }
+
+    if (ImGui::BeginPopup("ChordIdentify")) {
+        std::vector<int> pitches;
+        for (int index : ui.selectedNoteIndices) {
+            if (index >= 0 && index < static_cast<int>(pattern.notes.size())) {
+                pitches.push_back(pattern.notes[static_cast<size_t>(index)].pitch);
+            }
+        }
+
+        const ChordIdentification id = identifyChord(pitches);
+
+        ImGui::TextDisabled("%d note%s selected", static_cast<int>(pitches.size()),
+                            pitches.size() == 1 ? "" : "s");
+        ImGui::Separator();
+
+        if (id.matches.empty()) {
+            // One note or two. Naming {C, G} as "C major, no third" would be
+            // inventing the note that decides major from minor, which is the
+            // only thing anybody wants to know about it.
+            ImGui::TextWrapped("%s", id.summary.c_str());
+        } else {
+            const ChordMatch& best = id.matches[0];
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.8f, 1.0f));
+            ImGui::Text("%s", best.name.c_str());
+            ImGui::PopStyleColor();
+            ImGui::TextDisabled("%s", best.longName.c_str());
+
+            /*
+             * The honesty line. A symmetric chord has no single root - a
+             * diminished 7th is equally itself on all four of its notes -
+             * and an approximate match had to ignore something you played.
+             * Either way the name above is less certain than it looks, and
+             * the one place that must be said is next to it.
+             */
+            if (best.symmetric) {
+                ImGui::Spacing();
+                ImGui::TextWrapped(
+                    "Symmetric: this shape repeats, so any of its notes is "
+                    "equally the root. The name below the line is one of "
+                    "several equally correct readings.");
+            } else if (!best.exact) {
+                ImGui::Spacing();
+                if (best.extra > 0) {
+                    ImGui::TextWrapped("Approximate - %d note%s in the "
+                                       "selection %s not part of it.",
+                                       best.extra, best.extra == 1 ? "" : "s",
+                                       best.extra == 1 ? "is" : "are");
+                } else {
+                    ImGui::TextWrapped("A note short of the full chord, which "
+                                       "is normal - the 5th is the first note "
+                                       "most voicings drop.");
+                }
+            }
+
+            // Only readings that are as good as the best one. A chord
+            // reached by ignoring a note you played is not a second opinion.
+            const std::vector<ChordMatch> alternatives = alternativeReadings(id);
+            if (!alternatives.empty()) {
+                ImGui::Separator();
+                ImGui::TextDisabled("Also reads as");
+                for (const ChordMatch& other : alternatives) {
+                    ImGui::BulletText("%s", other.name.c_str());
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", other.longName.c_str());
+                    }
+                }
+            }
+        }
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Copy name")) {
+            ImGui::SetClipboardText(id.matches.empty() ? id.summary.c_str()
+                                                       : id.matches[0].name.c_str());
+        }
+        if (ImGui::MenuItem("Delete selected notes")) {
+            // Right-clicking a selection no longer deletes, so the delete
+            // that used to live on this gesture has to still be reachable
+            // from it. Undo-able, which the old right-click delete never was.
+            g_UndoHistory.saveState(project, "Delete Notes");
+            std::vector<int> sorted = ui.selectedNoteIndices;
+            std::sort(sorted.begin(), sorted.end(), std::greater<int>());
+            for (int index : sorted) {
+                if (index >= 0 && index < static_cast<int>(pattern.notes.size())) {
+                    pattern.notes.erase(pattern.notes.begin() + index);
+                }
+            }
+            ui.selectedNoteIndices.clear();
+            ui.selectedNoteIndex = -1;
+        }
+        ImGui::EndPopup();
     }
 
     // Scroll and zoom handling

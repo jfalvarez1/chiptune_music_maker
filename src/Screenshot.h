@@ -146,6 +146,7 @@ struct CaptureRequest {
     std::string macroTab;        // volume | arpeggio | duty | pitch
     std::vector<std::string> showWindows;
     bool selectNotes = false;    // pre-select notes, so selection styling shows
+    bool chordPopup = false;     // and open the chord identifier over them
     bool startPlaying = false;   // run the transport, so meters and playhead move
 
     // Capture normally ignores imgui.ini so a gallery shot looks the same
@@ -325,6 +326,10 @@ inline CaptureRequest parseCaptureArgs(const std::vector<std::string>& args) {
                 : 0;
         } else if (arg == "--select") {
             request.selectNotes = true;
+        } else if (arg == "--chord") {
+            // Implies a selection: there is nothing to identify without one.
+            request.selectNotes = true;
+            request.chordPopup = true;
         } else if (arg == "--playing") {
             request.startPlaying = true;
         } else if (arg == "--keep-ini") {
@@ -894,12 +899,40 @@ inline void applyCaptureState(const CaptureRequest& request,
     // Selecting a few notes makes the Note Editor populate and the selected
     // note styling visible - both invisible in an untouched screenshot.
     if (request.selectNotes && !project.patterns.empty()) {
-        const int noteCount = static_cast<int>(project.patterns[0].notes.size());
-        ui.selectedNoteIndices.clear();
-        for (int i = 0; i < noteCount && i < 4; ++i) {
-            ui.selectedNoteIndices.push_back(i);
+        /*
+         * The chord shot plants its own chord rather than selecting whatever
+         * the demo happens to start with.
+         *
+         * Those first four notes are a melody - four different beats - and a
+         * melody has no chord to name, so the shot would be of the "no chord
+         * shape fits" path rather than of the feature. Planting a Cmaj7 makes
+         * the capture deterministic and makes it show the thing it is there
+         * to show.
+         */
+        if (request.chordPopup) {
+            Pattern& pattern = project.patterns[0];
+            ui.selectedNoteIndices.clear();
+            const int CMAJ7[4] = {60, 64, 67, 71};
+            for (int pitch : CMAJ7) {
+                Note note;
+                note.pitch = pitch;
+                note.startTime = 0.0f;
+                note.duration = 2.0f;
+                note.velocity = 0.8f;
+                ui.selectedNoteIndices.push_back(
+                    static_cast<int>(pattern.notes.size()));
+                pattern.notes.push_back(note);
+            }
+            ui.selectedNoteIndex = ui.selectedNoteIndices[0];
+            ui.requestChordPopup = true;
+        } else {
+            const int noteCount = static_cast<int>(project.patterns[0].notes.size());
+            ui.selectedNoteIndices.clear();
+            for (int i = 0; i < noteCount && i < 4; ++i) {
+                ui.selectedNoteIndices.push_back(i);
+            }
+            if (noteCount > 0) ui.selectedNoteIndex = 0;
         }
-        if (noteCount > 0) ui.selectedNoteIndex = 0;
     }
 }
 
