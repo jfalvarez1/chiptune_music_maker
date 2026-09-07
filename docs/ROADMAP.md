@@ -420,12 +420,22 @@ audit of this codebase, which is reproducible by anyone with `grep`.
       `NoteTransforms.h` already holds invert and reverse. [verified —
       Furnace, Renoise]
 
-- [ ] **G12. Ship strictness as a visible tier, not a policy.** The
-      community requires hardware *legality*, not hardware *origin*, and
-      objects to silent impossibility rather than to impossibility. Battle
-      of the Bits encodes this as a ladder from `nsf_classic` to `fakebit`.
-      Mirror it with a "this would not play on real hardware" indicator
-      rather than picking a side. [verified — BotB rules, chipmusic.org]
+- [x] **G12. Ship strictness as a visible tier, not a policy.** Done in
+      3.13.x — `ChipLegality.h`, shown at the top of Chip Accuracy. Four
+      rungs (Hardware-legal / Expansion hardware / Chip-flavoured / Fakebit)
+      with the specific channel and setting behind each one. The community
+      requires hardware *legality*, not hardware *origin*, and objects to
+      silent impossibility rather than to impossibility, so it names what
+      would not run and **never suggests changing it** — there is usually
+      nothing wrong. A test asserts that: no finding contains an imperative,
+      and no rung is described as worse than another.
+
+      Two calls worth recording. A wavetable is hardware-legal, because the
+      Game Boy's channel 3 is one; filing it with the modern engines would
+      be wrong about the history. And a note below the chip's floor does
+      *not* cost legality — the register saturates and that is what the
+      machine emits, so it is Project Check's business and not this
+      panel's. [verified — BotB rules, chipmusic.org]
 
 ### Deliberately not doing
 

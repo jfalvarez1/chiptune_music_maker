@@ -898,6 +898,24 @@ inline void applyCaptureState(const CaptureRequest& request,
 
     // Selecting a few notes makes the Note Editor populate and the selected
     // note styling visible - both invisible in an untouched screenshot.
+    /*
+     * The chip panel shot, which needs something worth judging in it.
+     *
+     * A demo project reads as fakebit and the verdict is one line - true,
+     * and it photographs nothing. Constraining the first four channels to a
+     * NES layout and leaving a reverb on one of them produces a verdict with
+     * reasons under it, which is the part that can actually break.
+     */
+    if (request.expandChipPanel) {
+        const ChipVoice LAYOUT[4] = {
+            ChipVoice::NESPulse, ChipVoice::NESPulse,
+            ChipVoice::NESTriangle, ChipVoice::NESNoise
+        };
+        for (int ch = 0; ch < 4 && ch < Project::MAX_CHANNELS; ++ch) {
+            project.channels[static_cast<size_t>(ch)].chipVoice = LAYOUT[ch];
+        }
+    }
+
     if (request.selectNotes && !project.patterns.empty()) {
         /*
          * The chord shot plants its own chord rather than selecting whatever

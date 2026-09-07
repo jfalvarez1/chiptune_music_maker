@@ -318,9 +318,14 @@ foreach ($panel in $panels) {
     args = "--demo --comp --focus `"Take Lanes`""
 })
 
+# Until 3.13 this shot photographed an open Aux Buses panel: the force-open
+# flag had been stranded next to the wrong header when Chip Accuracy moved,
+# and a colour-count check cannot tell one panel from another. Taller now,
+# because the section it was always supposed to show is a long one.
 [void]$cases.Add(@{
     name = "master-bus-chip-accuracy"
     args = "--demo --workspace mix --chip-panel"
+    h    = 1200
 })
 
 # The tracker used to print the same note into all eight columns. With the

@@ -35,6 +35,7 @@
 #include "Showcase.h"
 #include "ChipInstruments.h"
 #include "ChordID.h"
+#include "ChipLegality.h"
 #include "MIDIImport.h"
 #include "GenreKits.h"
 #include "NextStep.h"
@@ -23953,6 +23954,305 @@ static void testChipModel() {
 }
 
 // ============================================================================
+// Would this run on the machine?
+//
+// The risk with a feature like this is that it becomes a purity score - a
+// number that goes down when you add a reverb, with the obvious implication.
+// The research says the opposite is what people want: the scene objects to
+// mislabelling, not to production, and a panel that nudged everyone toward
+// one rung would be doing harm in the name of authenticity.
+//
+// So the assertions below are about the verdict being CORRECT and NEUTRAL in
+// equal measure: the right rung for the right reason, no fix-it advice, and
+// nothing in the wording that ranks one rung above another.
+// ============================================================================
+static void testChipLegality() {
+    using namespace ChiptuneTracker;
+    beginTest("Chip legality tiers");
+
+    // A project with n channels carrying music, so the content test has
+    // something to see. Everything else is left at its default.
+    auto withContent = [](int channels) {
+        auto p = std::make_unique<Project>();
+        p->patterns.clear();
+        Pattern pattern;
+        Note note;
+        note.pitch = 60;
+        note.duration = 1.0f;
+        pattern.notes.push_back(note);
+        p->patterns.push_back(pattern);
+        p->arrangement.clear();
+        for (int ch = 0; ch < channels; ++ch) {
+            p->arrangement.push_back(Clip{0, ch, 0.0f, 4.0f, 0});
+            ChannelConfig& channel = p->channels[static_cast<size_t>(ch)];
+            channel.oscillator.type = OscillatorType::Pulse;
+            channel.chipVoice = ChipVoice::NESPulse;
+            channel.pan = 0.0f;
+            channel.reverbEnabled = false;
+            channel.filterEnabled = false;
+            channel.delayEnabled = false;
+        }
+        p->masterWidthEnabled = false;
+        return p;
+    };
+
+    auto has = [](const ChipLegalityReport& report, const std::string& fragment) {
+        for (const ChipLegalityNote& note : report.notes) {
+            if (note.what.find(fragment) != std::string::npos) return true;
+            if (note.why.find(fragment) != std::string::npos) return true;
+        }
+        return false;
+    };
+
+    // ---- The clean case ----------------------------------------------------
+    {
+        auto p = withContent(3);
+        const ChipLegalityReport report = auditChipLegality(*p);
+        check(report.tier == ChipTier::HardwareLegal,
+              "three chip-constrained pulse channels are hardware-legal, got " +
+                  std::string(chipTierName(report.tier)));
+        check(report.notes.empty(),
+              "with nothing to explain, " + std::to_string(report.notes.size()) +
+                  " notes");
+        check(report.contentChannels == 3 && report.constrainedChannels == 3,
+              "and it counted what it looked at");
+    }
+
+    // ---- A chip waveform with nothing holding it to the registers ----------
+    //
+    // The distinction the whole panel exists to draw. A pulse channel that
+    // sounds like a chip and can play pitches no register could hold is the
+    // definition of chip-flavoured, and it is invisible from the waveform.
+    {
+        auto p = withContent(2);
+        p->channels[1].chipVoice = ChipVoice::None;
+        const ChipLegalityReport report = auditChipLegality(*p);
+        check(report.tier == ChipTier::ChipFlavoured,
+              "a pulse channel with no chip voice is chip-flavoured, not "
+              "hardware-legal - got " + std::string(chipTierName(report.tier)));
+        check(has(report, "not held to a chip"),
+              "and the reason names it");
+        check(has(report, "no way to represent"),
+              "and says what the hardware could not do: " +
+                  (report.notes.empty() ? std::string() : report.notes[0].why));
+    }
+
+    // ---- Out-of-range notes are legal, which is not obvious ----------------
+    //
+    // A Game Boy pulse asked for a note below its floor plays at 64 Hz, in
+    // the wrong octave - and that is EXACTLY what the machine would emit, so
+    // it is hardware-legal. Project Check reports it because it is probably
+    // not what you wanted; this panel must not, because it is not a hardware
+    // question. Two advisories, two different jobs.
+    {
+        auto p = withContent(1);
+        p->channels[0].chipVoice = ChipVoice::GameBoyPulse;
+        p->patterns[0].notes[0].pitch = 24;   // an octave under the floor
+
+        const ChipLegalityReport report = auditChipLegality(*p);
+        check(report.tier == ChipTier::HardwareLegal,
+              "a note below the chip's floor is still hardware-legal - the "
+              "register saturates and that is what the machine does. Got " +
+                  std::string(chipTierName(report.tier)));
+
+        // And the other advisory does still complain, which is what makes
+        // the silence here a decision rather than an oversight.
+        bool projectCheckComplains = false;
+        for (const AuditFinding& f : auditProject(*p)) {
+            if (f.what.find("below what a Game Boy pulse") != std::string::npos) {
+                projectCheckComplains = true;
+            }
+        }
+        check(projectCheckComplains,
+              "while Project Check does complain about it - the two panels "
+              "answer different questions and only one of them is about "
+              "hardware");
+    }
+
+    // ---- Each rung, reached for its own reason -----------------------------
+    {
+        // FM is real chip hardware, just not this chip's. A VRC7 in a
+        // cartridge is the historical case and it is not fakebit.
+        auto fm = withContent(1);
+        fm->channels[0].oscillator.type = OscillatorType::FMSynth;
+        check(auditChipLegality(*fm).tier == ChipTier::Expansion,
+              "FM needs expansion hardware rather than none - it was a real "
+              "chip, in a cartridge");
+
+        // A sawtooth for the same reason: a SID waveform, on nothing we model.
+        auto saw = withContent(1);
+        saw->channels[0].oscillator.type = OscillatorType::Sawtooth;
+        check(auditChipLegality(*saw).tier == ChipTier::Expansion,
+              "and a sawtooth, which is a SID or POKEY waveform");
+
+        // A wavetable is NOT modern. The Game Boy's third channel is one.
+        auto wave = withContent(1);
+        wave->channels[0].oscillator.type = OscillatorType::Custom;
+        wave->channels[0].chipVoice = ChipVoice::GameBoyWave;
+        check(auditChipLegality(*wave).tier == ChipTier::HardwareLegal,
+              "a wavetable is hardware-legal - the Game Boy's channel 3 is "
+              "literally a 32-step wavetable, and filing it with the modern "
+              "engines would be wrong about the history");
+
+        // Granular is where the line actually is.
+        auto grain = withContent(1);
+        grain->channels[0].oscillator.type = OscillatorType::Granular;
+        check(auditChipLegality(*grain).tier == ChipTier::Fakebit,
+              "granular resynthesis is fakebit");
+
+        // Six voices is more than a stock 2A03 has.
+        auto wide = withContent(6);
+        const ChipLegalityReport wideReport = auditChipLegality(*wide);
+        check(wideReport.tier == ChipTier::Expansion,
+              "six channels of music needs a cartridge - a stock 2A03 has "
+              "five, got " + std::string(chipTierName(wideReport.tier)));
+        check(has(wideReport, "stock 2A03 has five"),
+              "and the reason says how many it actually had");
+
+        // Five is fine, which is the boundary worth pinning.
+        check(auditChipLegality(*withContent(5)).tier == ChipTier::HardwareLegal,
+              "five is exactly what it has, so five is legal");
+
+        // Panning, on a mono machine.
+        auto panned = withContent(2);
+        panned->channels[1].pan = -0.6f;
+        check(auditChipLegality(*panned).tier == ChipTier::ChipFlavoured,
+              "panning a channel on a mono machine is chip-flavoured");
+
+        // An effect the console had no silicon for.
+        auto verb = withContent(1);
+        verb->channels[0].reverbEnabled = true;
+        const ChipLegalityReport verbReport = auditChipLegality(*verb);
+        check(verbReport.tier == ChipTier::ChipFlavoured,
+              "so is a reverb on a channel");
+        check(has(verbReport, "reverb"), "named as reverb");
+    }
+
+    // ---- The verdict is the worst finding, not the last one ----------------
+    {
+        auto p = withContent(2);
+        p->channels[0].reverbEnabled = true;                       // flavoured
+        p->channels[1].oscillator.type = OscillatorType::Sampler;  // fakebit
+        const ChipLegalityReport report = auditChipLegality(*p);
+        check(report.tier == ChipTier::Fakebit,
+              "a project with both a reverb and a sampler is fakebit - the "
+              "verdict is the worst finding, got " +
+                  std::string(chipTierName(report.tier)));
+        check(report.notes.size() >= 2,
+              "and both reasons are kept, because the verdict has to be "
+              "explainable rather than just asserted");
+        check(report.notes[0].caps == ChipTier::Fakebit,
+              "worst first, so the list reads in the order that explains it");
+    }
+
+    // ---- Channels nobody uses do not count ---------------------------------
+    //
+    // Thirty-two channels exist in every project and thirty-one of them are
+    // usually empty. If their defaults counted, no project would ever be
+    // legal and the feature would be noise.
+    {
+        auto p = withContent(2);
+        p->channels[20].oscillator.type = OscillatorType::Granular;
+        p->channels[20].reverbEnabled = true;
+        p->channels[20].pan = 0.9f;
+        check(auditChipLegality(*p).tier == ChipTier::HardwareLegal,
+              "a granular channel with a reverb, panned hard, that no clip "
+              "ever plays, has no bearing on whether the music would run");
+    }
+
+    // ---- An empty project judges nothing ------------------------------------
+    {
+        auto p = std::make_unique<Project>();
+        p->arrangement.clear();
+        const ChipLegalityReport report = auditChipLegality(*p);
+        check(report.notes.empty() && report.contentChannels == 0,
+              "an empty project produces no verdict");
+        check(report.summary.find("Nothing to judge") != std::string::npos,
+              "and says so rather than claiming to be hardware-legal: " +
+                  report.summary);
+    }
+
+    // ---- It does not tell anybody to change anything ------------------------
+    //
+    // The one that keeps the feature honest. Every other advisory in this
+    // program suggests a fix, and this one must not: there is nothing wrong
+    // with a reverb on a lead, and a panel implying otherwise would be
+    // inventing a hierarchy the scene does not have.
+    {
+        auto p = withContent(2);
+        p->channels[0].reverbEnabled = true;
+        p->channels[1].oscillator.type = OscillatorType::Granular;
+        p->channels[1].pan = 0.5f;
+        p->masterWidthEnabled = true;
+        p->masterWidth = 1.4f;
+
+        const ChipLegalityReport report = auditChipLegality(*p);
+
+        /*
+         * Whole words only.
+         *
+         * The first version of this searched for substrings and failed on
+         * "the output filter is fixed" - "fixed" as in not adjustable,
+         * containing "fix". A checker that cannot tell those apart would
+         * either be silenced with an exception list or quietly reword honest
+         * prose to dodge it, and both are worse than making it correct.
+         */
+        auto containsWord = [](const std::string& text, const std::string& word) {
+            size_t at = 0;
+            while ((at = text.find(word, at)) != std::string::npos) {
+                const bool startOk =
+                    (at == 0) || !std::isalpha(static_cast<unsigned char>(text[at - 1]));
+                const size_t end = at + word.size();
+                const bool endOk =
+                    (end >= text.size()) ||
+                    !std::isalpha(static_cast<unsigned char>(text[end]));
+                if (startOk && endOk) return true;
+                at = end;
+            }
+            return false;
+        };
+
+        const char* IMPERATIVES[] = {
+            "remove", "disable", "should", "instead", "fix", "avoid",
+            "must", "switch", "turn"
+        };
+        std::string offending;
+        for (const ChipLegalityNote& note : report.notes) {
+            for (const char* word : IMPERATIVES) {
+                if (containsWord(note.what, word) || containsWord(note.why, word)) {
+                    offending = std::string(word) + " in: " + note.what + " / " + note.why;
+                }
+            }
+        }
+
+        // The matcher itself, checked both ways - a word-boundary test that
+        // silently matched nothing would pass this whole block.
+        check(containsWord("please remove it", "remove") &&
+              !containsWord("the filter is fixed", "fix"),
+              "the imperative check matches whole words and not fragments");
+        check(offending.empty(),
+              "no finding tells anyone to change anything - " + offending);
+
+        // And the rung descriptions do not rank the rungs.
+        std::string ranked;
+        for (int t = 0; t < CHIP_TIER_COUNT; ++t) {
+            const std::string text = chipTierDescription(static_cast<ChipTier>(t));
+            for (const char* word : {"worse", "better", "inferior", "cheating",
+                                     "not real", "lazy"}) {
+                if (text.find(word) != std::string::npos) ranked = word;
+            }
+        }
+        check(ranked.empty(),
+              "and no rung is described as worse than another - found '" +
+                  ranked + "'");
+        check(std::string(chipTierDescription(ChipTier::Fakebit)).find("ordinary") !=
+                  std::string::npos,
+              "the bottom rung in particular is described neutrally, because "
+              "'fakebit' is a term the scene uses without contempt");
+    }
+}
+
+// ============================================================================
 // Naming a chord from its notes
 //
 // The temptation with this kind of test is to assert the top answer and move
@@ -28435,6 +28735,7 @@ int main(int argc, char** argv) {
     testChipModel();
     testChipMode();
     testChordID();
+    testChipLegality();
     testLegato();
     testUserGuide();
     testMasterChain();

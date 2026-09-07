@@ -29,6 +29,7 @@
 #include "Snap.h"
 #include "Scales.h"
 #include "ChordID.h"
+#include "ChipLegality.h"
 #include "NoteTransforms.h"
 #include "WaveTools.h"
 #include "GhostNotes.h"
@@ -2579,6 +2580,28 @@ static bool g_ToolsScaleHighlight = true;
 // collapsed by default.
 static bool g_ExpandChipAccuracy = false;
 static bool g_ExpandEffectRack = false;
+
+/*
+ * A header and its force-open flag, as ONE call.
+ *
+ * Written after finding that `g_ExpandChipAccuracy` was opening the Aux
+ * Buses header. Nothing was wrong with either line; the Chip Accuracy
+ * section had been moved further down at some point and the SetNextItemOpen
+ * stayed behind, silently attaching itself to whichever header came next.
+ *
+ * Nothing could have caught it. The unit tests never draw, and the smoke
+ * test compares distinct colour counts rather than content - so a shot named
+ * master-bus-chip-accuracy photographed an open Aux Buses panel for
+ * however long, and passed.
+ *
+ * Binding the two together is the fix, because it removes the failure rather
+ * than correcting this instance of it: a later edit that moves the header
+ * takes its opener with it, and there is no loose statement left to strand.
+ */
+inline bool CollapsingHeaderExpandable(const char* label, bool forceOpen) {
+    if (forceOpen) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    return ImGui::CollapsingHeader(label);
+}
 
 // The wavetable editor's two new sections, for the same reason: a shot of a
 // closed header shows nothing about what is inside it, and a headless test
@@ -5186,14 +5209,6 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
 
         ImGui::Spacing();
 
-        // ------------------------------------------------------------------
-        // Chip-accurate output
-        //
-        // Both off by default. Most channels here host a supersaw or a
-        // sample, which a 2A03 never had, so neither setting is something to
-        // impose on a project that is not trying to be a NES.
-        // ------------------------------------------------------------------
-        if (g_ExpandChipAccuracy) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
     // ------------------------------------------------------------------
     // Aux buses
     //
@@ -5313,7 +5328,7 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
         }
     }
 
-    if (ImGui::CollapsingHeader("Chip Accuracy")) {
+    if (CollapsingHeaderExpandable("Chip Accuracy", g_ExpandChipAccuracy)) {
             /*
               * Region.
               *
@@ -5381,6 +5396,60 @@ inline void DrawMasterBus(Sequencer& seq, Project& project, UIState& ui) {
                 int voicing = project.chipFilterFamicom ? 1 : 0;
                 if (ImGui::Combo("##chipvoicing", &voicing, "NES\0Famicom\0")) {
                     project.chipFilterFamicom = (voicing == 1);
+                }
+            }
+
+            /*
+             * ---- The verdict ------------------------------------------------
+             *
+             * What everything in this section adds up to, in one line. The
+             * research finding it answers is precise: the scene does not
+             * object to modern production, it objects to not being told. So
+             * it says which rung the project is on and exactly why, and
+             * never suggests changing anything - there is usually nothing
+             * wrong.
+             *
+             * ABOVE the per-channel list rather than below it, which is not
+             * only the usual summary-then-detail order: eight channel rows
+             * push anything under them past the bottom of the docked panel,
+             * and a verdict you have to scroll to find is a verdict for a
+             * feature whose entire purpose is being seen.
+             */
+            ImGui::Spacing();
+            ImGui::SeparatorText("Would this run on the hardware?");
+            {
+                const ChipLegalityReport legality = auditChipLegality(project);
+
+                // Not a red-to-green scale. Four distinguishable colours that
+                // do not read as a score, because the rungs are claims about
+                // hardware rather than marks out of four.
+                ImVec4 tierColour;
+                switch (legality.tier) {
+                    case ChipTier::HardwareLegal: tierColour = ImVec4(0.45f, 0.95f, 0.65f, 1.0f); break;
+                    case ChipTier::Expansion:     tierColour = ImVec4(0.55f, 0.80f, 1.00f, 1.0f); break;
+                    case ChipTier::ChipFlavoured: tierColour = ImVec4(0.85f, 0.75f, 1.00f, 1.0f); break;
+                    default:                      tierColour = ImVec4(1.00f, 0.80f, 0.55f, 1.0f); break;
+                }
+
+                ImGui::PushStyleColor(ImGuiCol_Text, tierColour);
+                ImGui::TextUnformatted(chipTierName(legality.tier));
+                ImGui::PopStyleColor();
+                ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
+                ImGui::TextDisabled("%s", chipTierDescription(legality.tier));
+                ImGui::PopTextWrapPos();
+
+                if (!legality.notes.empty() &&
+                    ImGui::TreeNode("chiplegalwhy", "Why (%d)",
+                                    static_cast<int>(legality.notes.size()))) {
+                    for (const ChipLegalityNote& note : legality.notes) {
+                        ImGui::Bullet();
+                        ImGui::TextWrapped("%s", note.what.c_str());
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s\n\nCaps at: %s", note.why.c_str(),
+                                              chipTierName(note.caps));
+                        }
+                    }
+                    ImGui::TreePop();
                 }
             }
 
@@ -15312,8 +15381,7 @@ inline void DrawChannelEditor(Project& project, UIState& ui, Sequencer& seq) {
         }
     }
 
-    if (g_ExpandEffectRack) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-    if (ImGui::CollapsingHeader("Effect Rack")) {
+    if (CollapsingHeaderExpandable("Effect Rack", g_ExpandEffectRack)) {
         auto& rackFx = seq.getSynth(ui.selectedChannel).effects();
 
         ImGui::TextDisabled("Signal flows top to bottom. Drag to reorder.");
@@ -20771,8 +20839,7 @@ inline void renderWavetableEditor(Project& project, UIState& uiState,
         static int s_interp = static_cast<int>(WaveInterp::Linear);
         bool edited = false;
 
-        if (g_ExpandWaveTools) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-        if (ImGui::CollapsingHeader("Wave Tools")) {
+        if (CollapsingHeaderExpandable("Wave Tools", g_ExpandWaveTools)) {
             ImGui::SetNextItemWidth(160);
             ImGui::Combo("Interpolation", &s_interp,
                          "None (stepped)\0Linear\0Cosine\0Cubic\0");
@@ -20873,8 +20940,7 @@ inline void renderWavetableEditor(Project& project, UIState& uiState,
         static WaveShapeSpec s_shape;
         static bool s_shapeLive = false;
 
-        if (g_ExpandWaveTools) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-        if (ImGui::CollapsingHeader("Shapes")) {
+        if (CollapsingHeaderExpandable("Shapes", g_ExpandWaveTools)) {
             ImGui::TextDisabled(
                 "Stack whole waveforms at chosen harmonics. The exponent "
                 "bends a component toward its extremes without the aliasing "
