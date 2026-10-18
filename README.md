@@ -25,7 +25,7 @@ mixing chain.
 - **Sing or beatbox** a part and have it written out as notes
 - **Ten themes**, three workspaces, and a genre focus that puts the right
   tools in front of you
-- **Exports** to WAV, MP3 and MIDI
+- **Exports** to WAV (16 or 24-bit), FLAC, MP3 and MIDI, and imports MIDI
 
 ## Screenshots
 
@@ -268,6 +268,30 @@ changes anything.
 
 ![Project Check](docs/images/project-check.png)
 
+### On main, not yet in a release
+
+These are in the source but not in the download above; they arrive with the
+next release.
+
+**Chip mode.** The program synthesises in float and can put any pitch on any
+channel. Real chips cannot. Chip mode holds a channel to what the hardware
+could actually do — pitch through the chip's period register, volume through
+its volume register — *while you write*, so the limit arrives as a sound you
+can react to. NES pulse, triangle and noise, and Game Boy pulse and wave.
+Turn it on per channel under **Master Bus → Chip Accuracy**, or press the NES
+layout button for two pulses, a triangle and a noise channel. It is off by
+default, so a project saved before it existed plays exactly as it did.
+
+**Would this run on the hardware?** Chip Accuracy opens with a verdict —
+Hardware-legal, Expansion hardware, Chip-flavoured or Fakebit — and the
+specific channel and setting behind it. It never suggests changing anything:
+the rungs are claims, not grades, and fakebit is not worse.
+
+**Name the chord you played.** Select notes and right-click them to be told
+what they are. Where the notes honestly have more than one name — C E G A is
+C6 and equally Am7 — the bass decides which leads and the other is listed
+underneath.
+
 ### Workspaces
 
 Panels dock, and panels sharing a region become tabs. Three workspaces lay
@@ -390,8 +414,11 @@ Pre-made track templates to get you started:
 
 ### File Operations
 - **Project save/load**: Native .ctp format preserves all notes and settings
-- **WAV export**: Render your music to high-quality audio files
+- **WAV export**: 16 or 24-bit, rounded and dithered
+- **FLAC export**: Lossless, and often a third the size of the WAV for square waves
 - **MP3 export**: Render to MP3 (requires LAME or FFmpeg in PATH)
+- **MIDI export and import**: One pattern per track, one track per channel;
+  importing keeps your instruments and swaps the notes
 - **Windows file dialogs**: Native save/open dialogs
 
 ### Per-Note Effects (Tracker-style!)
@@ -399,9 +426,12 @@ Pre-made track templates to get you started:
 - **Arpeggio**: Classic tracker 0xy effect - cycles through base note + semitone offsets
   - Presets: Major (4,7), Minor (3,7), Octave (12,0)
 - **Portamento/Slide**: Smooth pitch transitions between notes
+- **Legato and tone portamento**: A tied note keeps the sounding voice, and
+  with a slide glides to it from wherever it is (the tracker's `3xx`)
 
 ### Groove & Feel
 - **Swing**: Shift off-beat notes for groove (0-100%, 8th/16th/32nd grid)
+- **Groove**: Per-row timing lists such as `7 5 6 6`, which never change the tempo
 - **Humanize**: Random timing and velocity variation for natural feel
 
 ### Tools Panel (9 Production Tools!)
@@ -442,12 +472,16 @@ Pre-made track templates to get you started:
 
 ## Sound Chip Targets
 
-| Chip | System | Channels |
-|------|--------|----------|
-| 2A03 | NES | 2 pulse, 1 triangle, 1 noise, 1 DPCM |
-| LR35902 | Game Boy | 2 pulse, 1 wave, 1 noise |
-| SID | Commodore 64 | 3 voices with multiple waveforms |
-| AY-3-8910 | Various | 3 square wave channels |
+| Chip | System | Channels | Chip mode |
+|------|--------|----------|-----------|
+| 2A03 | NES | 2 pulse, 1 triangle, 1 noise, 1 DPCM | Pulse, triangle and noise |
+| LR35902 | Game Boy | 2 pulse, 1 wave, 1 noise | Pulse and wave |
+| SID | Commodore 64 | 3 voices with multiple waveforms | Modelled, not yet playable |
+| AY-3-8910 | Various | 3 square wave channels | Modelled, not yet playable |
+
+The NES also runs in PAL as well as NTSC — not a scaled NTSC: pitch moves by
+7.65%, the envelope clock drops from 240 Hz to 200, and the noise period
+tables cross.
 
 ## Prerequisites
 
@@ -455,19 +489,14 @@ Pre-made track templates to get you started:
 - **CMake**: 3.20 or higher
 - **OpenGL**: 3.3+ compatible GPU
 
-### Required Libraries
+### Libraries
 
-1. **miniaudio** - Download `miniaudio.h` from [miniaud.io](https://miniaud.io/)
-   - Place in `vendor/miniaudio/miniaudio.h`
+Already in `vendor/`, so there is nothing to download:
 
-2. **Dear ImGui** - Clone from [github.com/ocornut/imgui](https://github.com/ocornut/imgui)
-   - Copy these files to `vendor/imgui/`:
-     - `imgui.h`, `imgui.cpp`
-     - `imgui_internal.h`
-     - `imgui_draw.cpp`, `imgui_tables.cpp`, `imgui_widgets.cpp`
-     - `imgui_demo.cpp`
-     - `backends/imgui_impl_opengl3.h`, `backends/imgui_impl_opengl3.cpp`
-     - `backends/imgui_impl_win32.h`, `backends/imgui_impl_win32.cpp`
+- [miniaudio](https://miniaud.io/) — audio I/O
+- [Dear ImGui](https://github.com/ocornut/imgui) — the interface, with the
+  OpenGL 3 and Win32 backends
+- [midifile](https://github.com/craigsapp/midifile) — MIDI import and export
 
 ## System Requirements
 
@@ -563,9 +592,24 @@ When you press Ctrl+V, ghost notes appear following your mouse. This lets you:
 
 ## What's new
 
-**[v3.8.0 "Check"](https://github.com/jfalvarez1/chiptune_music_maker/releases/latest)** —
-a Project Check panel that finds settings switched on and doing nothing, and
-a genre focus that now covers the instrument engines.
+**[v3.12.0 "Measured"](https://github.com/jfalvarez1/chiptune_music_maker/releases/latest)** —
+MIDI import, FLAC and 24-bit export, groove, legato, PAL and a chord
+progression generator. And five things that had been quietly wrong for a long
+time, found by measuring: the master limiter was a hard clipper, every
+exported MIDI file had a nonsensical tempo, and autosave never fired for most
+edits.
+
+**v3.11.0 "Rack"** — Note FX, a wavetable editor you can edit in, a scope on
+every channel, and opening Mega Drive `.tfi` and `.vgi` patches.
+
+**v3.10.0 "Voice"** — Voice Mode, building a song by singing it a part at a
+time, and delay compensation across the whole mixer.
+
+**v3.9.0 "Comp"** — take lanes and comping, the browser and command palette,
+and the shape of plugin hosting.
+
+**v3.8.0 "Check"** — a Project Check panel that finds settings switched on
+and doing nothing, and a genre focus that now covers the instrument engines.
 
 **v3.7.0 "Instruments"** — five configurable engines (wavetable, six-operator
 FM, multisample sampler, granular, modelled drums), a modulation matrix,
@@ -588,18 +632,28 @@ The full plan lives in [docs/ROADMAP.md](docs/ROADMAP.md). The short version:
 - [x] 4-bit volume quantisation
 - [x] Ten visual themes, applied to the editor as well as the chrome
 
+**Done in 3.12**
+
+- [x] PAL: the noise period table, the frame counter and the pitch scaling
+      all differ from NTSC
+- [x] Groove patterns (per-row speed lists) alongside the existing swing
+- [x] MIDI import
+- [x] A chord progression generator, deriving chords from the scale
+- [x] FLAC export, and 24-bit WAV
+
+**On main, for the next release**
+
+- [x] Chip mode for the NES and Game Boy — pitch and volume quantised to the
+      actual registers while you compose
+- [x] A visible hardware-legality verdict, from Hardware-legal to Fakebit
+- [x] Game Boy envelope limits, reported by Project Check rather than
+      enforced
+
 **Next**
 
-- [ ] Chip modes as a real authoring constraint — fixed channel roles, pitch
-      and volume quantised to the actual registers while you compose, so what
-      you hear is what the hardware could do
-- [ ] PAL: the noise period table, the frame counter and the pitch scaling
-      all differ from NTSC
-- [ ] Groove patterns (per-row speed lists) alongside the existing swing
-- [ ] MIDI import — `vendor/midifile` is already linked, and can read
-- [ ] A chord progression generator (the Euclidean one it would sit beside
-      already exists)
-- [ ] FLAC export, and WAV at more than 16 bits
+- [ ] Chip mode for the SID, AY-3-8910 and YM2612 — modelled in the tables,
+      with no voice playing through them yet
+- [ ] Fixed channel roles as an enforced layout rather than preset buttons
 
 **Done since this list was written** — it had gone stale, and several of
 these had been shipped for a while:
